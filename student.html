@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>면접 스튜디오 · 학생</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .hero { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: center; }
+  .dday { text-align: center; min-width: 110px; }
+  .dday .n { font-size: 2.2rem; font-weight: 800; line-height: 1.1; color: var(--accent); }
+  .dday.urgent .n { color: var(--danger); }
+  .univ { font-size: .9rem; padding: 4px 0; border-bottom: 1px dashed var(--line); display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+  .univ:last-child { border-bottom: none; }
+  .mode { cursor: pointer; transition: transform .1s, border-color .1s; display: flex; flex-direction: column; gap: 6px; position: relative; }
+  .mode:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .mode .count { font-size: .85rem; color: var(--ink-3); }
+  .mode.disabled { opacity: .5; pointer-events: none; }
+  .mode .title { font-weight: 700; font-size: 1.05rem; }
+  .mode .rec { position: absolute; top: 12px; right: 12px; }
+  .fb-box { background: #f7f9ff; border: 1px solid #dfe6fb; border-radius: 10px; padding: 12px 14px; margin-top: 8px; }
+  .ans { background: #fafbfc; border-radius: 8px; padding: 10px 12px; margin-top: 6px; white-space: pre-wrap; }
+  .kv { display: grid; grid-template-columns: 90px 1fr; gap: 4px 10px; font-size: .92rem; }
+  .kv dt { color: var(--ink-3); } .kv dd { margin: 0; white-space: pre-wrap; }
+  @media (max-width: 560px) { .hero { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <div class="brand">면접 스튜디오<small>학생</small></div>
+  <div class="spacer"></div>
+  <div class="row" id="acct"></div>
+</div></header>
+
+<main class="wrap" id="main" hidden>
+  <section class="card hero">
+    <div class="dday" id="dday"></div>
+    <div>
+      <div class="row" style="margin-bottom:6px"><b id="pName"></b><span class="badge" id="pTrack"></span><span class="badge badge-violet" id="pSpecial" hidden></span>
+        <div class="spacer"></div><a class="btn btn-sm btn-primary" id="sheetBtn" target="_blank" rel="noopener" hidden>내 준비 시트 열기</a></div>
+      <div id="univs"></div>
+    </div>
+  </section>
+
+  <h2 style="margin-top:26px">말하기 연습</h2>
+  <div class="grid grid-4" id="modes"></div>
+
+  <div class="tabs" style="margin-top:28px">
+    <button class="active" data-tab="feedback">선생님 피드백<span id="fbDot"></span></button>
+    <button data-tab="history">연습 기록</button>
+    <button data-tab="mine">내 예상질문</button>
+  </div>
+  <section data-panel="feedback"><div id="feedback"></div></section>
+  <section data-panel="history" hidden><div id="history"></div></section>
+  <section data-panel="mine" hidden>
+    <div class="row" style="margin-bottom:10px">
+      <span class="muted">실전 연습 전에 꼬리질문을 먼저 보면 연습 효과가 떨어져요.</span>
+      <div class="spacer"></div>
+      <label class="row" style="margin:0;font-weight:500"><input type="checkbox" id="showIntent" style="width:auto"> 꼬리질문 보기</label>
+    </div>
+    <div id="mine"></div>
+  </section>
+</main>
+
+<div class="modal-bg" id="modal" hidden><div class="modal">
+  <div class="modal-head"><h2 id="mTitle"></h2><button id="mClose">닫기</button></div>
+  <div id="mBody"></div>
+</div></div>
+
+<script type="module">
+import {
+  db, requireRole, mountAccountMenu, collection, getDocs, query, where, esc, $, $$, showError, loadInterviewsFor,
+  CRITERIA, STAGES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes
+} from "./common.js";
+
+const ctx = await requireRole("student");
+const { user, profile: me } = ctx;
+mountAccountMenu(ctx, $("#acct"));
+
+let personal = [], bank = [], sessions = [], meetings = [];
+try {
+  const [pq, qb, ss, mt, iv] = await Promise.all([
+    getDocs(collection(db, "students", me.studentNo, "personalQuestions")),
+    getDocs(collection(db, "questions")),
+    getDocs(query(collection(db, "sessions"), where("studentUid", "==", user.uid))),
+    getDocs(query(collection(db, "meetings"), where("studentUid", "==", user.uid), where("shared", "==", true))),
+    loadInterviewsFor(me.studentNo)
+  ]);
+  me.universities = iv;
+  const rows = (s) => s.docs.map((d) => ({ id: d.id, ...d.data() }));
+  personal = rows(pq); bank = rows(qb);
+  sessions = rows(ss).sort((a, b) => (b.startedAt?.seconds || 0) - (a.startedAt?.seconds || 0));
+  meetings = rows(mt).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+} catch (e) { showError(e, "데이터 불러오기"); }
+$("#main").hidden = false;
+
+// ---- 상단: D-day · 지원 대학 · 준비 시트
+const next = nextInterview(me);
+const n = next ? dday(next) : null;
+$("#dday").className = `dday ${n != null && n <= 7 ? "urgent" : ""}`;
+$("#dday").innerHTML = next ? `<div class="muted">다음 면접</div><div class="n">${n === 0 ? "D-DAY" : "D-" + n}</div><div class="muted">${fmtDay(next)}</div>` : `<div class="muted">면접일<br>미등록</div>`;
+$("#pName").textContent = `${me.studentNo} ${me.name}`;
+$("#pTrack").textContent = me.track || "트랙 미정";
+if (me.special && me.special !== "없음") { $("#pSpecial").hidden = false; $("#pSpecial").textContent = me.special; }
+if (me.sheetUrl) { $("#sheetBtn").hidden = false; $("#sheetBtn").href = me.sheetUrl; }
+const today = new Date(); today.setHours(0, 0, 0, 0);
+$("#univs").innerHTML = (me.universities || []).length ? me.universities.map((u) => {
+  const d = dday(u.date);
+  return `<div class="univ" style="${d != null && d < 0 ? "opacity:.5" : ""}"><b>${u.date ? fmtDay(u.date) : "-"}</b> ${esc(u.univ)} <span>${esc(u.dept)}</span> <span class="muted">${esc(u.admission)} · ${esc(u.format)}</span></div>`;
+}).join("") : '<div class="muted">지원 대학 정보가 없습니다.</div>';
+
+// ---- 연습 모드
+const relevant = (q) => !q.majors?.length || (me.universities || []).some((u) => q.majors.some((m) => (u.dept || "").includes(m)));
+const rec = recommendedModes(me);
+const modes = [
+  { mode: "personal", title: "내 생기부 면접", desc: "선생님이 준비한 나만의 예상질문", n: personal.length, badge: "document" },
+  { mode: "document", title: "학생부 공통 질문", desc: "지원동기·학업계획·활동 질문", n: bank.filter((q) => q.type === "document" && relevant(q)).length, badge: "document" },
+  { mode: "passage", title: "제시문 면접", desc: "준비시간 동안 제시문 읽고 답변", n: bank.filter((q) => q.type === "passage").length, badge: "passage" },
+  { mode: "personality", title: "기본 인성 · MMI", desc: "가치관·경험·상황 판단 질문", n: bank.filter((q) => q.type === "personality" || q.type === "mmi").length, badge: "personality" }
+].sort((a, b) => (rec.includes(b.mode) ? 1 : 0) - (rec.includes(a.mode) ? 1 : 0));
+$("#modes").innerHTML = modes.map((m) => `
+  <div class="card mode ${m.n ? "" : "disabled"}" data-mode="${m.mode}">
+    ${rec.includes(m.mode) ? '<span class="badge badge-blue rec">내 트랙 추천</span>' : ""}
+    <div>${typeBadge(m.badge)}</div>
+    <div class="title">${m.title}</div>
+    <div class="muted">${m.desc}</div>
+    <div class="count">${m.n ? `질문 ${m.n}개` : "아직 질문이 없어요"}</div>
+  </div>`).join("");
+$$(".mode").forEach((el) => el.onclick = () => location.href = `interview.html?mode=${el.dataset.mode}`);
+
+// ---- 탭
+$$(".tabs button").forEach((b) => b.onclick = () => {
+  $$(".tabs button").forEach((x) => x.classList.toggle("active", x === b));
+  $$("[data-panel]").forEach((p) => p.hidden = p.dataset.panel !== b.dataset.tab);
+});
+
+// ---- 선생님 피드백 (대면 모의면접)
+const stageLabel = (k) => STAGES.find((s) => s.key === Number(k))?.label || "";
+const reviewed = sessions.filter((s) => s.reviewedAt);
+$("#fbDot").innerHTML = meetings.length + reviewed.length ? ` <span class="badge badge-blue">${meetings.length + reviewed.length}</span>` : "";
+$("#feedback").innerHTML = meetings.length ? meetings.map((m) => `
+  <div class="card">
+    <div class="row"><b>${fmtDay(m.date)} · ${esc(stageLabel(m.stage))}</b><span class="badge">${esc(m.type)}</span><span class="muted">${esc((m.teachers || []).join(", "))} 선생님</span></div>
+    <dl class="kv" style="margin-top:10px">
+      ${m.questions ? `<dt>받은 질문</dt><dd>${esc(m.questions)}</dd>` : ""}
+      ${m.good ? `<dt>잘한 점</dt><dd>${esc(m.good)}</dd>` : ""}
+      ${m.improve ? `<dt>보완할 점</dt><dd><b>${esc(m.improve)}</b></dd>` : ""}
+      ${m.nextGoal ? `<dt>다음 목표</dt><dd>${esc(m.nextGoal)}</dd>` : ""}
+    </dl>
+    <p class="muted" style="margin:10px 0 0">받은 피드백은 내 준비 시트의 '모의면접 피드백 및 수정 기록'에도 옮겨 적고 답변을 고쳐 보세요.</p>
+  </div>`).join("") : `<div class="card empty">아직 공개된 대면 모의면접 피드백이 없어요.${reviewed.length ? "<br>연습 기록 탭에서 말하기 연습 피드백을 확인하세요." : ""}</div>`;
+
+// ---- 연습 기록
+function avgScore(s) {
+  const sc = s.teacherFeedback?.scores; if (!sc || !s.reviewedAt) return null;
+  const v = CRITERIA.map((c) => sc[c.key]).filter((x) => typeof x === "number");
+  return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+}
+function renderHistory() {
+  if (!sessions.length) { $("#history").innerHTML = `<div class="card empty">아직 연습 기록이 없어요. 위에서 말하기 연습을 시작해 보세요.</div>`; return; }
+  $("#history").innerHTML = `<div class="card table-wrap"><table>
+    <thead><tr><th>날짜</th><th>유형</th><th>문항</th><th>상태</th><th>점수</th></tr></thead>
+    <tbody>${sessions.map((s) => {
+      const st = s.status !== "submitted" ? `<span class="badge badge-gray">미완료</span>`
+        : s.reviewedAt ? `<span class="badge badge-green">피드백 도착</span>` : `<span class="badge badge-orange">검토 대기</span>`;
+      const avg = avgScore(s);
+      return `<tr class="clickable" data-id="${s.id}"><td>${fmtDate(s.startedAt)}</td><td>${esc(s.modeLabel || s.mode)}</td>
+        <td>${(s.items || []).filter((i) => i.answer).length}/${(s.items || []).length}</td><td>${st}</td><td>${avg != null ? avg.toFixed(1) : "-"}</td></tr>`;
+    }).join("")}</tbody></table></div>`;
+  $$("#history tr[data-id]").forEach((tr) => tr.onclick = () => openSession(sessions.find((s) => s.id === tr.dataset.id)));
+}
+renderHistory();
+
+function openSession(s) {
+  $("#mTitle").textContent = `${s.modeLabel || s.mode} · ${fmtDate(s.startedAt)}`;
+  const fb = s.reviewedAt ? (s.teacherFeedback || {}) : {};
+  const scores = fb.scores ? `<div class="grid grid-4" style="margin:6px 0 4px">${CRITERIA.map((c) =>
+      `<div><div class="muted">${c.label}</div><div class="stat">${fb.scores[c.key] ?? "-"}<span class="muted">/5</span></div></div>`).join("")}</div>` : "";
+  $("#mBody").innerHTML = `
+    ${s.reviewedAt ? `<div class="fb-box"><h3>선생님 피드백</h3>${scores}${fb.comment ? `<div class="pre">${esc(fb.comment)}</div>` : ""}</div>` : `<p class="muted">${s.status === "submitted" ? "선생님 검토를 기다리는 중이에요." : "완료되지 않은 연습입니다."}</p>`}
+    ${s.reviewedAt && s.aiFeedback ? `<div class="fb-box" style="background:#f8f5ff;border-color:#e6dcfb"><h3>AI 피드백</h3><div class="pre">${esc(s.aiFeedback)}</div></div>` : ""}
+    ${(s.items || []).map((it, i) => `
+      <div class="q-item" style="margin-top:12px">
+        <div class="row">${typeBadge(it.type)} <span class="muted">Q${i + 1} · ${it.usedSec ?? 0}초 사용 / 제한 ${it.answerSec}초</span></div>
+        <div class="q-text pre" style="margin-top:6px">${esc(it.text)}</div>
+        <div class="ans">${esc(it.answer) || '<span class="muted">(답변 없음)</span>'}</div>
+        ${it.followUp ? `<div style="margin-top:8px"><b>꼬리질문</b> ${esc(it.followUp)}</div><div class="ans">${esc(it.followAnswer) || '<span class="muted">(답변 없음)</span>'}</div>` : ""}
+        ${fb.itemComments?.[i] ? `<div class="fb-box"><b>선생님</b> <span class="pre">${esc(fb.itemComments[i])}</span></div>` : ""}
+      </div>`).join("")}
+    ${s.reflection ? `<div class="q-item" style="margin-top:12px"><b>나의 돌아보기</b><div class="pre muted">잘한 점: ${esc(s.reflection.good)}\n아쉬운 점: ${esc(s.reflection.improve)}</div></div>` : ""}`;
+  $("#modal").hidden = false;
+}
+$("#mClose").onclick = () => $("#modal").hidden = true;
+$("#modal").onclick = (e) => { if (e.target.id === "modal") $("#modal").hidden = true; };
+
+// ---- 내 예상질문
+function renderMine() {
+  const show = $("#showIntent").checked;
+  if (!personal.length) { $("#mine").innerHTML = `<div class="card empty">아직 선생님이 예상질문을 올리지 않았어요.</div>`; return; }
+  $("#mine").innerHTML = personal.map((q, i) => `
+    <div class="q-item">
+      <div class="q-text pre">${i + 1}. ${esc(q.text)}</div>
+      <div class="q-meta">${esc(q.category || "")}${q.basis ? ` · ${esc(q.basis)}` : ""}</div>
+      ${show && q.followUps?.length ? `<ul class="follow">${q.followUps.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
+    </div>`).join("");
+}
+$("#showIntent").onchange = renderMine;
+renderMine();
+</script>
+</body>
+</html>

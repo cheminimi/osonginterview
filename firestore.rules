@@ -1,0 +1,115 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ▼ 최고 관리자 이메일 — firebase-config.js 의 ADMIN_EMAILS 와 같게 유지
+    function adminEmails() {
+      return ['2min095156@gmail.com'];
+    }
+
+    function signedIn() { return request.auth != null; }
+    function isAdminEmail() {
+      return signedIn() && request.auth.token.email != null
+        && request.auth.token.email.lower() in adminEmails();
+    }
+    function hasAcct() {
+      return signedIn() && exists(/databases/$(database)/documents/accounts/$(request.auth.uid));
+    }
+    function acct() {
+      return get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data;
+    }
+    function isAdmin() { return isAdminEmail() || (hasAcct() && acct().role == 'admin'); }
+    function isStaff() { return isAdmin() || (hasAcct() && acct().role in ['teacher', 'sync']); }
+    function isStudent(no) { return hasAcct() && acct().role == 'student' && acct().key == no; }
+    function isStaffSelf(id) { return hasAcct() && acct().role in ['teacher', 'admin'] && acct().key == id; }
+    // 본인이 바꿀 수 있는 필드: 비밀번호 변경 표시만
+    function onlyPwFields() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['mustChangePw', 'initialPw', 'pwChangedAt']);
+    }
+
+    // uid → 역할(admin/teacher/student/sync)과 키(staffId/학번). 관리자만 쓰기
+    // sync = 구글 시트 Apps Script 가 쓰는 동기화 전용 계정 (교사 화면에는 로그인 불가)
+    match /accounts/{uid} {
+      allow read: if (signedIn() && request.auth.uid == uid) || isStaff();
+      allow write: if isAdmin();
+    }
+
+    // 로그인 ID → 이메일 (재발급 시 바뀜). 로그인 전에 읽어야 해서 공개, 이메일 외 정보 없음
+    match /logins/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 지도교사
+    match /staff/{sid} {
+      allow read: if isStaff();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (isStaffSelf(sid) && onlyPwFields());
+    }
+
+    // 학생 (문서 ID = 학번)
+    match /students/{no} {
+      allow read: if isStaff() || isStudent(no);
+      allow create, delete: if isStaff();
+      allow update: if isStaff() || (isStudent(no) && onlyPwFields());
+
+      match /personalQuestions/{qid} {
+        allow read: if isStaff() || isStudent(no);
+        allow write: if isStaff();
+      }
+    }
+
+    // 대학별 면접일 (시트 '앱연동_면접일'과 쌍방 동기화). 학생은 자기 것만 읽기
+    match /interviews/{iid} {
+      allow read: if isStaff() || isStudent(resource.data.studentNo);
+      allow write: if isStaff();
+    }
+
+    // 교사 전용 메모 등 (학생 접근 불가)
+    match /studentNotes/{no} {
+      allow read, write: if isStaff();
+    }
+
+    // 공용 질문은행
+    match /questions/{qid} {
+      allow read: if signedIn();
+      allow write: if isStaff();
+    }
+
+    // 학생 스스로 하는 모의면접 연습
+    match /sessions/{sid} {
+      allow read: if isStaff()
+        || (signedIn() && resource.data.studentUid == request.auth.uid);
+      allow create: if isStaff()
+        || (signedIn()
+            && request.resource.data.studentUid == request.auth.uid
+            && isStudent(request.resource.data.studentNo)
+            && request.resource.data.status == 'in_progress'
+            && !request.resource.data.keys().hasAny(['teacherFeedback', 'aiFeedback', 'reviewedAt']));
+      allow update: if isStaff()
+        || (signedIn()
+            && resource.data.studentUid == request.auth.uid
+            && request.resource.data.studentUid == request.auth.uid
+            && request.resource.data.studentNo == resource.data.studentNo
+            && resource.data.status == 'in_progress'
+            && request.resource.data.status in ['in_progress', 'submitted']
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                 .hasAny(['teacherFeedback', 'aiFeedback', 'reviewedAt']));
+      allow delete: if isStaff();
+    }
+
+    // 대면 모의면접 기록 (교사 작성). 학생은 '공개'된 자기 기록만 읽기
+    match /meetings/{mid} {
+      allow read: if isStaff()
+        || (signedIn() && resource.data.studentUid == request.auth.uid && resource.data.shared == true);
+      allow write: if isStaff();
+    }
+
+    // 시트 동기화 설정 등
+    match /config/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+  }
+}

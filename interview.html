@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>면접 스튜디오 · 모의면접</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  body { background: #eef0f4; }
+  .stage { max-width: 860px; margin: 0 auto; padding: 20px 16px 60px; }
+  .progress { display: flex; gap: 4px; margin: 4px 0 16px; }
+  .progress span { flex: 1; height: 5px; border-radius: 3px; background: #d7dbe3; }
+  .progress span.done { background: var(--accent); }
+  .progress span.now { background: #8aa6ee; }
+  .phase { font-size: .8rem; font-weight: 700; letter-spacing: .04em; color: var(--accent); }
+  .question { font-size: 1.35rem; font-weight: 700; line-height: 1.5; margin: 8px 0 4px; }
+  .passage { background: #fbfaf6; border: 1px solid #ebe6d6; border-radius: 10px; padding: 16px 18px; white-space: pre-wrap; line-height: 1.8; max-height: 48vh; overflow-y: auto; font-size: .98rem; }
+  .timer-wrap { display: flex; align-items: center; gap: 18px; }
+  .ring { width: 96px; height: 96px; position: relative; flex: none; }
+  .ring svg { transform: rotate(-90deg); }
+  .ring .num { position: absolute; inset: 0; display: grid; place-items: center; font-size: 1.35rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .ring.warn .num { color: var(--warn); } .ring.over .num { color: var(--danger); }
+  .answer-box { min-height: 170px; font-size: 1rem; line-height: 1.7; }
+  .interim { color: var(--ink-3); font-size: .9rem; min-height: 1.4em; }
+  .mic { display: inline-flex; align-items: center; gap: 6px; font-size: .85rem; color: var(--ink-3); }
+  .mic .dot { width: 9px; height: 9px; border-radius: 50%; background: #c3c8d2; }
+  .mic.on .dot { background: var(--danger); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+  .save-state { font-size: .8rem; color: var(--ink-3); }
+  .opt { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .opt:last-child { border-bottom: none; }
+  .opt input[type=checkbox] { width: 18px; height: 18px; flex: none; }
+  .opt .grow { flex: 1; }
+  .opt select { width: auto; }
+</style>
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href="student.html" style="text-decoration:none;color:inherit">면접 스튜디오<small id="modeLabel">모의면접</small></a>
+  <div class="spacer"></div>
+  <span class="save-state" id="saveState"></span>
+  <button class="btn-sm" id="quit">그만하기</button>
+</div></header>
+
+<main class="stage" id="app"></main>
+
+<script type="module">
+import {
+  db, requireRole, collection, doc, getDocs, addDoc, updateDoc, serverTimestamp, loadInterviewsFor,
+  esc, $, toast, showError, TYPES, typeBadge, fmtSec, shuffle
+} from "./common.js";
+
+const { user, profile } = await requireRole("student");
+let depts = [];
+try { depts = (await loadInterviewsFor(profile.studentNo)).map((u) => u.dept || "").filter(Boolean); } catch (e) { console.warn(e); }
+const mode = new URLSearchParams(location.search).get("mode") || "document";
+const MODE_LABEL = { personal: "내 생기부 면접", document: "학생부 공통 질문", passage: "제시문 면접", personality: "기본 인성·MMI" };
+$("#modeLabel").textContent = MODE_LABEL[mode] || mode;
+const app = $("#app");
+
+// ---------- 음성 기능 지원 여부
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const hasTTS = "speechSynthesis" in window;
+
+// ---------- 질문 불러오기
+let pool = [];
+try {
+  if (mode === "personal") {
+    const snap = await getDocs(collection(db, "students", profile.studentNo, "personalQuestions"));
+    pool = snap.docs.map((d) => ({ id: d.id, source: "personal", type: "document", ...d.data() }));
+  } else {
+    const snap = await getDocs(collection(db, "questions"));
+    const relevant = (q) => !q.majors?.length || depts.some((d) => q.majors.some((m) => d.includes(m)));
+    pool = snap.docs.map((d) => ({ id: d.id, source: "bank", ...d.data() })).filter((q) => {
+      if (mode === "personality") return q.type === "personality" || q.type === "mmi";
+      if (mode === "passage") return q.type === "passage";
+      return q.type === mode && relevant(q);
+    });
+  }
+} catch (e) { showError(e, "질문 불러오기"); }
+
+if (!pool.length) {
+  app.innerHTML = `<div class="card empty">이 유형에 준비된 질문이 없어요.<br><br><a class="btn" href="student.html">돌아가기</a></div>`;
+  throw new Error("no questions");
+}
+
+// ---------- 설정 화면
+const settings = { count: Math.min(5, pool.length), follow: true, tts: hasTTS, stt: !!SR, timeScale: 1 };
+const isPassage = mode === "passage";
+app.innerHTML = `
+  <div class="card">
+    <h1>${esc(MODE_LABEL[mode])}</h1>
+    <p class="muted">질문 ${pool.length}개 중에서 무작위로 출제됩니다. 실제 면접처럼 소리 내어 답해 보세요.</p>
+    <div class="opt"><div class="grow"><b>문항 수</b></div>
+      <select id="optCount">${[...new Set([1, 3, 5, 7, 10].filter((n) => n < pool.length).concat(pool.length))]
+        .map((n) => `<option value="${n}" ${n === settings.count ? "selected" : ""}>${n === pool.length ? `전체 (${n})` : n}</option>`).join("")}</select></div>
+    <div class="opt"><div class="grow"><b>시간</b><div class="muted">${isPassage ? "준비 10분 · 답변 7분 기본 (문항별 설정 우선)" : "유형별 기본 답변시간 사용"}</div></div>
+      <select id="optTime"><option value="1">기본</option><option value="0.7">빡빡하게 (70%)</option><option value="1.5">여유 있게 (150%)</option></select></div>
+    <div class="opt"><input type="checkbox" id="optFollow" checked><div class="grow"><b>꼬리질문</b><div class="muted">답변 뒤 이어지는 질문 1개 (60초)</div></div></div>
+    <div class="opt"><input type="checkbox" id="optTts" ${hasTTS ? "checked" : "disabled"}><div class="grow"><b>질문 읽어주기</b><div class="muted">${hasTTS ? "면접관처럼 질문을 소리로 들려줍니다" : "이 브라우저는 지원하지 않아요"}</div></div></div>
+    <div class="opt"><input type="checkbox" id="optStt" ${SR ? "checked" : "disabled"}><div class="grow"><b>음성 받아쓰기</b><div class="muted">${SR ? "말한 내용이 자동으로 답변란에 기록됩니다 (마이크 권한 필요)" : "크롬/엣지에서만 지원돼요. 답변은 직접 입력하세요"}</div></div></div>
+    <div style="margin-top:18px"><button class="btn-primary btn-lg" id="start">면접 시작</button></div>
+  </div>`;
+
+$("#start").onclick = async () => {
+  settings.count = Number($("#optCount").value);
+  settings.timeScale = Number($("#optTime").value);
+  settings.follow = $("#optFollow").checked;
+  settings.tts = $("#optTts").checked;
+  settings.stt = $("#optStt").checked;
+  $("#start").disabled = true;
+  await begin();
+};
+
+// ---------- 세션
+let sessionRef = null;
+let items = [];
+let idx = 0;
+const LS_KEY = () => `interview-backup-${sessionRef?.id}`;
+
+async function begin() {
+  const picked = shuffle(pool).slice(0, settings.count);
+  items = picked.map((q) => {
+    const t = TYPES[q.type] || TYPES.document;
+    const followPick = settings.follow && q.followUps?.length ? q.followUps[Math.floor(Math.random() * q.followUps.length)] : "";
+    return {
+      source: q.source, qid: q.id, type: q.type || "document", text: q.text || "", passage: q.passage || "",
+      prepSec: Math.round((q.prepSec ?? t.prep) * settings.timeScale),
+      answerSec: Math.round((q.answerSec ?? t.answer) * settings.timeScale),
+      followUp: followPick, prepMemo: "", answer: "", usedSec: 0, followAnswer: "", followUsedSec: 0
+    };
+  });
+  try {
+    sessionRef = await addDoc(collection(db, "sessions"), {
+      studentUid: user.uid, studentName: profile.name || "", studentNo: profile.studentNo,
+      major: depts.join(", "), track: profile.track || "",
+      mode, modeLabel: MODE_LABEL[mode] || mode, status: "in_progress",
+      items, startedAt: serverTimestamp(), updatedAt: serverTimestamp()
+    });
+  } catch (e) {
+    showError(e, "면접 기록 생성");
+    $("#start").disabled = false;
+    return;
+  }
+  idx = 0;
+  runItem();
+}
+
+let saving = Promise.resolve();
+function save() {
+  try { localStorage.setItem(LS_KEY(), JSON.stringify(items)); } catch (_) {}
+  $("#saveState").textContent = "저장 중…";
+  saving = updateDoc(sessionRef, { items, updatedAt: serverTimestamp() })
+    .then(() => { $("#saveState").textContent = "저장됨"; })
+    .catch((e) => { $("#saveState").textContent = "⚠ 저장 실패 (기기에 임시 보관 중)"; showError(e, "답변 저장"); throw e; });
+  return saving;
+}
+
+// ---------- 타이머
+let timer = null;
+function startTimer(total, el, onTick) {
+  stopTimer();
+  const t0 = performance.now();
+  const R = 42, C = 2 * Math.PI * R;
+  el.innerHTML = `<svg width="96" height="96"><circle cx="48" cy="48" r="${R}" fill="none" stroke="#e2e5ec" stroke-width="7"/>
+    <circle class="bar" cx="48" cy="48" r="${R}" fill="none" stroke="#1f4fd6" stroke-width="7" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="0"/></svg><div class="num"></div>`;
+  const bar = el.querySelector(".bar"), num = el.querySelector(".num");
+  let beeped = false;
+  const tick = () => {
+    const used = (performance.now() - t0) / 1000;
+    const left = total - used;
+    num.textContent = fmtSec(left);
+    bar.style.strokeDashoffset = String(C * Math.min(1, used / total));
+    el.classList.toggle("warn", left <= 10 && left > 0);
+    el.classList.toggle("over", left <= 0);
+    bar.setAttribute("stroke", left <= 0 ? "#d33a3a" : left <= 10 ? "#c77a0a" : "#1f4fd6");
+    if (left <= 0 && !beeped) { beeped = true; beep(); }
+    onTick?.(used);
+  };
+  tick();
+  timer = setInterval(tick, 250);
+  return () => (performance.now() - t0) / 1000;
+}
+function stopTimer() { if (timer) clearInterval(timer); timer = null; }
+function beep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = 660; g.gain.value = 0.08; o.connect(g); g.connect(ctx.destination);
+    o.start(); o.stop(ctx.currentTime + 0.35);
+  } catch (_) {}
+}
+
+// ---------- 음성
+function speak(text) {
+  if (!settings.tts || !hasTTS) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "ko-KR"; u.rate = 1;
+  const ko = speechSynthesis.getVoices().find((v) => v.lang?.startsWith("ko"));
+  if (ko) u.voice = ko;
+  speechSynthesis.speak(u);
+}
+
+let rec = null, recWanted = false;
+function startDictation(textarea, interimEl, micEl) {
+  if (!settings.stt || !SR) return;
+  stopDictation();
+  recWanted = true;
+  rec = new SR();
+  rec.lang = "ko-KR"; rec.continuous = true; rec.interimResults = true;
+  rec.onresult = (ev) => {
+    let interim = "";
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const r = ev.results[i];
+      if (r.isFinal) {
+        const add = r[0].transcript.trim();
+        if (add) textarea.value = (textarea.value.trim() ? textarea.value.trim() + " " : "") + add;
+      } else interim += r[0].transcript;
+    }
+    interimEl.textContent = interim;
+  };
+  rec.onstart = () => micEl.classList.add("on");
+  rec.onerror = (e) => {
+    if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+      recWanted = false; toast("마이크 권한이 없어 받아쓰기를 끕니다. 직접 입력하세요.", "error", 5000);
+    }
+  };
+  // 크롬은 침묵이 길면 인식을 멈추므로, 답변 중이면 다시 켠다.
+  rec.onend = () => { micEl.classList.remove("on"); if (recWanted) { try { rec.start(); } catch (_) {} } };
+  try { rec.start(); } catch (_) {}
+}
+function stopDictation() {
+  recWanted = false;
+  if (rec) { try { rec.stop(); } catch (_) {} rec = null; }
+}
+
+// ---------- 문항 진행
+function progressBar() {
+  return `<div class="progress">${items.map((_, i) => `<span class="${i < idx ? "done" : i === idx ? "now" : ""}"></span>`).join("")}</div>`;
+}
+
+function runItem() {
+  const it = items[idx];
+  if (it.prepSec > 0 && it.passage) prepPhase(it); else answerPhase(it, "main");
+}
+
+function prepPhase(it) {
+  app.innerHTML = `${progressBar()}
+    <div class="card stack">
+      <div class="row"><span class="phase">준비 시간 · 문항 ${idx + 1}/${items.length}</span> ${typeBadge(it.type)}</div>
+      <div class="timer-wrap"><div class="ring" id="ring"></div>
+        <div class="muted">제시문을 읽고 답변을 구상하세요. 메모는 답변 중에도 볼 수 있어요.</div></div>
+      <div class="passage">${esc(it.passage)}</div>
+      <div><b>문항</b><div class="pre">${esc(it.text)}</div></div>
+      <div><label>메모</label><textarea id="memo" placeholder="핵심 개념, 답변 순서, 근거…"></textarea></div>
+      <div class="row"><div class="spacer"></div><button class="btn-primary" id="next">준비 끝 · 답변 시작</button></div>
+    </div>`;
+  const ring = $("#ring");
+  let done = false;
+  const finish = () => { if (done) return; done = true; stopTimer(); it.prepMemo = $("#memo").value; save().catch(() => {}); answerPhase(it, "main"); };
+  startTimer(it.prepSec, ring, (used) => { if (used >= it.prepSec) finish(); });
+  $("#next").onclick = finish;
+}
+
+function answerPhase(it, which) {
+  const isFollow = which === "follow";
+  const limit = isFollow ? Math.round(60 * settings.timeScale) : it.answerSec;
+  const qText = isFollow ? it.followUp : it.text;
+  app.innerHTML = `${progressBar()}
+    <div class="card stack">
+      <div class="row"><span class="phase">${isFollow ? "꼬리질문" : "답변"} · 문항 ${idx + 1}/${items.length}</span> ${typeBadge(it.type)}</div>
+      ${isFollow ? `<div class="muted">앞 질문: ${esc(it.text)}</div>` : ""}
+      <div class="question pre">${esc(qText)}</div>
+      ${!isFollow && it.passage ? `<details ${it.prepSec ? "" : "open"}><summary class="muted">제시문 ${it.prepSec ? "다시 보기" : ""}</summary><div class="passage" style="margin-top:8px">${esc(it.passage)}</div></details>` : ""}
+      ${it.prepMemo && !isFollow ? `<details><summary class="muted">내 메모</summary><div class="pre" style="margin-top:6px">${esc(it.prepMemo)}</div></details>` : ""}
+      <div class="timer-wrap"><div class="ring" id="ring"></div>
+        <div><div class="muted">제한 ${fmtSec(limit)} · 시간이 지나도 계속 말할 수 있지만 초과 시간이 기록돼요.</div>
+        <div class="mic" id="mic" ${settings.stt && SR ? "" : "hidden"}><span class="dot"></span> 받아쓰기</div></div></div>
+      <div>
+        <textarea class="answer-box" id="answer" placeholder="${settings.stt && SR ? "말하면 여기에 받아써집니다. 직접 고쳐도 돼요." : "답변을 입력하세요."}"></textarea>
+        <div class="interim" id="interim"></div>
+      </div>
+      <div class="row">
+        ${hasTTS && settings.tts ? `<button id="replay" class="btn-sm">🔊 질문 다시 듣기</button>` : ""}
+        <div class="spacer"></div>
+        <button class="btn-primary" id="done">답변 완료</button>
+      </div>
+    </div>`;
+  const ta = $("#answer");
+  ta.value = isFollow ? it.followAnswer : it.answer;
+  speak(qText);
+  $("#replay") && ($("#replay").onclick = () => speak(qText));
+  // 질문 읽는 동안은 받아쓰기가 면접관 음성을 잡지 않도록 잠시 뒤에 시작
+  const sttDelay = settings.tts && hasTTS ? Math.min(6000, 800 + qText.length * 90) : 0;
+  const sttTimer = setTimeout(() => startDictation(ta, $("#interim"), $("#mic")), sttDelay);
+  const elapsed = startTimer(limit, $("#ring"));
+
+  $("#done").onclick = () => {
+    clearTimeout(sttTimer);
+    stopDictation(); stopTimer(); if (hasTTS) speechSynthesis.cancel();
+    // 받아쓰기 도중 남은 임시 결과도 답변에 포함
+    const pending = $("#interim").textContent.trim();
+    const text = (ta.value.trim() + (pending ? " " + pending : "")).trim();
+    const used = Math.round(elapsed());
+    if (isFollow) { it.followAnswer = text; it.followUsedSec = used; }
+    else { it.answer = text; it.usedSec = used; }
+    save().catch(() => {});
+    if (!isFollow && it.followUp) return answerPhase(it, "follow");
+    idx++;
+    if (idx < items.length) runItem(); else reviewPhase();
+  };
+}
+
+function reviewPhase() {
+  app.innerHTML = `${progressBar()}
+    <div class="card stack">
+      <h1>수고했어요!</h1>
+      <p class="muted">받아쓰기가 틀린 부분은 고쳐도 됩니다. 단, 내용을 새로 덧붙이진 마세요 — 실제로 말한 답변이 피드백 대상이에요.</p>
+      ${items.map((it, i) => `
+        <div class="q-item">
+          <div class="row">${typeBadge(it.type)} <span class="muted">Q${i + 1} · ${it.usedSec}초 / ${it.answerSec}초 ${it.usedSec > it.answerSec ? '<span class="badge badge-red">시간 초과</span>' : ""}</span></div>
+          <div class="q-text" style="margin:6px 0">${esc(it.text)}</div>
+          <textarea data-i="${i}" data-f="answer">${esc(it.answer)}</textarea>
+          ${it.followUp ? `<div style="margin:8px 0 4px"><b>꼬리질문</b> ${esc(it.followUp)}</div><textarea data-i="${i}" data-f="followAnswer">${esc(it.followAnswer)}</textarea>` : ""}
+        </div>`).join("")}
+      <div class="grid grid-2">
+        <div><label>잘한 점</label><textarea id="good" placeholder="예: 두괄식으로 결론부터 말했다"></textarea></div>
+        <div><label>아쉬운 점</label><textarea id="improve" placeholder="예: 실험 수치를 구체적으로 말하지 못했다"></textarea></div>
+      </div>
+      <div class="row"><div class="spacer"></div><button class="btn-primary btn-lg" id="submit">제출하기</button></div>
+    </div>`;
+  document.querySelectorAll("textarea[data-i]").forEach((ta) => ta.oninput = () => { items[ta.dataset.i][ta.dataset.f] = ta.value; });
+  $("#submit").onclick = async () => {
+    $("#submit").disabled = true;
+    try {
+      await updateDoc(sessionRef, {
+        items, reflection: { good: $("#good").value.trim(), improve: $("#improve").value.trim() },
+        status: "submitted", submittedAt: serverTimestamp(), updatedAt: serverTimestamp()
+      });
+      try { localStorage.removeItem(LS_KEY()); } catch (_) {}
+      finished = true;
+      toast("제출했어요. 선생님 피드백을 기다려 주세요.");
+      setTimeout(() => location.href = "student.html", 900);
+    } catch (e) {
+      showError(e, "제출");
+      $("#submit").disabled = false;
+    }
+  };
+}
+
+let finished = false;
+$("#quit").onclick = () => {
+  if (sessionRef && !finished && !confirm("그만하시겠어요? 지금까지 답변은 '미완료'로 저장됩니다.")) return;
+  stopDictation(); stopTimer(); if (hasTTS) speechSynthesis.cancel();
+  finished = true;
+  location.href = "student.html";
+};
+window.addEventListener("beforeunload", (e) => {
+  if (sessionRef && !finished) { e.preventDefault(); e.returnValue = ""; }
+});
+</script>
+</body>
+</html>

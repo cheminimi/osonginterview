@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>면접 스튜디오 · 선생님</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  .toolbar select, .toolbar input:not([type=checkbox]) { width: auto; min-width: 110px; }
+  .q-item.sel { border-color: var(--accent); background: #f6f8ff; }
+  .q-item .q-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .check-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  .check-list label, .check-grid label { display: flex; gap: 8px; align-items: center; font-weight: 500; margin: 0; padding: 5px 0; }
+  .check-list label { border-bottom: 1px solid var(--line); }
+  .check-list label:last-child { border-bottom: none; }
+  .check-list input, .check-grid input, .inline-check input { width: auto; }
+  .check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 0 10px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  .inline-check { display: inline-flex; gap: 6px; align-items: center; font-weight: 500; margin: 0; }
+  .ans { background: #fafbfc; border-radius: 8px; padding: 10px 12px; margin: 6px 0; white-space: pre-wrap; }
+  .steps { counter-reset: s; }
+  .step { position: relative; padding-left: 36px; margin-bottom: 18px; }
+  .step::before { counter-increment: s; content: counter(s); position: absolute; left: 0; top: 0; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; font-size: .8rem; font-weight: 700; display: grid; place-items: center; }
+  .pw { font-family: ui-monospace, Menlo, monospace; background: #f1f3f7; padding: 1px 6px; border-radius: 4px; }
+  .dot-new { display: inline-block; min-width: 20px; padding: 0 6px; border-radius: 99px; background: var(--danger); color: #fff; font-size: .75rem; margin-left: 4px; text-align: center; }
+  .chip { display: inline-block; font-size: .72rem; padding: 1px 6px; border-radius: 6px; background: #eef0f4; color: var(--ink-3); margin-right: 3px; white-space: nowrap; }
+  .chip-on { background: #e3f5ec; color: #177a4d; font-weight: 700; }
+  .kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; font-size: .92rem; }
+  .kv dt { color: var(--ink-3); } .kv dd { margin: 0; }
+  .section-title { display: flex; align-items: center; gap: 8px; margin: 22px 0 8px; }
+  .section-title h3 { margin: 0; }
+  .stat-card .stat { font-size: 1.8rem; }
+  .notice { background: #fff8e6; border: 1px solid #f3dfa8; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
+  td.nowrap, th.nowrap { white-space: nowrap; }
+</style>
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <div class="brand">면접 스튜디오<small>선생님</small></div>
+  <div class="spacer"></div>
+  <div class="row" id="acct"></div>
+</div></header>
+
+<main class="wrap">
+  <div class="tabs">
+    <button class="active" data-tab="home">대시보드</button>
+    <button data-tab="students">학생</button>
+    <button data-tab="meetings">대면 기록</button>
+    <button data-tab="questions">예상질문</button>
+    <button data-tab="bank">질문은행</button>
+    <button data-tab="review">연습 리뷰<span id="pendingDot"></span></button>
+    <button data-tab="admin" id="adminTab" hidden>관리</button>
+  </div>
+  <section data-panel="home"></section>
+  <section data-panel="students" hidden></section>
+  <section data-panel="meetings" hidden></section>
+  <section data-panel="questions" hidden></section>
+  <section data-panel="bank" hidden></section>
+  <section data-panel="review" hidden></section>
+  <section data-panel="admin" hidden></section>
+</main>
+
+<div class="modal-bg" id="modal" hidden><div class="modal">
+  <div class="modal-head"><h2 id="mTitle"></h2><button id="mClose">닫기</button></div>
+  <div id="mBody"></div>
+</div></div>
+
+<script type="module">
+import { requireRole, mountAccountMenu, $, $$ } from "./common.js";
+import { S, loadAll, switchTab, closeModal } from "./t-core.js";
+import * as home from "./t-home.js";
+import * as students from "./t-students.js";
+import * as meetings from "./t-meetings.js";
+import * as questions from "./t-questions.js";
+import * as bank from "./t-bank.js";
+import * as review from "./t-review.js";
+import * as admin from "./t-admin.js";
+
+S.ctx = await requireRole("staff");
+mountAccountMenu(S.ctx, $("#acct"));
+$("#mClose").onclick = closeModal;
+$$(".tabs button").forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
+
+const panel = (n) => $(`[data-panel="${n}"]`);
+home.init(panel("home"));
+students.init(panel("students"));
+meetings.init(panel("meetings"));
+questions.init(panel("questions"));
+bank.init(panel("bank"));
+review.init(panel("review"));
+if (S.ctx.isAdmin) { $("#adminTab").hidden = false; admin.init(panel("admin")); }
+
+let last = null;
+try { last = sessionStorage.getItem("teacherTab"); } catch (_) {}
+if (last && (last !== "admin" || S.ctx.isAdmin)) switchTab(last);
+await loadAll();
+if (!last && S.ctx.isAdmin && !S.students.length) switchTab("admin");
+</script>
+</body>
+</html>

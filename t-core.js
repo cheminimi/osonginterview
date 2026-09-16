@@ -1,6 +1,6 @@
 // 교사 화면 공통 상태·도우미
 import {
-  db, collection, getDocs, $, $$, esc, showError, STAGES, toDate, nextInterview, ddayBadge, fmtDay
+  db, collection, getDocs, query, where, onSnapshot, $, $$, esc, toast, showError, STAGES, toDate, nextInterview, ddayBadge, fmtDay
 } from "./common.js";
 
 export const S = {
@@ -32,6 +32,32 @@ export async function loadAll() {
     attachInterviews();
   } catch (e) { showError(e, "데이터 불러오기"); }
   rerender();
+}
+
+// ---- 제출된 말하기 연습 실시간 반영 (새로고침 없이 연습 리뷰에 뜸)
+// 제출된 것만 구독 → 학생이 연습 중 자동 저장할 때마다 읽기가 늘지 않음
+let watching = false;
+export function watchSubmissions() {
+  if (watching) return;
+  watching = true;
+  let first = true;
+  onSnapshot(query(collection(db, "sessions"), where("status", "==", "submitted")), (snap) => {
+    const fresh = [];
+    snap.docChanges().forEach((ch) => {
+      if (ch.type === "removed") return;
+      const d = { id: ch.doc.id, ...ch.doc.data() };
+      const i = S.sessions.findIndex((x) => x.id === d.id);
+      if (i >= 0 && S.sessions[i].status !== "submitted") fresh.push(d);
+      else if (i < 0) fresh.push(d);
+      if (i >= 0) S.sessions[i] = d; else S.sessions.unshift(d);
+    });
+    if (!first && fresh.length) {
+      S.sessions.sort((a, b) => (b.submittedAt?.seconds || b.startedAt?.seconds || 0) - (a.submittedAt?.seconds || a.startedAt?.seconds || 0));
+      toast(fresh.length === 1 ? `새 연습 제출: ${fresh[0].studentName} (${fresh[0].modeLabel || "말하기 연습"})` : `새 연습 제출 ${fresh.length}건`, "ok", 5000);
+    }
+    first = false;
+    rerender("review", "home", "students");
+  }, (e) => console.warn("연습 제출 실시간 반영 중단", e));
 }
 
 // 학생마다 universities(= interviews 날짜순)를 붙인다. 화면들은 st.universities 를 읽는다.

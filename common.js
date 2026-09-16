@@ -6,13 +6,13 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore, connectFirestoreEmulator, collection, doc, getDoc, getDocs, setDoc, addDoc,
-  updateDoc, deleteDoc, query, where, serverTimestamp, writeBatch, deleteField, runTransaction
+  updateDoc, deleteDoc, query, where, serverTimestamp, writeBatch, deleteField, runTransaction, onSnapshot
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { firebaseConfig, ADMIN_EMAILS, LOGIN_EMAIL_DOMAIN } from "./firebase-config.js";
 
 export {
   collection, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc,
-  query, where, serverTimestamp, writeBatch, deleteField, signOut, signInWithEmailAndPassword, runTransaction
+  query, where, serverTimestamp, writeBatch, deleteField, signOut, signInWithEmailAndPassword, runTransaction, onSnapshot
 };
 
 // ---- 에뮬레이터(로컬 테스트) 스위치: 주소 뒤에 ?emu=1 을 한 번 붙이면 켜지고 ?emu=0 이면 꺼짐
@@ -24,6 +24,14 @@ try {
 let USE_EMU = false;
 try { USE_EMU = localStorage.getItem("useEmulator") === "1"; } catch (_) {}
 
+// firebase-config.js 에 설정값을 안 넣었으면 화면에 바로 알림
+export const CONFIG_MISSING = !firebaseConfig.apiKey || /^YOUR_/.test(firebaseConfig.apiKey) || /^YOUR_/.test(firebaseConfig.projectId || "");
+if (CONFIG_MISSING) {
+  const show = () => document.body.insertAdjacentHTML("afterbegin",
+    `<div style="position:fixed;top:0;left:0;right:0;z-index:999;background:#d33a3a;color:#fff;padding:12px 16px;font-weight:600;line-height:1.5">
+      firebase-config.js 에 Firebase 설정값이 아직 없습니다 (apiKey: "YOUR_API_KEY"). GitHub에서 firebase-config.js 를 열어 Firebase 콘솔의 firebaseConfig 값으로 바꿔 주세요.</div>`);
+  document.body ? show() : addEventListener("DOMContentLoaded", show);
+}
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
@@ -280,6 +288,11 @@ export function toast(msg, type = "ok", ms = 3000) {
 
 const ERR_KO = {
   "auth/invalid-credential": "아이디 또는 비밀번호가 맞지 않습니다.",
+  "auth/invalid-api-key": "firebase-config.js 의 apiKey 가 올바르지 않습니다. Firebase 설정값을 다시 붙여넣으세요.",
+  "auth/api-key-not-valid.-please-pass-a-valid-api-key.": "firebase-config.js 의 apiKey 가 올바르지 않습니다. Firebase 설정값을 다시 붙여넣으세요.",
+  "auth/operation-not-allowed": "Firebase Authentication 에서 '이메일/비밀번호' 로그인이 꺼져 있습니다.",
+  "auth/configuration-not-found": "Firebase Authentication 이 아직 시작되지 않았습니다 (콘솔 → Authentication → 시작하기).",
+  "auth/invalid-email": "로그인 ID 형식이 맞지 않습니다.",
   "auth/wrong-password": "비밀번호가 맞지 않습니다.",
   "auth/user-not-found": "등록되지 않은 아이디입니다.",
   "auth/email-already-in-use": "이미 존재하는 로그인 ID입니다.",

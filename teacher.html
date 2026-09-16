@@ -67,7 +67,7 @@
 
 <script type="module">
 import { requireRole, mountAccountMenu, $, $$ } from "./common.js";
-import { S, loadAll, switchTab, closeModal } from "./t-core.js";
+import { S, loadAll, switchTab, closeModal, watchSubmissions } from "./t-core.js";
 import * as home from "./t-home.js";
 import * as schedule from "./t-schedule.js";
 import * as students from "./t-students.js";
@@ -96,6 +96,7 @@ let last = null;
 try { last = sessionStorage.getItem("teacherTab"); } catch (_) {}
 if (last && (last !== "admin" || S.ctx.isAdmin)) switchTab(last);
 await loadAll();
+watchSubmissions();
 if (!last && S.ctx.isAdmin && !S.students.length) switchTab("admin");
 </script>
 </body>

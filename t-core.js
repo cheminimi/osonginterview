@@ -60,7 +60,7 @@ export const studentByNo = (no) => S.students.find((s) => s.studentNo === no);
 
 // 대면 기록 진행 칩: 1차 ✓ 2차 · 3차 ·
 export function stageChips(st) {
-  const done = new Set(S.meetings.filter((m) => m.studentNo === st.studentNo).map((m) => m.stage));
+  const done = new Set(S.meetings.filter((m) => m.studentNo === st.studentNo && !m.planned).map((m) => m.stage));
   return STAGES.slice(0, 3).map((s) =>
     `<span class="chip ${done.has(s.key) ? "chip-on" : ""}" title="${s.label}">${s.key}차${done.has(s.key) ? "✓" : ""}</span>`).join("");
 }

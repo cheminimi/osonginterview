@@ -5,6 +5,7 @@ import {
 import { S, register, rerender, loadAll, openModal, closeModal, opt, studentByNo } from "./t-core.js";
 import { importStaff } from "./importers.js";
 import { getSyncConfig, clearSyncCache, testConnection, requestSync } from "./sync.js";
+import { loadScheduleConfig, DEFAULT_BLOCKS } from "./schedule.js";
 
 let root;
 export function init(el) {
@@ -14,10 +15,12 @@ export function init(el) {
       <button class="active" data-ad="sync">① 시트 연동</button>
       <button data-ad="staff">② 교사 계정</button>
       <button data-ad="student">③ 학생 계정</button>
+      <button data-ad="sched">④ 일정 설정</button>
     </div>
     <div data-adpanel="sync"></div>
     <div data-adpanel="staff" hidden></div>
-    <div data-adpanel="student" hidden></div>`;
+    <div data-adpanel="student" hidden></div>
+    <div data-adpanel="sched" hidden></div>`;
   $$("[data-ad]", root).forEach((b) => b.onclick = () => {
     $$("[data-ad]", root).forEach((x) => x.classList.toggle("active", x === b));
     $$("[data-adpanel]", root).forEach((p) => p.hidden = p.dataset.adpanel !== b.dataset.ad);
@@ -271,7 +274,12 @@ async function renderSync() {
   $("#sySave", p).onclick = async () => {
     const url = $("#syUrl", p).value.trim(), token = $("#syToken", p).value.trim();
     if (url && !/^https:\/\/script\.google\.com\/.+\/exec$/.test(url)) return toast("URL은 https://script.google.com/…/exec 형태여야 합니다.", "error");
-    try { await setDoc(doc(db, "config", "sync"), { url, token, updatedAt: serverTimestamp() }, { merge: true }); clearSyncCache(); $("#syState", p).textContent = "저장됨"; }
+    try {
+      await setDoc(doc(db, "config", "sync"), { url, token, updatedAt: serverTimestamp() }, { merge: true });
+      // 일정 변경 알림용 주소 (학생도 읽는 문서 · 토큰은 넣지 않음)
+      await setDoc(doc(db, "config", "schedule"), { syncUrl: url }, { merge: true });
+      clearSyncCache(); $("#syState", p).textContent = "저장됨";
+    }
     catch (e) { showError(e, "설정 저장"); }
   };
   $("#syTest", p).onclick = async () => {
@@ -283,7 +291,7 @@ async function renderSync() {
   };
   $("#syNow", p).onclick = async () => {
     $("#syState", p).textContent = "동기화 중… (학생 수가 많으면 1분 가까이 걸릴 수 있어요)";
-    const r = await requestSync(["students", "interviews", "meetings"], { quiet: true });
+    const r = await requestSync(["students", "interviews", "bookings", "meetings"], { quiet: true });
     if (r.ok) {
       const x = r.result || {};
       toast(`동기화 완료 · 시트→앱 ${x.pushed || 0} · 앱→시트 ${x.pulled || 0} · 새로 추가 ${x.created || 0} · 삭제 ${x.deleted || 0}`, "ok", 6000);
@@ -292,8 +300,56 @@ async function renderSync() {
   };
 }
 
+// ================= ④ 일정 설정 (장소 · 시간표) =================
+async function renderSched() {
+  const p = $("[data-adpanel=sched]", root);
+  const cfg = await loadScheduleConfig();
+  let rooms = [...cfg.rooms];
+  let blocks = cfg.blocks.map((b) => ({ ...b }));
+  const draw = () => {
+    p.innerHTML = `
+      <div class="grid grid-2" style="align-items:start">
+        <div class="card">
+          <h3>장소</h3>
+          <p class="muted" style="margin-top:0">학생·선생님이 고르는 장소 목록입니다. 목록에 없는 곳은 선생님이 '기타'로 직접 적을 수 있어요. 같은 장소·같은 시간은 겹쳐 잡을 수 없습니다.</p>
+          <div id="rmList">${rooms.map((r, i) => `<div class="row sc-miss"><b>${esc(r)}</b><div class="spacer"></div><button class="btn-sm btn-danger" data-rmdel="${i}">삭제</button></div>`).join("") || '<div class="muted">없음</div>'}</div>
+          <div class="row" style="margin-top:8px"><input id="rmNew" placeholder="예: 3학년 상담실" style="flex:1;width:auto"><button id="rmAdd">추가</button></div>
+        </div>
+        <div class="card">
+          <h3>시간표 (칸)</h3>
+          <p class="muted" style="margin-top:0">1차는 칸 전체, 2·3차는 칸 안에서 30분 단위로 잡힙니다. 시험·단축 수업 때 고치세요. <b>칸 코드는 바꾸지 마세요</b> (이미 잡힌 일정과 연결됨).</p>
+          <div class="table-wrap"><table><thead><tr><th>코드</th><th>이름</th><th>시작</th><th>끝</th><th></th></tr></thead><tbody>
+            ${blocks.map((b, i) => `<tr><td><input data-bi="${i}" data-bk="key" value="${esc(b.key)}" style="width:70px" ${cfg.blocks.some((x) => x.key === b.key) ? "readonly" : ""}></td>
+              <td><input data-bi="${i}" data-bk="label" value="${esc(b.label)}"></td>
+              <td><input type="time" data-bi="${i}" data-bk="start" value="${esc(b.start)}"></td><td><input type="time" data-bi="${i}" data-bk="end" value="${esc(b.end)}"></td>
+              <td><button class="btn-sm btn-danger" data-bdel="${i}">×</button></td></tr>`).join("")}
+          </tbody></table></div>
+          <div class="row" style="margin-top:8px"><button class="btn-sm" id="bkAdd">+ 칸 추가</button><button class="btn-sm" id="bkReset">기본 시간표로</button></div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:14px"><button class="btn-primary" id="schSave">저장</button><span class="muted">저장하면 학생·선생님 달력에 바로 적용됩니다 (새로고침).</span></div>`;
+    $$("[data-rmdel]", p).forEach((b) => b.onclick = () => { rooms.splice(Number(b.dataset.rmdel), 1); draw(); });
+    $("#rmAdd", p).onclick = () => { const v = $("#rmNew", p).value.trim(); if (!v) return; if (rooms.includes(v)) return toast("이미 있는 장소입니다.", "error"); rooms.push(v); draw(); };
+    $("#rmNew", p).onkeydown = (e) => { if (e.key === "Enter") $("#rmAdd", p).click(); };
+    $$("[data-bi]", p).forEach((el) => el.oninput = () => { blocks[el.dataset.bi][el.dataset.bk] = el.value.trim(); });
+    $$("[data-bdel]", p).forEach((b) => b.onclick = () => { blocks.splice(Number(b.dataset.bdel), 1); draw(); });
+    $("#bkAdd", p).onclick = () => { blocks.push({ key: "x" + (blocks.length + 1), label: "", start: "", end: "" }); draw(); };
+    $("#bkReset", p).onclick = () => { if (confirm("기본 시간표(1~7교시·점심·방과후·야자)로 되돌릴까요?")) { blocks = DEFAULT_BLOCKS.map((b) => ({ ...b })); draw(); } };
+    $("#schSave", p).onclick = async () => {
+      const bad = blocks.find((b) => !/^[a-z0-9_]+$/i.test(b.key) || !b.label || !/^\d{2}:\d{2}$/.test(b.start) || !/^\d{2}:\d{2}$/.test(b.end) || b.start >= b.end);
+      if (bad) return toast(`칸 "${bad.label || bad.key}"의 코드(영문·숫자)·이름·시간을 확인하세요.`, "error");
+      if (new Set(blocks.map((b) => b.key)).size !== blocks.length) return toast("칸 코드가 겹칩니다.", "error");
+      const sorted = [...blocks].sort((a, b) => a.start.localeCompare(b.start));
+      try { await setDoc(doc(db, "config", "schedule"), { rooms, blocks: sorted, updatedAt: serverTimestamp() }, { merge: true }); toast("일정 설정을 저장했습니다."); renderSched(); }
+      catch (e) { showError(e, "일정 설정 저장"); }
+    };
+  };
+  draw();
+}
+
 function render() {
   renderStaff();
   renderStudentAccounts();
   renderSync();
+  renderSched();
 }

@@ -20,8 +20,7 @@
   .mode .rec { position: absolute; top: 12px; right: 12px; }
   .fb-box { background: #f7f9ff; border: 1px solid #dfe6fb; border-radius: 10px; padding: 12px 14px; margin-top: 8px; }
   .ans { background: #fafbfc; border-radius: 8px; padding: 10px 12px; margin-top: 6px; white-space: pre-wrap; }
-  .kv { display: grid; grid-template-columns: 90px 1fr; gap: 4px 10px; font-size: .92rem; }
-  .kv dt { color: var(--ink-3); } .kv dd { margin: 0; white-space: pre-wrap; }
+  .kv dd { white-space: pre-wrap; }
   @media (max-width: 560px) { .hero { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -46,11 +45,13 @@
   <div class="grid grid-4" id="modes"></div>
 
   <div class="tabs" style="margin-top:28px">
-    <button class="active" data-tab="feedback">선생님 피드백<span id="fbDot"></span></button>
+    <button class="active" data-tab="schedule">모의면접 일정<span id="scDot"></span></button>
+    <button data-tab="feedback">선생님 피드백<span id="fbDot"></span></button>
     <button data-tab="history">연습 기록</button>
     <button data-tab="mine">내 예상질문</button>
   </div>
-  <section data-panel="feedback"><div id="feedback"></div></section>
+  <section data-panel="schedule"><div id="schedule"></div></section>
+  <section data-panel="feedback" hidden><div id="feedback"></div></section>
   <section data-panel="history" hidden><div id="history"></div></section>
   <section data-panel="mine" hidden>
     <div class="row" style="margin-bottom:10px">
@@ -72,6 +73,7 @@ import {
   db, requireRole, mountAccountMenu, collection, getDocs, query, where, esc, $, $$, showError, loadInterviewsFor,
   CRITERIA, STAGES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes
 } from "./common.js";
+import { mountSchedule } from "./schedule.js";
 
 const ctx = await requireRole("student");
 const { user, profile: me } = ctx;
@@ -127,6 +129,12 @@ $("#modes").innerHTML = modes.map((m) => `
     <div class="count">${m.n ? `질문 ${m.n}개` : "아직 질문이 없어요"}</div>
   </div>`).join("");
 $$(".mode").forEach((el) => el.onclick = () => location.href = `interview.html?mode=${el.dataset.mode}`);
+
+// ---- 모의면접 일정 (달력: 다른 학생 일정도 보여서 같은 선생님·같은 장소 겹침을 피할 수 있음)
+mountSchedule($("#schedule"), {
+  role: "student", student: me,
+  onBadge: (n) => { $("#scDot").innerHTML = n ? ` <span class="badge badge-red">${n}</span>` : ""; }
+});
 
 // ---- 탭
 $$(".tabs button").forEach((b) => b.onclick = () => {

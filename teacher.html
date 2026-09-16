@@ -22,7 +22,6 @@
   .step { position: relative; padding-left: 36px; margin-bottom: 18px; }
   .step::before { counter-increment: s; content: counter(s); position: absolute; left: 0; top: 0; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; font-size: .8rem; font-weight: 700; display: grid; place-items: center; }
   .pw { font-family: ui-monospace, Menlo, monospace; background: #f1f3f7; padding: 1px 6px; border-radius: 4px; }
-  .dot-new { display: inline-block; min-width: 20px; padding: 0 6px; border-radius: 99px; background: var(--danger); color: #fff; font-size: .75rem; margin-left: 4px; text-align: center; }
   .chip { display: inline-block; font-size: .72rem; padding: 1px 6px; border-radius: 6px; background: #eef0f4; color: var(--ink-3); margin-right: 3px; white-space: nowrap; }
   .chip-on { background: #e3f5ec; color: #177a4d; font-weight: 700; }
   .kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; font-size: .92rem; }
@@ -30,7 +29,6 @@
   .section-title { display: flex; align-items: center; gap: 8px; margin: 22px 0 8px; }
   .section-title h3 { margin: 0; }
   .stat-card .stat { font-size: 1.8rem; }
-  .notice { background: #fff8e6; border: 1px solid #f3dfa8; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
   td.nowrap, th.nowrap { white-space: nowrap; }
 </style>
 </head>
@@ -44,6 +42,7 @@
 <main class="wrap">
   <div class="tabs">
     <button class="active" data-tab="home">대시보드</button>
+    <button data-tab="schedule">일정<span id="scDot"></span></button>
     <button data-tab="students">학생</button>
     <button data-tab="meetings">대면 기록</button>
     <button data-tab="questions">예상질문</button>
@@ -52,6 +51,7 @@
     <button data-tab="admin" id="adminTab" hidden>관리</button>
   </div>
   <section data-panel="home"></section>
+  <section data-panel="schedule" hidden></section>
   <section data-panel="students" hidden></section>
   <section data-panel="meetings" hidden></section>
   <section data-panel="questions" hidden></section>
@@ -69,6 +69,7 @@
 import { requireRole, mountAccountMenu, $, $$ } from "./common.js";
 import { S, loadAll, switchTab, closeModal } from "./t-core.js";
 import * as home from "./t-home.js";
+import * as schedule from "./t-schedule.js";
 import * as students from "./t-students.js";
 import * as meetings from "./t-meetings.js";
 import * as questions from "./t-questions.js";
@@ -79,10 +80,11 @@ import * as admin from "./t-admin.js";
 S.ctx = await requireRole("staff");
 mountAccountMenu(S.ctx, $("#acct"));
 $("#mClose").onclick = closeModal;
-$$(".tabs button").forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
+$$(".tabs:not(.sub) > button").forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
 
 const panel = (n) => $(`[data-panel="${n}"]`);
 home.init(panel("home"));
+schedule.init(panel("schedule"));
 students.init(panel("students"));
 meetings.init(panel("meetings"));
 questions.init(panel("questions"));

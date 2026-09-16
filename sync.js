@@ -58,3 +58,11 @@ export async function testConnection(url, token) {
   if (!data.ok) throw new Error(data.error || "연결 실패");
   return data;
 }
+
+// 모의면접 일정 변경 알림 (학생도 보냄 · 토큰 없이 '일정 로그 옮기기'만 요청). 실패해도 30분 대조 때 반영
+export function pingScheduleSync(url) {
+  if (!url) return;
+  try {
+    fetch(url, { method: "POST", mode: "no-cors", body: JSON.stringify({ kinds: ["bookings"] }) }).catch((e) => console.warn("schedule sync", e));
+  } catch (e) { console.warn("schedule sync", e); }
+}

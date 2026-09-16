@@ -1,6 +1,6 @@
 import {
-  db, collection, doc, addDoc, updateDoc, deleteDoc, serverTimestamp, $, $$, esc, toast, showError,
-  STAGES, MEETING_TYPES, isoDay, fmtDay
+  db, collection, doc, addDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, $, $$, esc, toast, showError,
+  STAGES, MEETING_TYPES, isoDay, fmtDay, defaultMeetingType
 } from "./common.js";
 import { S, register, rerender, myName, openModal, closeModal, readForm, opt, studentOptions, studentByNo } from "./t-core.js";
 import { requestSync } from "./sync.js";
@@ -28,6 +28,7 @@ export function init(el) {
 
 const stageLabel = (k) => STAGES.find((s) => s.key === Number(k))?.label || "-";
 export function syncBadge(m) {
+  if (m.planned) return '<span class="badge badge-blue" title="일정 확정으로 자동 생성 · 면접 후 내용을 적어 주세요">일정 확정 · 기록 전</span>';
   return m.createdBy === "시트" ? '<span class="badge badge-gray" title="시트에서 직접 입력한 기록">시트 입력</span>' : "";
 }
 
@@ -66,33 +67,28 @@ function defaultTeachers(st, stage) {
   if (me && !list.includes(me) && (!list.length || stage === 4)) list.unshift(me);
   return list.length ? list : (me ? [me] : []);
 }
-function defaultType(st) {
-  if (!st) return "학생부 기반";
-  if (st.special?.includes("제시문")) return "제시문";
-  if (st.track?.includes("인성") && !st.track.includes("학생부")) return "기본 인성";
-  if (st.track === "담임 기본지도") return "담임 기본지도";
-  return "학생부 기반";
-}
+const defaultType = defaultMeetingType;
 function guessStage(st) {
   const me = myName(); const a = st?.assign || {};
-  const done = new Set(S.meetings.filter((m) => m.studentNo === st?.studentNo).map((m) => m.stage));
+  const done = new Set(S.meetings.filter((m) => m.studentNo === st?.studentNo && !m.planned).map((m) => m.stage));
   if (a.s1 === me && !done.has(1)) return 1;
   if (a.s2 === me && !done.has(2)) return 2;
   if ((a.s3a === me || a.s3b === me) && !done.has(3)) return 3;
   return [1, 2, 3].find((k) => !done.has(k)) || 4;
 }
 
-export function openMeetingForm({ id = null, studentNo = "" }) {
+// preset: 일정 탭 '대면 기록 쓰기' → { id: 'bk_예약ID', stage, date, teachers, bookingId }
+export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
   const m = id ? S.meetings.find((x) => x.id === id) : null;
   const st0 = studentByNo(m?.studentNo || studentNo);
-  const stage0 = m?.stage || (st0 ? guessStage(st0) : 1);
-  const teachers0 = m?.teachers || defaultTeachers(st0, stage0);
+  const stage0 = m?.stage || preset?.stage || (st0 ? guessStage(st0) : 1);
+  const teachers0 = m?.teachers || preset?.teachers || defaultTeachers(st0, stage0);
   const staffNames = [...new Set([...S.staff.map((t) => t.name), ...teachers0])];
   const body = openModal(m ? "대면 모의면접 기록 수정" : "대면 모의면접 기록", `<form id="mf">
     <div class="grid grid-2" style="gap:0 14px">
       <div class="field"><label>학생 *</label><select name="studentNo" required ${m ? "disabled" : ""}>${studentOptions(st0?.studentNo || "")}</select></div>
       <div class="field"><label>차수</label><select name="stage">${opt(STAGES.map((s) => [s.key, s.label]), stage0)}</select></div>
-      <div class="field"><label>실시일 *</label><input type="date" name="date" value="${esc(m?.date || isoDay())}" required></div>
+      <div class="field"><label>실시일 *</label><input type="date" name="date" value="${esc(m?.date || preset?.date || isoDay())}" required></div>
       <div class="field"><label>면접 유형</label><select name="type">${opt(MEETING_TYPES, m?.type || defaultType(st0))}</select></div>
     </div>
     <div class="field"><label>담당교사</label>
@@ -135,7 +131,7 @@ export function openMeetingForm({ id = null, studentNo = "" }) {
       studentNo: no, name: st.name, cls: st.cls || "", studentUid: st.uid || "",
       stage: Number(f.stage), date: f.date, type: f.type, teachers,
       questions: f.questions, answerSummary: f.answerSummary, good: f.good, improve: f.improve, nextGoal: f.nextGoal,
-      shared: !!f.shared, updatedAt: serverTimestamp(), updatedAtMs: Date.now()
+      shared: !!f.shared, planned: false, updatedAt: serverTimestamp(), updatedAtMs: Date.now()
     };
     $("#mSave", body).disabled = true;
     try {
@@ -144,8 +140,11 @@ export function openMeetingForm({ id = null, studentNo = "" }) {
         Object.assign(m, data);
       } else {
         data.createdAt = serverTimestamp(); data.createdByUid = S.ctx.user.uid; data.createdBy = myName() || S.ctx.user.email;
-        const ref = await addDoc(collection(db, "meetings"), data);
-        S.meetings.unshift({ id: ref.id, ...data });
+        if (preset?.bookingId) data.bookingId = preset.bookingId;
+        let newId;
+        if (preset?.id) { await setDoc(doc(db, "meetings", preset.id), data, { merge: true }); newId = preset.id; }
+        else newId = (await addDoc(collection(db, "meetings"), data)).id;
+        S.meetings.unshift({ id: newId, ...data });
       }
     } catch (err) { showError(err, "기록 저장"); $("#mSave", body).disabled = false; return; }
     closeModal();

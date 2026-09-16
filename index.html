@@ -3,13 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>면접 스튜디오 · 로그인</title>
+<title>오송고 면접 스튜디오 · 로그인</title>
+<link rel="icon" type="image/png" href="osong-logo.png">
 <link rel="stylesheet" href="style.css">
 <style>
   body { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px 16px; }
   .login { width: 100%; max-width: 400px; }
   .hero { text-align: center; margin-bottom: 22px; }
-  .hero .logo { width: 56px; height: 56px; border-radius: 16px; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 1.6rem; font-weight: 800; margin: 0 auto 12px; }
+  .hero .logo { display: block; width: 96px; height: 96px; margin: 0 auto 14px; filter: drop-shadow(0 4px 12px rgba(24, 48, 141, .18)); }
   .seg { display: grid; grid-template-columns: 1fr 1fr; background: #eceef2; border-radius: 10px; padding: 4px; margin-bottom: 16px; }
   .seg button { border: none; background: none; color: var(--ink-3); justify-content: center; }
   .seg button.active { background: #fff; color: var(--ink); box-shadow: var(--shadow); }
@@ -20,9 +21,9 @@
 <body>
 <div class="login">
   <div class="hero">
-    <div class="logo">面</div>
-    <h1>면접 스튜디오</h1>
-    <div class="muted" id="school"></div>
+    <img class="logo" src="osong-logo.png" alt="오송고등학교 로고">
+    <h1>오송고 면접 스튜디오</h1>
+    <div class="muted">2027학년도 대입 대비 오송고등학교 면접 대비</div>
   </div>
   <div class="card" id="already" hidden>
     <p style="margin-top:0"><b id="alreadyWho"></b>(으)로 로그인되어 있어요.</p>
@@ -55,10 +56,8 @@
 </div>
 <script type="module">
 import { auth, signIn, signOut, resolveLoginEmail, showError, toast, loginLabel, $, $$ } from "./common.js";
-import { SCHOOL_NAME, PROGRAM_NAME } from "./firebase-config.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
-$("#school").textContent = `${SCHOOL_NAME} ${PROGRAM_NAME}`;
 let kind = "student";
 $$(".seg button").forEach((b) => b.onclick = () => {
   kind = b.dataset.role;

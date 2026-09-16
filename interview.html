@@ -40,6 +40,7 @@
   <div class="spacer"></div>
   <span class="save-state" id="saveState"></span>
   <button class="btn-sm" id="quit">그만하기</button>
+  <button class="btn-sm" id="logoutBtn">로그아웃</button>
 </div></header>
 
 <main class="stage" id="app"></main>
@@ -51,6 +52,9 @@ import {
 } from "./common.js";
 
 const { user, profile } = await requireRole("student");
+document.getElementById("logoutBtn").onclick = async () => {
+  if (confirm("로그아웃할까요? 진행 중인 연습은 지금까지 자동 저장된 곳까지 남습니다.")) (await import("./common.js")).logout();
+};
 let depts = [];
 try { depts = (await loadInterviewsFor(profile.studentNo)).map((u) => u.dept || "").filter(Boolean); } catch (e) { console.warn(e); }
 const mode = new URLSearchParams(location.search).get("mode") || "document";

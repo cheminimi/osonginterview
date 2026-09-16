@@ -13,6 +13,8 @@
   .seg { display: grid; grid-template-columns: 1fr 1fr; background: #eceef2; border-radius: 10px; padding: 4px; margin-bottom: 16px; }
   .seg button { border: none; background: none; color: var(--ink-3); justify-content: center; }
   .seg button.active { background: #fff; color: var(--ink); box-shadow: var(--shadow); }
+  .keep { display: flex; gap: 8px; align-items: center; font-weight: 500; margin: 2px 0 14px; }
+  .keep input { width: auto; }
 </style>
 </head>
 <body>
@@ -22,7 +24,15 @@
     <h1>면접 스튜디오</h1>
     <div class="muted" id="school"></div>
   </div>
-  <div class="card">
+  <div class="card" id="already" hidden>
+    <p style="margin-top:0"><b id="alreadyWho"></b>(으)로 로그인되어 있어요.</p>
+    <div class="row">
+      <button class="btn-primary" id="goOn" style="flex:1;justify-content:center">계속하기</button>
+      <button id="outBtn" style="flex:1;justify-content:center">로그아웃</button>
+    </div>
+    <p class="muted" style="margin:10px 0 0">다른 사람이 쓰던 컴퓨터라면 로그아웃한 뒤 내 계정으로 로그인하세요.</p>
+  </div>
+  <div class="card" id="loginCard">
     <div class="seg">
       <button type="button" class="active" data-role="student">학생</button>
       <button type="button" data-role="staff">선생님</button>
@@ -36,13 +46,15 @@
         <label for="pw">비밀번호</label>
         <input id="pw" type="password" autocomplete="current-password" required>
       </div>
+      <label class="keep"><input type="checkbox" id="keep"> 이 기기에서 로그인 유지 <span class="muted">(내 휴대폰·개인 PC만)</span></label>
       <button class="btn-primary btn-lg" style="width:100%;justify-content:center" id="submit">로그인</button>
     </form>
     <p class="muted" id="hint" style="margin:12px 0 0">처음이면 선생님께 받은 초기 비밀번호로 로그인한 뒤 바꿔 주세요.</p>
+    <p class="muted" style="margin:6px 0 0">체크하지 않으면 브라우저를 닫거나 60분 동안 사용하지 않을 때 자동으로 로그아웃됩니다.</p>
   </div>
 </div>
 <script type="module">
-import { auth, signInWithEmailAndPassword, resolveLoginEmail, showError, $, $$ } from "./common.js";
+import { auth, signIn, signOut, resolveLoginEmail, showError, toast, loginLabel, $, $$ } from "./common.js";
 import { SCHOOL_NAME, PROGRAM_NAME } from "./firebase-config.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
@@ -58,7 +70,25 @@ $$(".seg button").forEach((b) => b.onclick = () => {
     : "관리자에게 받은 ID로 로그인합니다. (최고 관리자는 이메일 입력)";
 });
 
-const unsub = onAuthStateChanged(auth, (u) => { unsub(); if (u) location.replace("teacher.html"); });
+const qs = new URLSearchParams(location.search);
+if (qs.has("out")) toast("로그아웃했습니다.");
+if (qs.has("idle")) toast("오랫동안 사용하지 않아 자동으로 로그아웃했습니다.", "ok", 6000);
+if (qs.has("out") || qs.has("idle")) history.replaceState(null, "", "index.html");
+
+// 이미 로그인된 상태면 바로 넘어가지 않고 누구로 로그인됐는지 보여 준다 (공용 PC에서 남의 계정으로 들어가는 것 방지)
+const unsub = onAuthStateChanged(auth, (u) => {
+  unsub();
+  if (!u) return;
+  $("#alreadyWho").textContent = loginLabel(u.email);
+  $("#already").hidden = false;
+  $("#loginCard").hidden = true;
+});
+$("#goOn").onclick = () => location.replace("teacher.html");   // 학생 계정이면 학생 화면으로 자동 이동
+$("#outBtn").onclick = async () => {
+  try { await signOut(auth); sessionStorage.clear(); localStorage.removeItem("keepLogin"); } catch (e) { showError(e, "로그아웃"); }
+  $("#already").hidden = true; $("#loginCard").hidden = false;
+  toast("로그아웃했습니다.");
+};
 
 $("#form").onsubmit = async (e) => {
   e.preventDefault();
@@ -66,7 +96,7 @@ $("#form").onsubmit = async (e) => {
   $("#submit").disabled = true;
   try {
     const email = await resolveLoginEmail(kind, id);
-    await signInWithEmailAndPassword(auth, email, pw);
+    await signIn(email, pw, $("#keep").checked);
     location.replace(kind === "student" ? "student.html" : "teacher.html");
   } catch (err) {
     showError(err, "로그인");

@@ -1,7 +1,8 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword,
-  connectAuthEmulator, EmailAuthProvider, reauthenticateWithCredential, updatePassword
+  connectAuthEmulator, EmailAuthProvider, reauthenticateWithCredential, updatePassword,
+  setPersistence, browserSessionPersistence, browserLocalPersistence
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore, connectFirestoreEmulator, collection, doc, getDoc, getDocs, setDoc, addDoc,
@@ -74,6 +75,31 @@ export const loginDocId = (kind, id) => `${kind === "student" ? "s" : "t"}_${cle
 export const defaultEmail = (kind, id, version = 1) =>
   `${kind === "student" ? "s" : "t"}${cleanId(id)}${version > 1 ? ".v" + version : ""}@${LOGIN_EMAIL_DOMAIN}`;
 
+// ---- 로그인 유지 방식
+// 기본: 브라우저(창)를 닫으면 로그아웃 + 60분 동안 아무 조작이 없으면 자동 로그아웃 (학교 공용 PC 대비)
+// '이 기기에서 로그인 유지'를 체크한 경우만 브라우저를 닫아도 유지
+const KEEP_KEY = "keepLogin";
+const IDLE_MIN = 60;
+export function keepLoginOn() { try { return localStorage.getItem(KEEP_KEY) === "1"; } catch (_) { return false; } }
+export async function signIn(email, pw, keep = false) {
+  try { keep ? localStorage.setItem(KEEP_KEY, "1") : localStorage.removeItem(KEEP_KEY); } catch (_) {}
+  await setPersistence(auth, keep ? browserLocalPersistence : browserSessionPersistence);
+  return signInWithEmailAndPassword(auth, email, pw);
+}
+function startIdleLogout() {
+  if (keepLoginOn()) return;
+  let last = Date.now();
+  const bump = () => { last = Date.now(); };
+  ["pointerdown", "keydown", "scroll", "touchstart", "mousemove"].forEach((ev) => window.addEventListener(ev, bump, { passive: true }));
+  setInterval(() => { if (Date.now() - last > IDLE_MIN * 60000) logout("idle"); }, 30000);
+}
+// 로그인 이메일 → 화면에 보일 이름 (s3107@… → 학번 3107)
+export function loginLabel(email) {
+  const m = String(email || "").match(/^([st])([^@.]+)(?:\.v\d+)?@/);
+  if (!m || !String(email).endsWith("@" + LOGIN_EMAIL_DOMAIN)) return email || "";
+  return m[1] === "s" ? `학번 ${m[2]}` : `교사 ID ${m[2]}`;
+}
+
 // 로그인 ID → 실제 이메일 (비밀번호 재발급으로 바뀐 경우 logins 문서에 기록됨)
 export async function resolveLoginEmail(kind, id) {
   if (kind !== "student" && id.includes("@")) return id.trim();
@@ -120,15 +146,17 @@ export function requireRole(want) {
         if (!isStaff && !profile) { toast("학생 정보가 없습니다. 선생님께 문의하세요.", "error", 10000); return; }
         const ctx = { user, account, profile, isAdmin: account.role === "admin", isStaff };
         if (profile?.mustChangePw) await forcePasswordChange(ctx);
+        startIdleLogout();
         resolve(ctx);
       } catch (e) { showError(e, "로그인 정보 확인"); }
     });
   });
 }
 
-export async function logout() {
-  await signOut(auth);
-  location.replace("index.html");
+export async function logout(reason = "out") {
+  try { await signOut(auth); } catch (e) { console.warn("signOut", e); }
+  try { sessionStorage.clear(); localStorage.removeItem(KEEP_KEY); localStorage.removeItem("myStaffName"); } catch (_) {}
+  location.replace(`index.html?${reason === "idle" ? "idle" : "out"}=1`);
 }
 
 // ---- 계정 생성 (현재 로그인을 유지하려고 보조 앱 인스턴스 사용)
@@ -224,7 +252,7 @@ export function mountAccountMenu(ctx, el) {
   const name = ctx.profile?.name || ctx.user.email;
   el.innerHTML = `<span class="muted">${esc(name)}${ctx.isAdmin ? ' <span class="badge badge-red">관리자</span>' : ""}</span>
     <button class="btn-sm" id="acctPw">비밀번호</button><button class="btn-sm" id="acctOut">로그아웃</button>`;
-  el.querySelector("#acctOut").onclick = logout;
+  el.querySelector("#acctOut").onclick = () => logout();
   const pwBtn = el.querySelector("#acctPw");
   if (ctx.account.bootstrap) pwBtn.hidden = true; // 관리자 이메일 계정은 Firebase 콘솔에서 관리
   pwBtn.onclick = () => openPasswordModal(ctx);

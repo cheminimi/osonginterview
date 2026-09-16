@@ -76,6 +76,22 @@ export async function resolveLoginEmail(kind, id) {
   return defaultEmail(kind, id);
 }
 
+// 로그인 화면과 각 페이지에서 동일한 계정 판정 사용. 조회 실패를 학생으로 간주하지 않는다.
+export async function readAccount(user) {
+  const snap = await getDoc(doc(db, "accounts", user.uid));
+  if (snap.exists()) return snap.data();
+  if (isAdminEmail(user.email)) return { role: "admin", key: null, bootstrap: true };
+  return null;
+}
+
+export function accountHome(account) {
+  if (!account) throw new Error("계정 정보가 없습니다. 관리자에게 문의하세요.");
+  if (account.role === "student") return "student.html";
+  if (account.role === "teacher" || account.role === "admin") return "teacher.html";
+  if (account.role === "sync") throw new Error("시트 동기화 전용 계정은 화면에 로그인할 수 없습니다.");
+  throw new Error("계정 권한을 확인할 수 없습니다. 관리자에게 문의하세요.");
+}
+
 /**
  * 로그인 확인 후 사용자 정보 반환.
  * want: 'staff' | 'student'
@@ -87,10 +103,7 @@ export function requireRole(want) {
       unsub();
       if (!user) { location.replace("index.html"); return; }
       try {
-        let account = null;
-        const a = await getDoc(doc(db, "accounts", user.uid));
-        if (a.exists()) account = a.data();
-        else if (isAdminEmail(user.email)) account = { role: "admin", key: null, bootstrap: true };
+        const account = await readAccount(user);
         if (!account) {
           toast("계정 정보가 없습니다. 관리자에게 문의하세요.", "error", 10000);
           setTimeout(() => signOut(auth).then(() => location.replace("index.html")), 2500);
@@ -101,7 +114,9 @@ export function requireRole(want) {
           setTimeout(() => signOut(auth).then(() => location.replace("index.html")), 2500);
           return;
         }
-        const isStaff = account.role === "admin" || account.role === "teacher";
+        // 알 수 없는 역할도 학생으로 통과시키지 않는다.
+        const home = accountHome(account);
+        const isStaff = home === "teacher.html";
         if (want === "staff" && !isStaff) { location.replace("student.html"); return; }
         if (want === "student" && isStaff) { location.replace("teacher.html"); return; }
         let profile = null;

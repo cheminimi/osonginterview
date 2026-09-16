@@ -57,17 +57,39 @@
     </form>
     <p class="muted" id="hint" style="margin:12px 0 0">선생님께 받은 학번과 비밀번호로 로그인하세요. 처음 로그인하거나 비밀번호를 재발급받으면 변경 화면이 표시됩니다.</p>
     <p id="status" class="muted" role="status" aria-live="polite">로그인 상태를 확인하고 있습니다.</p>
+    <button type="button" id="reloadLogin" hidden>다시 불러오기</button>
     <noscript><p>로그인하려면 브라우저에서 JavaScript를 켜 주세요.</p></noscript>
   </div>
 </main>
 <script type="module">
-import { auth, signInWithEmailAndPassword, signOut, resolveLoginEmail, readAccount, accountHome, showError, $, $$ } from "./common.js";
-import { SCHOOL_NAME, PROGRAM_NAME } from "./firebase-config.js";
+// 정적 import 실패도 화면에서 안내할 수 있도록 초기화를 감싼다.
+const statusEl = document.querySelector("#status");
+const reloadButton = document.querySelector("#reloadLogin");
+reloadButton.onclick = () => location.reload();
+const loadingTimer = setTimeout(() => {
+  statusEl.textContent = "로그인 준비가 지연되고 있습니다. 인터넷 연결을 확인한 뒤 다시 불러와 주세요.";
+  reloadButton.hidden = false;
+}, 15000);
+try {
+  const config = await import("./firebase-config.js");
+  const { SCHOOL_NAME, PROGRAM_NAME } = config;
+  document.querySelector("#school").textContent = [SCHOOL_NAME, PROGRAM_NAME].filter(Boolean).join(" ");
+  if (!config.firebaseConfig?.apiKey || /YOUR_|000000000000/.test(JSON.stringify(config.firebaseConfig))) {
+    throw Object.assign(new Error("Firebase 설정이 예시값입니다."), { code: "setup/placeholder-config" });
+  }
+  // 이전 common.js가 브라우저에 남아 있어도 이번 패치 파일을 새로 요청한다.
+  const common = await import("./common.js?v=login-fix-20260916-2");
+  const required = ["signInWithEmailAndPassword", "signOut", "resolveLoginEmail", "readAccount", "accountHome", "showError", "$", "$$"];
+  if (!common.auth || required.some((key) => typeof common[key] !== "function")) {
+    throw Object.assign(new Error("로그인 파일 버전이 일치하지 않습니다."), { code: "setup/version-mismatch" });
+  }
+  const { auth, signInWithEmailAndPassword, signOut, resolveLoginEmail, readAccount, accountHome, showError, $, $$ } = common;
 
 $("#school").textContent = `${SCHOOL_NAME} ${PROGRAM_NAME}`;
 let kind = "student", busy = true;
 function setBusy(value, message = "") {
   busy = value;
+  if (!value) { clearTimeout(loadingTimer); reloadButton.hidden = true; }
   $$(".seg button, #form input, #form button").forEach((el) => el.disabled = value);
   $("#form").setAttribute("aria-busy", String(value));
   $("#submit").textContent = value ? "확인 중…" : `${kind === "student" ? "학생" : "선생님"} 로그인`;
@@ -136,6 +158,21 @@ try {
   if (auth.currentUser) await go(auth.currentUser);
   else setBusy(false);
 } catch (error) { report(error); }
+} catch (error) {
+  clearTimeout(loadingTimer);
+  console.error("로그인 초기화 실패", error);
+  const message = error?.code === "setup/placeholder-config"
+    ? "Firebase 설정이 예시값으로 되어 있습니다. 기존에 사용하던 firebase-config.js를 복원해 주세요."
+    : error?.code === "setup/version-mismatch"
+      ? "로그인 파일 버전이 일치하지 않습니다. 패치의 index.html과 common.js를 함께 교체한 뒤 다시 불러와 주세요."
+      : error?.code === "auth/invalid-api-key"
+        ? "Firebase API 키가 올바르지 않습니다. 운영 중인 firebase-config.js 설정을 확인해 주세요."
+        : "로그인 파일을 불러오지 못했습니다. index.html과 common.js가 함께 배포되었는지, 인터넷 연결이 정상인지 확인해 주세요.";
+  statusEl.textContent = message;
+  document.querySelector("#submit").textContent = "로그인 준비 실패";
+  document.querySelector("#submit").disabled = true;
+  reloadButton.hidden = false;
+}
 </script>
 </body>
 </html>

@@ -18,7 +18,7 @@ export function init(el) {
           <label>질문 가져오기</label>
           <div class="tabs sub" style="margin-bottom:10px">
             <button type="button" class="active" data-src="sheet">준비 시트에서</button>
-            <button type="button" data-src="claude">생기부 → Claude</button>
+            <button type="button" data-src="claude">AI로 질문 만들기</button>
             <button type="button" data-src="manual">직접 입력</button>
           </div>
           <div data-srcpanel="sheet">
@@ -27,18 +27,43 @@ export function init(el) {
             <div style="margin-top:6px"><button id="qSheetParse">미리보기</button></div>
           </div>
           <div data-srcpanel="claude" hidden>
-            <label>생기부 내용 <span class="muted">(세특·창체·행특 등)</span></label>
-            <textarea id="qRecord" style="min-height:180px" placeholder="예) [화학Ⅱ 세특] …"></textarea>
-            <div class="row" style="margin:6px 0 12px"><button class="btn-sm" id="qSaveRecord">생기부 저장</button><span class="muted" id="qRecordState"></span></div>
-            <div class="row">
-              <select id="qN" style="width:auto"><option>10</option><option selected>15</option><option>20</option></select>
-              <label class="inline-check"><input type="checkbox" id="qMask" checked> 이름 가리기</label>
-              <label class="inline-check"><input type="checkbox" id="qNoDup" checked> 기존 질문과 중복 피하기</label>
-              <button class="btn-primary btn-sm" id="qCopy">프롬프트 복사</button>
+            <div class="ai-intro">학생 <b>생기부</b>를 AI(Claude)에게 보여 주고 <b>면접 예상질문</b>을 받아오는 방법이에요. 비용은 들지 않고, 선생님의 Claude 계정(claude.ai)을 씁니다.</div>
+            <div class="ai-step">
+              <div class="ai-num">1</div>
+              <div class="ai-body">
+                <b>생기부 붙여넣기</b>
+                <div class="muted">학생의 세특·창체·행특 문장을 복사해 붙여넣으세요. 길수록 질문이 구체적이에요.</div>
+                <textarea id="qRecord" style="min-height:160px;margin-top:6px" placeholder="예) [화학Ⅱ 세특] 산화·환원 단원에서 …&#10;[자율·동아리] 과학랩크루에서 시약 재고 관리 시스템을 …"></textarea>
+                <div class="row" style="margin-top:6px"><button class="btn-sm" id="qSaveRecord">이 학생 생기부로 저장</button><span class="muted" id="qRecordState"></span></div>
+              </div>
             </div>
-            <label style="margin-top:12px">Claude 결과(JSON) 붙여넣기</label>
-            <textarea id="qPaste" placeholder='[{"text": "...", "followUps": [...]}]'></textarea>
-            <div style="margin-top:6px"><button id="qParse">미리보기</button></div>
+            <div class="ai-step">
+              <div class="ai-num">2</div>
+              <div class="ai-body">
+                <b>요청문 복사 → Claude에 보내기</b>
+                <div class="muted">버튼을 누르면 생기부가 들어간 요청문이 복사돼요. Claude 새 채팅에 붙여넣고(Ctrl+V) 보내세요.</div>
+                <div class="row" style="margin-top:8px">
+                  <button class="btn-primary" id="qCopy">요청문 복사</button>
+                  <a class="btn" href="https://claude.ai/new" target="_blank" rel="noopener">Claude 열기 ↗</a>
+                </div>
+                <details style="margin-top:8px"><summary class="muted">옵션 (질문 개수 · 이름 가리기)</summary>
+                  <div class="row" style="margin-top:6px">
+                    <label class="inline-check">질문 <select id="qN" style="width:auto;padding:4px 8px"><option>10</option><option selected>15</option><option>20</option></select>개</label>
+                    <label class="inline-check"><input type="checkbox" id="qMask" checked> 학생 이름 가리기</label>
+                    <label class="inline-check"><input type="checkbox" id="qNoDup" checked> 이미 넣은 질문과 겹치지 않게</label>
+                  </div>
+                </details>
+              </div>
+            </div>
+            <div class="ai-step">
+              <div class="ai-num">3</div>
+              <div class="ai-body">
+                <b>Claude 답변 붙여넣기</b>
+                <div class="muted">Claude가 답을 다 쓰면 답변 아래 <b>복사</b> 버튼을 눌러 여기에 붙여넣으세요. <span style="color:var(--danger)">요청문이 아니라 Claude의 답변</span>이에요.</div>
+                <textarea id="qPaste" style="margin-top:6px" placeholder="Claude 답변을 그대로 붙여넣으세요.&#10;([{&quot;text&quot;: … 처럼 시작하는 글자들)"></textarea>
+                <div style="margin-top:6px"><button class="btn-primary" id="qParse">질문 확인하기</button></div>
+              </div>
+            </div>
           </div>
           <div data-srcpanel="manual" hidden>
             <form id="qManual">
@@ -144,7 +169,7 @@ async function saveRecord() {
   try {
     await updateDoc(doc(db, "students", no), { recordSummary: $("#qRecord", root).value });
     studentByNo(no).recordSummary = $("#qRecord", root).value;
-    $("#qRecordState", root).textContent = "저장됨";
+    $("#qRecordState", root).textContent = "저장됨 · 다음에 이 학생을 고르면 그대로 불러와요";
   } catch (e) { showError(e, "생기부 저장"); }
 }
 
@@ -152,19 +177,19 @@ function copyPrompt() {
   const st = studentByNo($("#qStudent", root).value);
   if (!st) return toast("학생을 먼저 선택하세요.", "error");
   let record = $("#qRecord", root).value.trim();
-  if (record.length < 30) return toast("생기부 내용을 먼저 붙여넣으세요.", "error");
+  if (record.length < 30) return toast("1번 칸에 생기부 문장을 먼저 붙여넣으세요 (30자 이상).", "error", 5000);
   if ($("#qMask", root).checked && st.name) record = record.split(st.name).join("학생");
   const univ = (st.universities || []).map((u) => `${u.univ} ${u.dept}(${u.admission}, ${u.format})`).join(" / ");
   copyText(personalQuestionPrompt({
     record, major: (st.universities || []).map((u) => u.dept).filter(Boolean).join(", "), targets: univ,
     n: Number($("#qN", root).value), existing: $("#qNoDup", root).checked ? existing.map((q) => q.text) : []
-  }));
+  }), "요청문을 복사했어요. Claude 새 채팅에 붙여넣고 보내세요.");
 }
 
 function parseClaude() {
   let arr;
   try { arr = parseLooseJSON($("#qPaste", root).value); if (!Array.isArray(arr)) arr = [arr]; }
-  catch (e) { return showError(e, "JSON 읽기"); }
+  catch (e) { return toast(e.message, "error", 9000); }
   parsed = arr.filter((q) => q && typeof q.text === "string" && q.text.trim()).map((q) => ({
     text: q.text.trim(), category: q.category || "", basis: q.basis || "", intent: q.intent || "",
     followUps: Array.isArray(q.followUps) ? q.followUps.filter(Boolean).map(String) : [], source: "claude", _on: true

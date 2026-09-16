@@ -184,3 +184,10 @@ table.sc-grid.day .sc-chip { white-space: normal; font-size: .85rem; }
 table.av-grid td { text-align: center; }
 table.av-grid input { width: 18px; height: 18px; }
 @media (max-width: 560px) { .sc-bar > .row { width: 100%; } }
+
+/* AI로 질문 만들기 안내 */
+.ai-intro { background: var(--accent-soft); color: #1b3a8c; border-radius: 10px; padding: 10px 12px; font-size: .9rem; margin-bottom: 12px; }
+.ai-step { display: grid; grid-template-columns: 26px 1fr; gap: 10px; padding: 12px 0; border-top: 1px dashed var(--line); }
+.ai-intro + .ai-step { border-top: none; }
+.ai-num { width: 24px; height: 24px; border-radius: 50%; background: #1b1f27; color: #fff; font-size: .8rem; font-weight: 700; display: grid; place-items: center; margin-top: 2px; }
+.ai-body > b { display: block; margin-bottom: 2px; }

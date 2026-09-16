@@ -18,7 +18,7 @@ export function init(el) {
       <input id="bSearch" placeholder="검색">
       <div class="spacer"></div>
       <button id="bSeed">기본 질문 불러오기</button>
-      <button id="bImport">Claude로 만들기</button>
+      <button id="bImport">AI로 질문 만들기</button>
       <button class="btn-primary" id="bAdd">+ 질문 추가</button>
     </div>
     <div class="toolbar" id="bSelBar" hidden>
@@ -117,24 +117,25 @@ function edit(q = null) {
 }
 
 function importModal() {
-  const body = openModal("Claude로 질문은행 만들기", `
+  const body = openModal("AI(Claude)로 질문은행 만들기", `
+    <div class="ai-intro">원하는 유형을 고르고 요청문을 Claude에게 보내면, Claude가 질문을 만들어 줘요. 그 답변을 붙여넣으면 질문은행에 들어갑니다.</div>
     <div class="card" style="box-shadow:none;background:#fafbfc">
-      <b>1. 프롬프트 복사</b>
+      <b>1. 조건 고르고 요청문 복사 → Claude에 보내기</b>
       <div class="grid grid-2" style="gap:0 14px;margin-top:8px">
         <div class="field"><label>유형</label><select id="pType">${opt(Object.entries(TYPES).map(([k, t]) => [k, t.label]))}</select></div>
         <div class="field"><label>계열</label><select id="pField">${opt(FIELDS)}</select></div>
         <div class="field"><label>대상 학과 (선택)</label><input id="pMajors" placeholder="화학과, 신소재공학과"></div>
         <div class="field"><label>문항 수</label><input id="pN" type="number" value="10" min="1" max="30"></div>
       </div>
-      <button class="btn-sm btn-primary" id="pCopy">프롬프트 복사</button>
+      <div class="row"><button class="btn-primary" id="pCopy">요청문 복사</button><a class="btn" href="https://claude.ai/new" target="_blank" rel="noopener">Claude 열기 ↗</a></div>
     </div>
-    <div class="field" style="margin-top:14px"><label>2. 결과(JSON) 붙여넣기</label><textarea id="imp" style="min-height:160px"></textarea></div>
-    <button class="btn-primary" id="doImp">가져오기</button>`);
-  $("#pCopy", body).onclick = () => copyText(bankPrompt({ type: $("#pType", body).value, track: $("#pField", body).value, majors: $("#pMajors", body).value.trim(), n: Number($("#pN", body).value) || 10 }));
+    <div class="field" style="margin-top:14px"><label>2. Claude 답변 붙여넣기 <span class="muted">(요청문이 아니라 Claude가 답한 내용)</span></label><textarea id="imp" style="min-height:160px" placeholder="Claude 답변 아래 복사 버튼을 눌러 그대로 붙여넣으세요."></textarea></div>
+    <button class="btn-primary" id="doImp">질문은행에 넣기</button>`);
+  $("#pCopy", body).onclick = () => copyText(bankPrompt({ type: $("#pType", body).value, track: $("#pField", body).value, majors: $("#pMajors", body).value.trim(), n: Number($("#pN", body).value) || 10 }), "요청문을 복사했어요. Claude 새 채팅에 붙여넣고 보내세요.");
   $("#doImp", body).onclick = async () => {
     let arr;
     try { arr = parseLooseJSON($("#imp", body).value); if (!Array.isArray(arr)) arr = [arr]; }
-    catch (e) { return showError(e, "JSON 읽기"); }
+    catch (e) { return toast(e.message, "error", 9000); }
     const qs = arr.map(normalizeBank).filter((q) => q.text);
     if (!qs.length) return toast("질문을 찾지 못했습니다.", "error");
     if (await addMany(qs)) closeModal();

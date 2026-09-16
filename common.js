@@ -399,15 +399,46 @@ export function recommendedModes(st) {
   return [...new Set(out)];
 }
 
-// JSON 붙여넣기 파서: 코드블록(```json)이나 앞뒤 설명이 섞여 있어도 배열/객체만 뽑아낸다.
+// AI 답변 붙여넣기 파서: 코드블록·앞뒤 설명·요청문이 섞여 있어도 질문 목록(JSON)만 뽑아낸다.
+// 여러 후보가 있으면 항목이 가장 많은 배열(보통 Claude 답변)을 고른다.
 export function parseLooseJSON(text) {
-  let t = String(text).trim();
-  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence) t = fence[1].trim();
-  const start = t.search(/[\[{]/);
-  if (start < 0) throw new Error("JSON을 찾을 수 없습니다.");
-  const open = t[start], close = open === "[" ? "]" : "}";
-  const end = t.lastIndexOf(close);
-  if (end < start) throw new Error("JSON 끝 괄호가 없습니다.");
-  return JSON.parse(t.slice(start, end + 1));
+  const t = String(text || "").replace(/[\u201C\u201D]/g, '"').trim();
+  if (!t) throw new Error("붙여넣은 내용이 없습니다. Claude 답변을 복사해 붙여넣으세요.");
+  const found = [];
+  const blocks = [...t.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)].map((m) => m[1]);
+  for (const src of [...blocks, t]) {
+    for (let i = 0; i < src.length; i++) {
+      const ch = src[i];
+      if (ch !== "[" && ch !== "{") continue;
+      const end = matchBracket(src, i);
+      if (end < 0) continue;
+      try {
+        const v = JSON.parse(src.slice(i, end + 1));
+        const arr = Array.isArray(v) ? v : [v];
+        const real = arr.filter((q) => q && typeof q === "object" && typeof q.text === "string" && q.text.trim() && q.text.trim() !== "질문");
+        if (real.length) found.push({ v, n: real.length, at: i });
+        i = end;  // 이 덩어리 안쪽은 다시 보지 않음
+      } catch (_) { /* 이 위치는 JSON이 아님 → 다음 괄호 */ }
+    }
+    if (found.length) break;
+  }
+  if (found.length) return found.sort((a, b) => b.n - a.n || b.at - a.at)[0].v;
+  if (/\[작성 원칙\]|\[출력 형식\]|너는 대한민국 대학/.test(t))
+    throw new Error("Claude에게 보낼 '요청문'을 붙여넣으셨어요. 요청문은 Claude 채팅에 보내고, Claude가 답한 내용을 복사해 여기에 붙여넣으세요.");
+  throw new Error("Claude 답변에서 질문 목록을 찾지 못했습니다. 답변 전체를 복사했는지 확인하세요. (답변이 중간에 끊겼다면 Claude에게 '이어서 JSON만 다시 출력해 줘'라고 요청)");
+}
+function matchBracket(s, i) {
+  const stack = []; let inStr = false, esc = false;
+  for (let j = i; j < s.length; j++) {
+    const c = s[j];
+    if (inStr) { if (esc) esc = false; else if (c === "\\") esc = true; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true;
+    else if (c === "[" || c === "{") stack.push(c);
+    else if (c === "]" || c === "}") {
+      const o = stack.pop();
+      if ((c === "]" && o !== "[") || (c === "}" && o !== "{")) return -1;
+      if (!stack.length) return j;
+    }
+  }
+  return -1;
 }

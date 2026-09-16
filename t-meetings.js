@@ -1,5 +1,5 @@
 import {
-  db, collection, doc, addDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, $, $$, esc, toast, showError,
+  db, collection, doc, addDoc, setDoc, updateDoc, deleteDoc, writeBatch, serverTimestamp, $, $$, esc, toast, showError,
   STAGES, MEETING_TYPES, isoDay, fmtDay, defaultMeetingType
 } from "./common.js";
 import { S, register, rerender, myName, openModal, closeModal, readForm, opt, studentOptions, studentByNo } from "./t-core.js";
@@ -16,6 +16,7 @@ export function init(el) {
       <div class="spacer"></div>
       <button class="btn-primary" id="mAdd">+ 대면 기록 추가</button>
     </div>
+    <div id="mHidden"></div>
     <div class="card table-wrap"><table>
       <thead><tr><th>실시일</th><th>학생</th><th>차수</th><th>면접 유형</th><th>담당교사</th><th>학생 공개</th></tr></thead>
       <tbody id="meetBody"></tbody></table></div>
@@ -39,6 +40,18 @@ function render() {
     (!who || (me && (m.teachers || []).includes(me)) || m.createdByUid === S.ctx.user.uid)
     && (!stage || String(m.stage) === stage)
     && (!kw || `${m.name}${m.studentNo}`.includes(kw)));
+  const hidden = S.meetings.filter((m) => !m.shared && hasContent(m) && (!me || (m.teachers || []).includes(me) || S.ctx.isAdmin));
+  $("#mHidden", root).innerHTML = hidden.length ? `<div class="notice row">피드백을 적었지만 <b>학생에게 비공개</b>인 기록이 ${hidden.length}건 있어요. 학생 화면에 안 보입니다.
+    <div class="spacer"></div><button class="btn-sm btn-primary" id="mShowAll">모두 학생에게 공개</button></div>` : "";
+  $("#mShowAll", root)?.addEventListener("click", async () => {
+    if (!confirm(`${hidden.length}건을 학생 화면에 공개할까요?`)) return;
+    try {
+      const b = writeBatch(db);
+      hidden.forEach((m) => b.update(doc(db, "meetings", m.id), { shared: true }));
+      await b.commit(); hidden.forEach((m) => m.shared = true);
+      toast("공개했습니다."); render();
+    } catch (e) { showError(e, "공개"); }
+  });
   if (!list.length) {
     $("#meetBody", root).innerHTML = `<tr><td colspan="6" class="empty">${S.meetings.length ? "조건에 맞는 기록이 없습니다." : "아직 대면 기록이 없습니다."}</td></tr>`;
     return;
@@ -68,6 +81,8 @@ function defaultTeachers(st, stage) {
   return list.length ? list : (me ? [me] : []);
 }
 const defaultType = defaultMeetingType;
+// 일정 확정·시트 입력으로 생긴 빈 기록은 처음 내용을 쓸 때 기본으로 '공개'
+const hasContent = (m) => !!(m.questions || m.answerSummary || m.good || m.improve || m.nextGoal);
 function guessStage(st) {
   const me = myName(); const a = st?.assign || {};
   const done = new Set(S.meetings.filter((m) => m.studentNo === st?.studentNo && !m.planned).map((m) => m.stage));
@@ -101,7 +116,7 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
       <div class="field"><label>보완할 점</label><textarea name="improve">${esc(m?.improve || "")}</textarea></div>
     </div>
     <div class="field"><label>다음 회차 목표</label><input name="nextGoal" value="${esc(m?.nextGoal || "")}"></div>
-    <label class="inline-check" style="margin-bottom:14px"><input type="checkbox" name="shared" ${m ? (m.shared ? "checked" : "") : "checked"}> 학생 화면에 피드백 공개</label>
+    <label class="inline-check" style="margin-bottom:14px"><input type="checkbox" name="shared" ${!m || m.shared || m.planned || !hasContent(m) ? "checked" : ""}> 학생 화면에 피드백 공개</label>
     <div class="row">
       <button class="btn-primary" id="mSave">저장</button>
       ${m ? `${syncBadge(m)}<div class="spacer"></div><button type="button" class="btn-sm btn-danger" id="mDel">삭제</button>` : ""}

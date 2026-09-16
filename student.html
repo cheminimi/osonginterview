@@ -18,6 +18,7 @@
   .mode.disabled { opacity: .5; pointer-events: none; }
   .mode .title { font-weight: 700; font-size: 1.05rem; }
   .mode .rec { position: absolute; top: 12px; right: 12px; }
+  .clickable-card { cursor: pointer; } .clickable-card:hover { border-color: var(--accent); }
   .fb-box { background: #f7f9ff; border: 1px solid #dfe6fb; border-radius: 10px; padding: 12px 14px; margin-top: 8px; }
   .ans { background: #fafbfc; border-radius: 8px; padding: 10px 12px; margin-top: 6px; white-space: pre-wrap; }
   .kv dd { white-space: pre-wrap; }
@@ -70,7 +71,7 @@
 
 <script type="module">
 import {
-  db, requireRole, mountAccountMenu, collection, getDocs, query, where, esc, $, $$, showError, loadInterviewsFor,
+  db, requireRole, mountAccountMenu, collection, getDocs, query, where, onSnapshot, esc, $, $$, toast, showError, loadInterviewsFor,
   CRITERIA, STAGES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes
 } from "./common.js";
 import { mountSchedule } from "./schedule.js";
@@ -142,21 +143,40 @@ $$(".tabs button").forEach((b) => b.onclick = () => {
   $$("[data-panel]").forEach((p) => p.hidden = p.dataset.panel !== b.dataset.tab);
 });
 
-// ---- 선생님 피드백 (대면 모의면접)
+// ---- 선생님 피드백 (대면 모의면접 + 말하기 연습 피드백을 한곳에)
 const stageLabel = (k) => STAGES.find((s) => s.key === Number(k))?.label || "";
-const reviewed = sessions.filter((s) => s.reviewedAt);
-$("#fbDot").innerHTML = meetings.length + reviewed.length ? ` <span class="badge badge-blue">${meetings.length + reviewed.length}</span>` : "";
-$("#feedback").innerHTML = meetings.length ? meetings.map((m) => `
-  <div class="card">
-    <div class="row"><b>${fmtDay(m.date)} · ${esc(stageLabel(m.stage))}</b><span class="badge">${esc(m.type)}</span><span class="muted">${esc((m.teachers || []).join(", "))} 선생님</span></div>
-    <dl class="kv" style="margin-top:10px">
-      ${m.questions ? `<dt>받은 질문</dt><dd>${esc(m.questions)}</dd>` : ""}
-      ${m.good ? `<dt>잘한 점</dt><dd>${esc(m.good)}</dd>` : ""}
-      ${m.improve ? `<dt>보완할 점</dt><dd><b>${esc(m.improve)}</b></dd>` : ""}
-      ${m.nextGoal ? `<dt>다음 목표</dt><dd>${esc(m.nextGoal)}</dd>` : ""}
-    </dl>
-    <p class="muted" style="margin:10px 0 0">받은 피드백은 내 준비 시트의 '모의면접 피드백 및 수정 기록'에도 옮겨 적고 답변을 고쳐 보세요.</p>
-  </div>`).join("") : `<div class="card empty">아직 공개된 대면 모의면접 피드백이 없어요.${reviewed.length ? "<br>연습 기록 탭에서 말하기 연습 피드백을 확인하세요." : ""}</div>`;
+const tsSec = (t) => t?.seconds || (typeof t === "number" ? t / 1000 : 0);
+function renderFeedback() {
+  const reviewed = sessions.filter((s) => s.reviewedAt);
+  const n = meetings.length + reviewed.length;
+  $("#fbDot").innerHTML = n ? ` <span class="badge badge-blue">${n}</span>` : "";
+  const cards = [
+    ...meetings.map((m) => ({ at: (toDateSafe(m.date)?.getTime() || 0) / 1000, html: `
+      <div class="card">
+        <div class="row"><span class="badge badge-violet">대면 모의면접</span><b>${fmtDay(m.date)} · ${esc(stageLabel(m.stage))}</b><span class="badge">${esc(m.type)}</span><span class="muted">${esc((m.teachers || []).join(", "))} 선생님</span></div>
+        <dl class="kv" style="margin-top:10px">
+          ${m.questions ? `<dt>받은 질문</dt><dd>${esc(m.questions)}</dd>` : ""}
+          ${m.good ? `<dt>잘한 점</dt><dd>${esc(m.good)}</dd>` : ""}
+          ${m.improve ? `<dt>보완할 점</dt><dd><b>${esc(m.improve)}</b></dd>` : ""}
+          ${m.nextGoal ? `<dt>다음 목표</dt><dd>${esc(m.nextGoal)}</dd>` : ""}
+        </dl>
+        <p class="muted" style="margin:10px 0 0">받은 피드백은 내 준비 시트의 '모의면접 피드백 및 수정 기록'에도 옮겨 적고 답변을 고쳐 보세요.</p>
+      </div>` })),
+    ...reviewed.map((x) => {
+      const avg = avgScore(x), fb = x.teacherFeedback || {};
+      return { at: tsSec(x.reviewedAt), html: `
+      <div class="card clickable-card" data-sid="${x.id}">
+        <div class="row"><span class="badge badge-blue">말하기 연습</span><b>${esc(x.modeLabel || x.mode)}</b><span class="muted">${fmtDate(x.startedAt)} 연습 · ${esc(x.reviewedBy || "")} 선생님</span>
+          <div class="spacer"></div>${avg != null ? `<b>${avg.toFixed(1)}</b><span class="muted">/5</span>` : ""}</div>
+        ${fb.comment ? `<div class="pre" style="margin-top:8px">${esc(fb.comment)}</div>` : ""}
+        <div class="muted" style="margin-top:6px">눌러서 문항별 코멘트 보기 ›</div>
+      </div>` };
+    })
+  ].sort((a, b) => b.at - a.at);
+  $("#feedback").innerHTML = cards.length ? cards.map((c) => c.html).join("") : `<div class="card empty">아직 받은 피드백이 없어요.<br>말하기 연습을 제출하거나 대면 모의면접을 하면 선생님 피드백이 여기에 보여요.</div>`;
+  $$("#feedback [data-sid]").forEach((el) => el.onclick = () => openSession(sessions.find((x) => x.id === el.dataset.sid)));
+}
+function toDateSafe(v) { const m = String(v || "").match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null; }
 
 // ---- 연습 기록
 function avgScore(s) {
@@ -178,6 +198,25 @@ function renderHistory() {
   $$("#history tr[data-id]").forEach((tr) => tr.onclick = () => openSession(sessions.find((s) => s.id === tr.dataset.id)));
 }
 renderHistory();
+renderFeedback();
+
+// ---- 새로고침 없이 피드백 반영 (선생님이 공개하면 바로 뜸)
+{
+  let firstS = true, firstM = true;
+  const notify = () => toast("선생님 피드백이 도착했어요. '선생님 피드백' 탭을 확인하세요.", "ok", 6000);
+  onSnapshot(query(collection(db, "sessions"), where("studentUid", "==", user.uid)), (snap) => {
+    const before = new Set(sessions.filter((x) => x.reviewedAt).map((x) => x.id));
+    sessions = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.startedAt?.seconds || 0) - (a.startedAt?.seconds || 0));
+    if (!firstS && sessions.some((x) => x.reviewedAt && !before.has(x.id))) notify();
+    firstS = false; renderHistory(); renderFeedback();
+  }, (e) => console.warn("연습 피드백 실시간", e));
+  onSnapshot(query(collection(db, "meetings"), where("studentUid", "==", user.uid), where("shared", "==", true)), (snap) => {
+    const before = new Set(meetings.map((x) => x.id));
+    meetings = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    if (!firstM && meetings.some((x) => !before.has(x.id))) notify();
+    firstM = false; renderFeedback();
+  }, (e) => console.warn("대면 피드백 실시간", e));
+}
 
 function openSession(s) {
   $("#mTitle").textContent = `${s.modeLabel || s.mode} · ${fmtDate(s.startedAt)}`;

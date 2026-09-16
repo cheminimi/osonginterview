@@ -106,10 +106,77 @@ service cloud.firestore {
       allow write: if isStaff();
     }
 
-    // 시트 동기화 설정 등
+    // 시트 동기화 설정 등. 'schedule'(시간표·장소·동기화 주소)은 학생도 읽기
     match /config/{docId} {
-      allow read: if isStaff();
+      allow read: if isStaff() || (docId == 'schedule' && hasAcct());
       allow write: if isAdmin();
+    }
+
+    // ================= 모의면접 일정 =================
+    function isStudentAcct() { return hasAcct() && acct().role == 'student'; }
+
+    // 교사별 불가 시간 (요일별 수업 교시·날짜별 예외). 모두 읽기, 본인·관리자만 쓰기
+    match /availability/{sid} {
+      allow read: if hasAcct() || isAdmin();
+      allow write: if isAdmin() || isStaffSelf(sid);
+    }
+
+    // 날짜별 일정 요약 (달력). 로그인한 사람 모두 읽기 — 교사·장소 겹침을 서로 보고 피하도록
+    // 학생은 자기 일정 한 건(lastId)만 넣거나 뺄 수 있다
+    function dayItemsBefore() { return resource == null ? {} : resource.data.get('items', {}); }
+    function studentDayWrite() {
+      let id = request.resource.data.lastId;
+      let after = request.resource.data.get('items', {});
+      let before = dayItemsBefore();
+      return isStudentAcct()
+        && request.resource.data.keys().hasOnly(['items', 'lastId', 'updatedAtMs'])
+        && after.diff(before).affectedKeys().hasOnly([id])
+        && (id in after ? after[id].no == acct().key : (id in before && before[id].no == acct().key));
+    }
+    match /days/{date} {
+      allow read: if hasAcct() || isAdmin();
+      allow create, update: if isStaff() || studentDayWrite();
+      allow delete: if isAdmin();
+    }
+
+    // 일정 신청 (학생 1명 + 배정 교사). 학생은 자기 배정 교사에게만 신청, 교사 수락을 대신할 수 없음
+    function assignOf(no) { return get(/databases/$(database)/documents/students/$(no)).data.get('assign', {}); }
+    function teachersMatchAssign(d) {
+      let a = assignOf(d.studentNo);
+      return (d.stage == 1 && d.teachers.size() == 1 && d.teachers.hasOnly([a.get('s1', '')]))
+        || (d.stage == 2 && d.teachers.size() == 1 && d.teachers.hasOnly([a.get('s2', '')]))
+        || (d.stage == 3 && d.teachers.size() >= 1 && d.teachers.hasOnly([a.get('s3a', ''), a.get('s3b', '')]));
+    }
+    function confirmedOk(d) { return d.status != 'confirmed' || d.approvedBy.toSet().hasAll(d.need); }
+    match /bookings/{bid} {
+      allow read: if isStaff() || isStudent(resource.data.studentNo);
+      allow create: if isStaff()
+        || (isStudent(request.resource.data.studentNo)
+            && teachersMatchAssign(request.resource.data)
+            && request.resource.data.need.toSet() == request.resource.data.teachers.toSet().union(['student'].toSet())
+            && request.resource.data.approvedBy == ['student']
+            && request.resource.data.status == 'requested');
+      allow update: if isStaff()
+        || (isStudent(resource.data.studentNo)
+            && resource.data.status in ['requested', 'confirmed']
+            && request.resource.data.status in ['requested', 'confirmed', 'cancelled', 'rejected']
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['approvedBy', 'status', 'date', 'block', 'start', 'end', 'room', 'memo', 'proposedBy', 'updatedAtMs', 'updatedBy'])
+            // 학생이 교사 수락을 추가할 수는 없음
+            && request.resource.data.approvedBy.toSet().difference(resource.data.approvedBy.toSet()).hasOnly(['student'])
+            // 시간·장소를 바꾸면 교사 수락은 모두 초기화
+            && ((request.resource.data.date == resource.data.date && request.resource.data.start == resource.data.start
+                 && request.resource.data.end == resource.data.end && request.resource.data.room == resource.data.room)
+                || request.resource.data.approvedBy == ['student'])
+            && confirmedOk(request.resource.data));
+      allow delete: if isAdmin();
+    }
+
+    // 일정 변경 로그 (시트 '면접 기록' 탭으로 옮겨짐). 추가만 가능
+    match /bookingLogs/{lid} {
+      allow read: if isStaff();
+      allow create: if isStaff() || (isStudentAcct() && request.resource.data.studentNo == acct().key);
+      allow update, delete: if false;
     }
   }
 }

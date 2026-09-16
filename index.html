@@ -12,130 +12,67 @@
   .hero .logo { width: 56px; height: 56px; border-radius: 16px; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 1.6rem; font-weight: 800; margin: 0 auto 12px; }
   .seg { display: grid; grid-template-columns: 1fr 1fr; background: #eceef2; border-radius: 10px; padding: 4px; margin-bottom: 16px; }
   .seg button { border: none; background: none; color: var(--ink-3); justify-content: center; }
-  .seg button.active { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
-  .seg button { min-height: 48px; color: var(--ink-2); flex-direction: column; gap: 0; }
-  .seg small { font-size: 12px; font-weight: 500; }
-  .description { color: var(--ink-2); font-size: 15px; line-height: 1.7; margin: 10px 0; }
-  .login .muted { color: var(--ink-2); font-size: 14px; }
-  .role-label { font-weight: 600; margin: 0 0 8px; }
-  .login input { font-size: 16px; min-height: 48px; }
-  .password-field { display: flex; gap: 8px; align-items: stretch; }
-  .password-field input { min-width: 0; flex: 1; }
-  .password-field button { min-width: 64px; justify-content: center; font-size: 14px; }
-  #hint { padding: 12px; background: var(--bg); border-radius: 8px; line-height: 1.75; }
-  #status { margin: 12px 0 0; line-height: 1.6; }
-  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .seg button.active { background: #fff; color: var(--ink); box-shadow: var(--shadow); }
 </style>
 </head>
 <body>
-<main class="login">
+<div class="login">
   <div class="hero">
     <div class="logo">面</div>
     <h1>면접 스튜디오</h1>
-    <p class="description">예상질문으로 면접을 연습하고,<br>선생님의 피드백으로 답변을 다듬는 공간</p>
     <div class="muted" id="school"></div>
   </div>
   <div class="card">
-    <p class="role-label" id="roleLabel">로그인할 역할을 선택해 주세요</p>
-    <div class="seg" role="group" aria-labelledby="roleLabel">
-      <button type="button" class="active" data-role="student" aria-pressed="true">학생<small>면접 연습·피드백 확인</small></button>
-      <button type="button" data-role="staff" aria-pressed="false">선생님<small>학생 지도·면접 관리</small></button>
+    <div class="seg">
+      <button type="button" class="active" data-role="student">학생</button>
+      <button type="button" data-role="staff">선생님</button>
     </div>
     <form id="form">
       <div class="field">
         <label id="idLabel" for="id">학번</label>
-        <input id="id" autocomplete="username" inputmode="numeric" autocapitalize="none" spellcheck="false" aria-describedby="hint" required>
+        <input id="id" autocomplete="username" inputmode="numeric" required>
       </div>
       <div class="field">
         <label for="pw">비밀번호</label>
-        <div class="password-field">
-          <input id="pw" type="password" autocomplete="current-password" required>
-          <button type="button" id="togglePw" aria-controls="pw" aria-pressed="false" aria-label="비밀번호 보기">보기</button>
-        </div>
+        <input id="pw" type="password" autocomplete="current-password" required>
       </div>
-      <button class="btn-primary btn-lg" style="width:100%;justify-content:center" id="submit" disabled>로그인 확인 중…</button>
+      <button class="btn-primary btn-lg" style="width:100%;justify-content:center" id="submit">로그인</button>
     </form>
-    <p class="muted" id="hint" style="margin:12px 0 0">선생님께 받은 학번과 비밀번호로 로그인하세요. 처음 로그인하거나 비밀번호를 재발급받으면 변경 화면이 표시됩니다.</p>
-    <p id="status" class="muted" role="status" aria-live="polite">로그인 상태를 확인하고 있습니다.</p>
-    <noscript><p>로그인하려면 브라우저에서 JavaScript를 켜 주세요.</p></noscript>
+    <p class="muted" id="hint" style="margin:12px 0 0">처음이면 선생님께 받은 초기 비밀번호로 로그인한 뒤 바꿔 주세요.</p>
   </div>
-</main>
+</div>
 <script type="module">
-import { auth, signInWithEmailAndPassword, signOut, resolveLoginEmail, readAccount, accountHome, showError, $, $$ } from "./common.js";
+import { auth, signInWithEmailAndPassword, resolveLoginEmail, showError, $, $$ } from "./common.js";
 import { SCHOOL_NAME, PROGRAM_NAME } from "./firebase-config.js";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 $("#school").textContent = `${SCHOOL_NAME} ${PROGRAM_NAME}`;
-let kind = "student", busy = true;
-function setBusy(value, message = "") {
-  busy = value;
-  $$(".seg button, #form input, #form button").forEach((el) => el.disabled = value);
-  $("#form").setAttribute("aria-busy", String(value));
-  $("#submit").textContent = value ? "확인 중…" : `${kind === "student" ? "학생" : "선생님"} 로그인`;
-  $("#status").textContent = message;
-}
-function hidePassword() {
-  $("#pw").type = "password";
-  $("#togglePw").textContent = "보기";
-  $("#togglePw").setAttribute("aria-pressed", "false");
-  $("#togglePw").setAttribute("aria-label", "비밀번호 보기");
-}
-$("#togglePw").onclick = () => {
-  const visible = $("#pw").type === "password";
-  $("#pw").type = visible ? "text" : "password";
-  $("#togglePw").textContent = visible ? "숨기기" : "보기";
-  $("#togglePw").setAttribute("aria-pressed", String(visible));
-  $("#togglePw").setAttribute("aria-label", visible ? "비밀번호 숨기기" : "비밀번호 보기");
-};
+let kind = "student";
 $$(".seg button").forEach((b) => b.onclick = () => {
-  if (busy) return;
   kind = b.dataset.role;
-  $$(".seg button").forEach((x) => {
-    x.classList.toggle("active", x === b);
-    x.setAttribute("aria-pressed", String(x === b));
-  });
-  hidePassword();
-  $("#idLabel").textContent = kind === "student" ? "학번" : "교사 ID 또는 관리자 이메일";
+  $$(".seg button").forEach((x) => x.classList.toggle("active", x === b));
+  $("#idLabel").textContent = kind === "student" ? "학번" : "교사 ID";
   $("#id").inputMode = kind === "student" ? "numeric" : "text";
   $("#hint").textContent = kind === "student"
-    ? "선생님께 받은 학번과 비밀번호로 로그인하세요. 처음 로그인하거나 비밀번호를 재발급받으면 변경 화면이 표시됩니다."
-    : "관리자에게 받은 교사 ID와 비밀번호로 로그인하세요. 최초 설정용 관리자 계정은 이메일을 입력하세요.";
-  setBusy(false);
+    ? "처음이면 선생님께 받은 초기 비밀번호로 로그인한 뒤 바꿔 주세요."
+    : "관리자에게 받은 ID로 로그인합니다. (최고 관리자는 이메일 입력)";
 });
 
-// 역할 선택은 ID 변환에만 사용. 이동 경로는 저장된 실제 계정 권한으로 결정한다.
-async function go(user) {
-  const account = await readAccount(user);
-  let destination;
-  try { destination = accountHome(account); }
-  catch (error) { await signOut(auth); throw error; }
-  location.replace(destination);
-}
-function report(error) {
-  showError(error, "로그인");
-  setBusy(false, "로그인 정보를 확인하지 못했습니다. 입력 내용과 인터넷 연결을 확인한 뒤 다시 시도해 주세요.");
-}
+const unsub = onAuthStateChanged(auth, (u) => { unsub(); if (u) location.replace("teacher.html"); });
+
 $("#form").onsubmit = async (e) => {
   e.preventDefault();
-  if (busy) return;
   const id = $("#id").value.trim(), pw = $("#pw").value;
-  if (!id) { $("#id").focus(); return; }
-  const selectedKind = kind;
-  hidePassword();
-  setBusy(true, "계정과 권한을 확인하고 있습니다.");
+  $("#submit").disabled = true;
   try {
-    const email = await resolveLoginEmail(selectedKind, id);
-    const credential = await signInWithEmailAndPassword(auth, email, pw);
-    await go(credential.user);
-  } catch (error) { report(error); }
+    const email = await resolveLoginEmail(kind, id);
+    await signInWithEmailAndPassword(auth, email, pw);
+    location.replace(kind === "student" ? "student.html" : "teacher.html");
+  } catch (err) {
+    showError(err, "로그인");
+    $("#submit").disabled = false;
+  }
 };
-
-// 초기 인증 복원이 끝난 뒤에만 입력 허용: 로그인 이벤트와 중복 이동하지 않는다.
-setBusy(true, "로그인 상태를 확인하고 있습니다.");
-try {
-  await auth.authStateReady();
-  if (auth.currentUser) await go(auth.currentUser);
-  else setBusy(false);
-} catch (error) { report(error); }
 </script>
 </body>
 </html>

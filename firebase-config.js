@@ -2,12 +2,13 @@
 //  ① Firebase 콘솔 > 프로젝트 설정 > 내 앱(웹) 의 설정값을 붙여넣으세요.
 // ============================================================
 export const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "000000000000",
-  appId: "1:000000000000:web:0000000000000000"
+  apiKey: "AIzaSyCe5UHCj3k59k73-SLSjL3o9S-c7HeYdJc",
+  authDomain: "osong-interview.firebaseapp.com",
+  projectId: "osong-interview",
+  storageBucket: "osong-interview.firebasestorage.app",
+  messagingSenderId: "1072441799187",
+  appId: "1:1072441799187:web:a1fbae9ac95a03087805e6",
+  measurementId: "G-EME9FJH5X5"
 };
 
 // ============================================================

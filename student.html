@@ -24,6 +24,80 @@
   .kv dd { white-space: pre-wrap; }
   @media (max-width: 560px) { .hero { grid-template-columns: 1fr; } }
 </style>
+<script>
+/* 새 버전 확인 (수정 금지 · 모든 화면 공통)
+   GitHub Pages는 파일을 10분간 캐시해서, 업데이트 직후 옛 파일과 새 파일이 섞이면 화면이 멈출 수 있다.
+   화면 코드를 실행하기 전에 쓰는 파일을 서버에 한 번씩 확인(재검증)해 항상 같은 버전으로 맞추고,
+   열어 둔 화면은 10분마다 확인해 새 버전이 올라오면 새로고침 안내를 띄운다.
+   index.html?reset=1 → 이 사이트에 저장된 데이터(로그인 포함)를 지우고 처음부터 다시 연다. */
+(function () {
+  var q = new URLSearchParams(location.search);
+  if (q.has("reset")) {
+    try { localStorage.clear(); sessionStorage.clear(); } catch (e) {}
+    var jobs = [];
+    try { if (window.indexedDB) jobs.push(new Promise(function (ok) { var r = indexedDB.deleteDatabase("firebaseLocalStorageDb"); r.onsuccess = r.onerror = r.onblocked = function () { ok(); }; })); } catch (e) {}
+    try { if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); })); } catch (e) {}
+    Promise.all(jobs).then(function () { location.replace(location.pathname + "?resetdone=1"); });
+    return;
+  }
+  var RX = /(?:import|export)\s[^;]*?from\s*["'](\.\/[^"']+)["']|import\(\s*["'](\.\/[^"']+)["']\s*\)/g;
+  function deps(text) { var out = [], m; RX.lastIndex = 0; while ((m = RX.exec(text))) out.push(m[1] || m[2]); return out; }
+  function check(files, seen, sig) {
+    files = files.filter(function (f) { if (seen[f]) return false; seen[f] = 1; return true; });
+    if (!files.length) return Promise.resolve();
+    return Promise.all(files.map(function (f) {
+      return fetch(f, { cache: "no-cache" }).then(function (r) {
+        sig[f] = r.headers.get("etag") || r.headers.get("last-modified") || "";
+        return /\.js$/.test(f) ? r.text().then(deps) : [];
+      }).catch(function () { return []; });
+    })).then(function (lists) { return check([].concat.apply([], lists), seen, sig); });
+  }
+  function sigText(sig) { return Object.keys(sig).sort().map(function (k) { return k + "=" + sig[k]; }).join("|"); }
+  function banner() {
+    if (document.getElementById("newVersionBar")) return;
+    var d = document.createElement("div");
+    d.id = "newVersionBar";
+    d.style.cssText = "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;background:#1b1f27;color:#fff;padding:10px 12px 10px 16px;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.25);display:flex;gap:10px;align-items:center;font-size:.92rem;max-width:92vw";
+    d.innerHTML = '<span>새 버전이 올라왔어요. 저장할 내용이 있으면 먼저 저장하세요.</span><button type="button" style="background:#fff;color:#1b1f27;border:none;border-radius:8px;padding:6px 12px;font-weight:700;cursor:pointer;white-space:nowrap">새로고침</button>';
+    d.querySelector("button").onclick = function () { location.reload(); };
+    document.body.appendChild(d);
+  }
+  function start() {
+    var mains = [].slice.call(document.querySelectorAll('script[type="app-module"]'));
+    var page = location.pathname.split("/").pop() || "index.html";
+    var initial = ["style.css", page];
+    mains.forEach(function (s) { initial = initial.concat(deps(s.textContent)); });
+    var sig = {}, done = false;
+    function go() {
+      if (done) return; done = true;
+      var first = sigText(sig);
+      // 화면(HTML) 자체가 옛 버전이면 한 번만 새로 불러온다
+      fetch(page, { cache: "no-cache" }).then(function (r) { return r.text(); }).then(function (html) {
+        var cur = mains.map(function (s) { return s.textContent.trim(); }).join("\n");
+        var key = "reloadedFor:" + page;
+        if (cur && html.indexOf(cur) < 0 && sessionStorage.getItem(key) !== sig[page]) {
+          sessionStorage.setItem(key, sig[page] || "1");
+          location.reload();
+          return true;
+        }
+      }).catch(function () {}).then(function (reloading) {
+        if (reloading) return;
+        var css = document.querySelector('link[rel="stylesheet"][href^="style.css"]');
+        if (css && sig["style.css"]) css.href = "style.css?v=" + encodeURIComponent(sig["style.css"]).replace(/%/g, "");
+        mains.forEach(function (old) { var s = document.createElement("script"); s.type = "module"; s.textContent = old.textContent; old.replaceWith(s); });
+        setInterval(function () {
+          if (document.visibilityState !== "visible" || document.getElementById("newVersionBar")) return;
+          var s2 = {};
+          check(initial, {}, s2).then(function () { if (Object.keys(s2).length && sigText(s2) !== first) banner(); });
+        }, 10 * 60 * 1000);
+      });
+    }
+    check(initial, {}, sig).then(go, go);
+    setTimeout(go, 5000);
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
+})();
+</script>
 </head>
 <body>
 <header class="topbar"><div class="inner">
@@ -69,7 +143,7 @@
   <div id="mBody"></div>
 </div></div>
 
-<script type="module">
+<script type="app-module">
 import {
   db, requireRole, mountAccountMenu, collection, getDocs, query, where, onSnapshot, esc, $, $$, toast, showError, loadInterviewsFor,
   CRITERIA, STAGES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes

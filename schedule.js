@@ -1,7 +1,7 @@
 // 모의면접(연습) 일정: 주간 달력 · 신청/수락/시간 변경 제안/거절/취소 · 교사·장소·학생 겹침 검사
 // 학생 화면과 교사 화면이 같이 쓴다.
 import {
-  db, collection, doc, getDoc, getDocs, setDoc, query, where, runTransaction,
+  db, collection, doc, getDoc, getDocs, setDoc, query, where, runTransaction, onSnapshot,
   $, $$, esc, toast, showError, isoDay, toDate, fmtDay, fmtDate, nextInterview, defaultMeetingType, cachedCollection
 } from "./common.js";
 import { pingScheduleSync } from "./sync.js";
@@ -52,14 +52,17 @@ const STATUS = {
 const ACTIVE = (s) => s === "requested" || s === "confirmed";
 const WEEK = "일월화수목금토";
 
-export async function loadScheduleConfig() {
-  let c = {};
-  try { const s = await getDoc(doc(db, "config", "schedule")); if (s.exists()) c = s.data(); } catch (e) { console.warn("schedule config", e); }
+export function scheduleConfigOf(c = {}) {
   return {
     blocks: Array.isArray(c.blocks) && c.blocks.length ? c.blocks : DEFAULT_BLOCKS,
     rooms: normalizeRooms(Array.isArray(c.rooms) ? c.rooms : DEFAULT_ROOMS),
     syncUrl: c.syncUrl || ""
   };
+}
+export async function loadScheduleConfig() {
+  let c = {};
+  try { const s = await getDoc(doc(db, "config", "schedule")); if (s.exists()) c = s.data(); } catch (e) { console.warn("schedule config", e); }
+  return scheduleConfigOf(c);
 }
 
 // ================= 시간 도우미 =================
@@ -234,6 +237,21 @@ export function mountSchedule(root, opts) {
       st.bookings = bk.docs.map((d) => ({ id: d.id, ...d.data() }));
     } catch (e) { showError(e, "일정 불러오기"); }
     await refreshDays();
+    watchConfig();
+  }
+  // 관리자가 장소·시간표를 고치면 다른 화면에도 바로 반영 (문서 1개 구독)
+  let cfgStop = null;
+  function watchConfig() {
+    if (cfgStop) return;
+    try {
+      cfgStop = onSnapshot(doc(db, "config", "schedule"), (snap) => {
+        const next = scheduleConfigOf(snap.exists() ? snap.data() : {});
+        if (JSON.stringify(next) === JSON.stringify(st.cfg)) return;
+        st.cfg = next;
+        render();
+        if ($("#bkF") && !$("#modal").hidden) toast("일정 설정이 바뀌었습니다. 장소·시간을 다시 확인해 주세요.");
+      }, (e) => console.warn("schedule config watch", e));
+    } catch (e) { console.warn("schedule config watch", e); }
   }
   async function refreshDays() {
     const dates = visibleDates();
@@ -708,5 +726,5 @@ export function mountSchedule(root, opts) {
   }
 
   refresh();
-  return { refresh, render, openForm };
+  return { refresh, render, openForm, stop: () => { cfgStop?.(); cfgStop = null; } };
 }

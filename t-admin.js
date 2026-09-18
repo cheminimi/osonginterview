@@ -340,7 +340,7 @@ async function renderSched() {
           <div class="row" style="margin-top:8px"><button class="btn-sm" id="bkAdd">+ 칸 추가</button><button class="btn-sm" id="bkReset">기본 시간표로</button></div>
         </div>
       </div>
-      <div class="row" style="margin-top:14px"><button class="btn-primary" id="schSave">저장</button><span class="muted">저장하면 학생·선생님 달력에 바로 적용됩니다 (새로고침).</span></div>`;
+      <div class="row" style="margin-top:14px"><button class="btn-primary" id="schSave">저장</button><span class="muted">저장하면 열려 있는 학생·선생님 달력에도 곧바로 반영됩니다.</span></div>`;
     $$("[data-rmdel]", p).forEach((b) => b.onclick = () => { rooms.splice(Number(b.dataset.rmdel), 1); draw(); });
     $("#rmAdd", p).onclick = () => { const v = $("#rmNew", p).value.trim(); if (!v) return; if (rooms.some((r) => r.name === v)) return toast("이미 있는 장소입니다.", "error"); rooms.push(normalizeRoom(v)); draw(); };
     $$("[data-rmlim]", p).forEach((b) => b.onclick = () => openRoomLimit(Number(b.dataset.rmlim)));

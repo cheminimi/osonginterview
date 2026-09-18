@@ -1,7 +1,7 @@
 import {
   db, doc, updateDoc, deleteDoc, serverTimestamp, $, $$, esc, toast, showError, copyText, fmtDate, typeBadge, CRITERIA
 } from "./common.js";
-import { S, register, rerender, openModal, closeModal, opt, myRoles } from "./t-core.js";
+import { S, register, rerender, openModal, closeModal, opt, myRoles, loadAllSessions, RECENT_DAYS } from "./t-core.js";
 import { feedbackPrompt } from "./prompts.js";
 
 let root;
@@ -15,6 +15,7 @@ export function init(el) {
       <div class="spacer"></div>
     </div>
     <p class="muted" style="margin-top:0">학생이 스스로 한 말하기 연습(타이머 모의면접) 기록입니다. 선생님 누구나 피드백할 수 있습니다.</p>
+    <div id="rScope"></div>
     <div class="card table-wrap"><table>
       <thead><tr><th>제출</th><th>학생</th><th>유형</th><th>문항</th><th>시간 초과</th><th>상태</th><th>검토</th></tr></thead>
       <tbody id="rBody"></tbody></table></div>`;
@@ -28,6 +29,8 @@ function render() {
   const pending = S.sessions.filter((s) => s.status === "submitted" && !s.reviewedAt).length;
   $("#pendingDot").innerHTML = pending ? `<span class="dot-new">${pending}</span>` : "";
   const st = $("#rStatus", root).value, no = $("#rStudent", root).value, mine = $("#rMine", root).checked;
+  $("#rScope", root).innerHTML = S.sessionsScope === "all" ? "" : `<div class="notice row" style="padding:8px 12px"><span>최근 ${RECENT_DAYS}일 안에 제출된 연습만 표시 중이에요.${st === "progress" || st === "" ? " <b>미완료</b> 연습은 불러와야 보여요." : ""}</span><div class="spacer"></div><button class="btn-sm" id="rLoadAll">이전 기록·미완료까지 불러오기</button></div>`;
+  $("#rLoadAll", root)?.addEventListener("click", async (e) => { e.target.disabled = true; try { await loadAllSessions(); } catch (err) { showError(err, "연습 기록 불러오기"); e.target.disabled = false; } });
   const mineSet = new Set(S.students.filter((s) => myRoles(s).length).map((s) => s.studentNo));
   const list = S.sessions.filter((s) => (!no || s.studentNo === no) && (!mine || mineSet.has(s.studentNo)) && (
     !st || (st === "pending" && s.status === "submitted" && !s.reviewedAt) || (st === "done" && s.reviewedAt) || (st === "progress" && s.status !== "submitted")));

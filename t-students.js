@@ -2,7 +2,7 @@ import {
   db, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, $, $$, esc, toast, showError, fmtDate, fmtDay, ddayBadge,
   TRACKS, SPECIALS, STAGES, nextInterview, serverTimestamp
 } from "./common.js";
-import { S, register, rerender, myName, myRoles, stageChips, nextBadge, openModal, closeModal, switchTab, readForm, opt, attachInterviews } from "./t-core.js";
+import { S, register, rerender, myName, myRoles, stageChips, nextBadge, openModal, closeModal, switchTab, readForm, opt, attachInterviews, loadAllSessions, RECENT_DAYS } from "./t-core.js";
 import { requestSync } from "./sync.js";
 import { openMeetingForm, meetingSummaryHtml } from "./t-meetings.js";
 import { selectStudentForQuestions } from "./t-questions.js";
@@ -112,7 +112,7 @@ export async function openStudent(no) {
     <div class="section-title"><h3>대면 모의면접 기록</h3>${stageChips(s)}</div>
     <div id="meetList">${meets.length ? meets.map((m) => meetingSummaryHtml(m)).join("") : '<div class="muted">아직 없습니다.</div>'}</div>
 
-    <div class="section-title"><h3>말하기 연습</h3><span class="muted">예상질문 ${s.pqCount || 0}개 · 제출 ${sess.filter((x) => x.status === "submitted").length}회</span>
+    <div class="section-title"><h3>말하기 연습</h3><span class="muted">예상질문 ${s.pqCount || 0}개 · 제출 ${sess.filter((x) => x.status === "submitted").length}회${S.sessionsScope === "all" ? "" : ` (최근 ${RECENT_DAYS}일) <a href="#" id="sessAll">전체 보기</a>`}</span>
       <div class="spacer"></div><button class="btn-sm" id="toQ">예상질문 관리 →</button></div>
     ${sess.length ? sess.slice(0, 8).map((x) => `<div class="q-item clickable" data-sid="${x.id}" style="cursor:pointer">
       <b>${esc(x.modeLabel)}</b> <span class="muted">${fmtDate(x.startedAt)} · ${(x.items || []).length}문항</span>
@@ -141,6 +141,7 @@ export async function openStudent(no) {
     </details>`, true);
 
   $("#addMeet", body).onclick = () => openMeetingForm({ studentNo: no });
+  $("#sessAll", body)?.addEventListener("click", async (e) => { e.preventDefault(); try { await loadAllSessions(); openStudent(no); } catch (err) { showError(err, "연습 기록 불러오기"); } });
   $("#toQ", body).onclick = () => { closeModal(); switchTab("questions"); selectStudentForQuestions(no); };
   $$("[data-sid]", body).forEach((el) => el.onclick = () => openReview(el.dataset.sid));
   $$("[data-mid]", body).forEach((el) => el.onclick = () => openMeetingForm({ id: el.dataset.mid }));

@@ -2,7 +2,7 @@
 // 학생 화면과 교사 화면이 같이 쓴다.
 import {
   db, collection, doc, getDoc, getDocs, setDoc, query, where, runTransaction,
-  $, $$, esc, toast, showError, isoDay, toDate, fmtDay, fmtDate, nextInterview, defaultMeetingType
+  $, $$, esc, toast, showError, isoDay, toDate, fmtDay, fmtDate, nextInterview, defaultMeetingType, cachedCollection
 } from "./common.js";
 import { pingScheduleSync } from "./sync.js";
 
@@ -179,14 +179,14 @@ export function mountSchedule(root, opts) {
     try {
       const [cfg, av, bk] = await Promise.all([
         loadScheduleConfig(),
-        getDocs(collection(db, "availability")),
+        cachedCollection("availability"),
         isStudent ? getDocs(query(collection(db, "bookings"), where("studentNo", "==", opts.student.studentNo)))
           : isAdmin ? getDocs(collection(db, "bookings"))
           : getDocs(query(collection(db, "bookings"), where("teachers", "array-contains", me)))
       ]);
       st.cfg = cfg;
       st.avail = {};
-      av.docs.forEach((d) => { const x = d.data(); if (x.name) st.avail[x.name] = { id: d.id, ...x }; });
+      av.forEach((x) => { if (x.name) st.avail[x.name] = x; });
       st.bookings = bk.docs.map((d) => ({ id: d.id, ...d.data() }));
     } catch (e) { showError(e, "일정 불러오기"); }
     await refreshDays();

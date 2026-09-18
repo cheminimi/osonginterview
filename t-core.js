@@ -1,6 +1,7 @@
 // 교사 화면 공통 상태·도우미
 import {
-  db, collection, getDocs, query, where, onSnapshot, $, $$, esc, toast, showError, STAGES, toDate, nextInterview, ddayBadge, fmtDay
+  db, collection, getDocs, query, where, onSnapshot, $, $$, esc, toast, showError, STAGES, toDate, nextInterview, ddayBadge, fmtDay,
+  cachedCollection, getMetaVersions
 } from "./common.js";
 
 export const S = {
@@ -15,49 +16,70 @@ export function rerender(...names) {
   for (const n of list) { try { S.renderers[n]?.(); } catch (e) { showError(e, `화면 그리기(${n})`); } }
 }
 
-export async function loadAll() {
+// 목록은 브라우저 캐시 우선(바뀐 목록만 서버에서), 질문은행은 질문은행 탭을 열 때, 연습 기록은 최근 것만 실시간 구독
+export async function loadAll({ force = false, refreshMeta = false } = {}) {
   try {
-    const [st, sf, mt, ss, qb, iv] = await Promise.all([
-      getDocs(collection(db, "students")), getDocs(collection(db, "staff")),
-      getDocs(collection(db, "meetings")), getDocs(collection(db, "sessions")), getDocs(collection(db, "questions")),
-      getDocs(collection(db, "interviews"))
+    if (force || refreshMeta) await getMetaVersions(true);
+    const [st, sf, mt, iv] = await Promise.all([
+      cachedCollection("students", { force }), cachedCollection("staff", { force }),
+      cachedCollection("meetings", { force }), cachedCollection("interviews", { force })
     ]);
-    const rows = (s) => s.docs.map((d) => ({ id: d.id, ...d.data() }));
-    S.students = rows(st).sort((a, b) => String(a.studentNo).localeCompare(String(b.studentNo), "ko", { numeric: true }));
-    S.staff = rows(sf).sort((a, b) => String(a.name).localeCompare(String(b.name), "ko"));
-    S.meetings = rows(mt).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-    S.sessions = rows(ss).sort((a, b) => (b.startedAt?.seconds || 0) - (a.startedAt?.seconds || 0));
-    S.bank = rows(qb).sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
-    S.interviews = rows(iv);
+    S.students = st.sort((a, b) => String(a.studentNo).localeCompare(String(b.studentNo), "ko", { numeric: true }));
+    S.staff = sf.sort((a, b) => String(a.name).localeCompare(String(b.name), "ko"));
+    S.meetings = mt.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    S.interviews = iv;
     attachInterviews();
+    if (S.bankLoaded || force) await ensureBank(force);
   } catch (e) { showError(e, "데이터 불러오기"); }
+  watchSubmissions();
   rerender();
 }
 
-// ---- 제출된 말하기 연습 실시간 반영 (새로고침 없이 연습 리뷰에 뜸)
-// 제출된 것만 구독 → 학생이 연습 중 자동 저장할 때마다 읽기가 늘지 않음
+// 질문은행은 필요할 때만
+S.bankLoaded = false;
+export async function ensureBank(force = false) {
+  if (S.bankLoaded && !force) return S.bank;
+  const qb = await cachedCollection("questions", { force });
+  S.bank = qb.sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+  S.bankLoaded = true;
+  return S.bank;
+}
+
+// ---- 말하기 연습 기록
+// 최근 RECENT_DAYS 일 안에 제출된 것만 실시간 구독 (연습 중 자동 저장은 읽기 비용 없음).
+// 오래된 기록·미완료 연습은 필요할 때 loadAllSessions() 로 한 번에 불러온다.
+export const RECENT_DAYS = 30;
+S.sessionsScope = "recent";
+S.sessionsReady = false;
 let watching = false;
 export function watchSubmissions() {
   if (watching) return;
   watching = true;
   let first = true;
-  onSnapshot(query(collection(db, "sessions"), where("status", "==", "submitted")), (snap) => {
+  const cutoff = new Date(Date.now() - RECENT_DAYS * 86400000);
+  onSnapshot(query(collection(db, "sessions"), where("submittedAt", ">=", cutoff)), (snap) => {
     const fresh = [];
     snap.docChanges().forEach((ch) => {
       if (ch.type === "removed") return;
       const d = { id: ch.doc.id, ...ch.doc.data() };
       const i = S.sessions.findIndex((x) => x.id === d.id);
-      if (i >= 0 && S.sessions[i].status !== "submitted") fresh.push(d);
-      else if (i < 0) fresh.push(d);
-      if (i >= 0) S.sessions[i] = d; else S.sessions.unshift(d);
+      if (!first && (i < 0 || S.sessions[i].status !== "submitted")) fresh.push(d);
+      if (i >= 0) S.sessions[i] = d; else S.sessions.push(d);
     });
-    if (!first && fresh.length) {
-      S.sessions.sort((a, b) => (b.submittedAt?.seconds || b.startedAt?.seconds || 0) - (a.submittedAt?.seconds || a.startedAt?.seconds || 0));
-      toast(fresh.length === 1 ? `새 연습 제출: ${fresh[0].studentName} (${fresh[0].modeLabel || "말하기 연습"})` : `새 연습 제출 ${fresh.length}건`, "ok", 5000);
-    }
+    S.sessions.sort((a, b) => (b.submittedAt?.seconds || b.startedAt?.seconds || 0) - (a.submittedAt?.seconds || a.startedAt?.seconds || 0));
+    if (fresh.length) toast(fresh.length === 1 ? `새 연습 제출: ${fresh[0].studentName} (${fresh[0].modeLabel || "말하기 연습"})` : `새 연습 제출 ${fresh.length}건`, "ok", 5000);
     first = false;
+    S.sessionsReady = true;
     rerender("review", "home", "students");
   }, (e) => console.warn("연습 제출 실시간 반영 중단", e));
+}
+export async function loadAllSessions() {
+  const snap = await getDocs(collection(db, "sessions"));
+  const byId = new Map(S.sessions.map((x) => [x.id, x]));
+  snap.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+  S.sessions = [...byId.values()].sort((a, b) => (b.submittedAt?.seconds || b.startedAt?.seconds || 0) - (a.submittedAt?.seconds || a.startedAt?.seconds || 0));
+  S.sessionsScope = "all";
+  rerender("review", "home", "students");
 }
 
 // 학생마다 universities(= interviews 날짜순)를 붙인다. 화면들은 st.universities 를 읽는다.

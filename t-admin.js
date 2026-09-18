@@ -3,6 +3,8 @@ import {
   $, $$, esc, toast, showError, copyText, issueAccount, loginDocId, randomPw, defaultEmail, createAuthUser
 } from "./common.js";
 import { S, register, rerender, loadAll, openModal, closeModal, opt, studentByNo } from "./t-core.js";
+import { getDoc, clearDataCache, readStats, getMetaVersions } from "./common.js";
+import { firebaseConfig } from "./firebase-config.js";
 import { importStaff } from "./importers.js";
 import { getSyncConfig, clearSyncCache, testConnection, requestSync } from "./sync.js";
 import { loadScheduleConfig, DEFAULT_BLOCKS } from "./schedule.js";
@@ -16,14 +18,17 @@ export function init(el) {
       <button data-ad="staff">② 교사 계정</button>
       <button data-ad="student">③ 학생 계정</button>
       <button data-ad="sched">④ 일정 설정</button>
+      <button data-ad="backup">⑤ 백업·사용량</button>
     </div>
     <div data-adpanel="sync"></div>
     <div data-adpanel="staff" hidden></div>
     <div data-adpanel="student" hidden></div>
-    <div data-adpanel="sched" hidden></div>`;
+    <div data-adpanel="sched" hidden></div>
+    <div data-adpanel="backup" hidden></div>`;
   $$("[data-ad]", root).forEach((b) => b.onclick = () => {
     $$("[data-ad]", root).forEach((x) => x.classList.toggle("active", x === b));
     $$("[data-adpanel]", root).forEach((p) => p.hidden = p.dataset.adpanel !== b.dataset.ad);
+    ({ sync: renderSync, sched: renderSched, backup: renderBackup })[b.dataset.ad]?.();   // 설정 문서는 탭을 열 때만 읽기
   });
   register("admin", render);
 }
@@ -233,7 +238,7 @@ async function renderSync() {
   const syncAcct = cfg.syncEmail;
   p.innerHTML = `
     <div class="notice">학생 명단·트랙·배정·면접일은 <b>구글 시트('앱연동_학생', '앱연동_면접일')와 쌍방으로</b> 맞춰집니다.
-      시트에서 고치면 수 초 안에 앱에, 앱에서 고치면 바로 시트에 반영되고, 30분마다(07~22시) 전체를 다시 대조합니다. 설치 순서는 SETUP.md 3장.</div>
+      시트에서 고치면 수 초 안에 앱에, 앱에서 고치면 바로 시트에 반영됩니다. 30분마다(07~22시) 앱에서 바뀐 목록이 있으면 다시 대조하고, 하루 한 번은 전체를 대조합니다. 설치 순서는 SETUP.md 3장.</div>
     <div class="grid grid-2" style="align-items:start">
       <div class="card">
         <h3>1. 동기화 전용 계정</h3>
@@ -295,7 +300,7 @@ async function renderSync() {
     if (r.ok) {
       const x = r.result || {};
       toast(`동기화 완료 · 시트→앱 ${x.pushed || 0} · 앱→시트 ${x.pulled || 0} · 새로 추가 ${x.created || 0} · 삭제 ${x.deleted || 0}`, "ok", 6000);
-      await loadAll();
+      await loadAll({ refreshMeta: true });
     } else $("#syState", p).textContent = r.skipped ? "URL·토큰을 먼저 저장하세요." : `실패: ${r.error}`;
   };
 }
@@ -347,9 +352,102 @@ async function renderSched() {
   draw();
 }
 
+// ================= ⑤ 백업 · 사용량 =================
+const BACKUP_COLS = ["students", "staff", "accounts", "logins", "interviews", "studentNotes", "questions",
+  "sessions", "meetings", "bookings", "bookingLogs", "days", "availability", "meta"];
+async function renderBackup() {
+  const p = $("[data-adpanel=backup]", root);
+  let last = null;
+  try { const snap = await getDoc(doc(db, "meta", "backup")); if (snap.exists()) last = snap.data(); } catch (_) {}
+  const pid = firebaseConfig.projectId || "";
+  const fmt = (ms) => { const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+  const srv = Object.entries(readStats.server).map(([k, v]) => `${k} ${v}`).join(" · ") || "없음";
+  const cache = Object.entries(readStats.cache).map(([k, v]) => `${k} ${v}`).join(" · ") || "없음";
+  p.innerHTML = `
+    <div class="grid grid-2" style="align-items:start">
+      <div class="card">
+        <h3>백업</h3>
+        <p class="muted" style="margin-top:0">학생·면접일·대면 기록은 구글 시트에도 남지만, <b>말하기 연습 답변 · 예상질문 · 일정 · 교사 메모</b>는 앱에만 있어요. 무료 요금제는 자동 백업이 없으니 주기적으로 받아 두세요.</p>
+        <dl class="kv"><dt>마지막 드라이브 백업</dt><dd>${last ? `${fmt(last.at)} · ${esc(last.file || "")} · ${last.total || 0}건` : '<span class="muted">아직 없음</span>'}</dd></dl>
+        <div class="row" style="margin-top:10px">
+          <button class="btn-primary" id="bkDrive">지금 드라이브에 백업</button>
+          <button id="bkFile">이 컴퓨터로 백업 파일 받기</button>
+        </div>
+        <div class="muted" id="bkState" style="margin-top:8px"></div>
+        <p class="muted" style="margin-bottom:0">· 드라이브 백업: 수요조사 시트 Apps Script 소유자의 드라이브 <b>'면접 스튜디오 백업'</b> 폴더에 저장, 최근 8개 보관. 시트 메뉴 <b>③ 자동 동기화 켜기</b>를 다시 누르면 <b>매주 일요일 새벽 자동 백업</b>이 켜져요.<br>
+          · 백업 파일에는 학생 개인정보가 들어 있어요. 공용 PC·공유 폴더에 두지 마세요. (초기 비밀번호·연동 토큰은 빼고 저장)</p>
+      </div>
+      <div class="card">
+        <h3>무료 사용량 (읽기 하루 5만 건)</h3>
+        <p class="muted" style="margin-top:0">목록은 브라우저에 저장해 두고 <b>바뀐 것만</b> 서버에서 받아요. 연습 기록은 최근 30일 제출분만 실시간으로 받고, 시트 정기 대조는 앱에서 바뀐 게 없으면 거의 읽지 않아요.</p>
+        <dl class="kv">
+          <dt>이 화면을 열 때</dt><dd>서버에서 받음: ${esc(srv)}<br><span class="muted">저장본 사용: ${esc(cache)}</span></dd>
+        </dl>
+        <div class="row" style="margin-top:10px">
+          ${pid ? `<a class="btn" href="https://console.firebase.google.com/project/${esc(pid)}/firestore/usage" target="_blank" rel="noopener">Firebase 사용량 보기 ↗</a>` : ""}
+          <button id="bkRefresh">저장본 비우고 서버에서 다시 받기</button>
+        </div>
+        <p class="muted" style="margin-bottom:0">화면 내용이 시트나 다른 선생님 화면과 다르게 보일 때 '다시 받기'를 누르세요. 사용량 그래프에서 하루 읽기가 4만 건을 넘는 날이 잦으면 알려 주세요.</p>
+      </div>
+    </div>`;
+  $("#bkDrive", p).onclick = async () => {
+    const cfg = await getSyncConfig(true).catch(() => ({}));
+    if (!cfg.url || !cfg.token) return toast("① 시트 연동에서 웹 앱 URL·토큰을 먼저 저장하세요.", "error");
+    $("#bkDrive", p).disabled = true; $("#bkState", p).textContent = "드라이브에 백업 중… (1분 가까이 걸릴 수 있어요)";
+    try {
+      const res = await fetch(cfg.url, { method: "POST", body: JSON.stringify({ action: "backup", token: cfg.token }), redirect: "follow" });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "백업 실패");
+      toast(`드라이브에 백업했습니다 · ${data.result.total}건`); renderBackup();
+    } catch (e) { showError(e, "드라이브 백업"); $("#bkState", p).textContent = "실패 — 시트 Apps Script를 최신 코드로 다시 배포했는지 확인하세요."; $("#bkDrive", p).disabled = false; }
+  };
+  $("#bkFile", p).onclick = async () => {
+    if (!confirm("모든 데이터를 읽어 파일로 받습니다. (읽기 수천 건 사용 · 가끔만 하세요) 계속할까요?")) return;
+    const btn = $("#bkFile", p); btn.disabled = true;
+    const out = { app: "면접 스튜디오", exportedAt: new Date().toISOString(), project: firebaseConfig.projectId, collections: {} };
+    const strip = (o) => { delete o.initialPw; delete o.token; return o; };
+    const plain = (v) => JSON.parse(JSON.stringify(v, (k, x) => (x && typeof x === "object" && typeof x.seconds === "number" && typeof x.nanoseconds === "number") ? new Date(x.seconds * 1000).toISOString() : x));
+    try {
+      for (const c of BACKUP_COLS) {
+        $("#bkState", p).textContent = `읽는 중: ${c}`;
+        const snap = await getDocs(collection(db, c));
+        out.collections[c] = snap.docs.map((d) => strip({ _id: d.id, ...plain(d.data()) }));
+      }
+      out.collections.personalQuestions = [];
+      const stNos = out.collections.students.map((x) => x._id);
+      for (let i = 0; i < stNos.length; i++) {
+        $("#bkState", p).textContent = `읽는 중: 예상질문 ${i + 1}/${stNos.length}`;
+        const snap = await getDocs(collection(db, "students", stNos[i], "personalQuestions"));
+        snap.docs.forEach((d) => out.collections.personalQuestions.push({ _id: d.id, _parent: "students/" + stNos[i], ...plain(d.data()) }));
+      }
+      const sched = await getDoc(doc(db, "config", "schedule"));
+      out.collections.config = sched.exists() ? [{ _id: "schedule", ...plain(sched.data()) }] : [];
+      const total = Object.values(out.collections).reduce((a, x) => a + x.length, 0);
+      const blob = new Blob([JSON.stringify(out)], { type: "application/json" });
+      const a = document.createElement("a");
+      const d = new Date();
+      a.href = URL.createObjectURL(blob);
+      a.download = `interview-studio-backup_${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      $("#bkState", p).textContent = `파일로 받았습니다 · ${total}건`;
+    } catch (e) { showError(e, "백업 파일 만들기"); $("#bkState", p).textContent = ""; }
+    btn.disabled = false;
+  };
+  $("#bkRefresh", p).onclick = async () => {
+    clearDataCache(true);
+    await getMetaVersions(true);
+    toast("서버에서 다시 받는 중…");
+    await loadAll({ force: true });
+    toast("최신 내용으로 다시 받았습니다.");
+  };
+}
+
 function render() {
   renderStaff();
   renderStudentAccounts();
-  renderSync();
-  renderSched();
+  const visible = (n) => !$(`[data-adpanel=${n}]`, root).hidden;
+  if (visible("sync")) renderSync();
+  if (visible("sched")) renderSched();
+  if (visible("backup")) renderBackup();
 }

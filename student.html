@@ -145,7 +145,7 @@
 
 <script type="app-module">
 import {
-  db, requireRole, mountAccountMenu, collection, getDocs, query, where, onSnapshot, esc, $, $$, toast, showError, loadInterviewsFor,
+  db, requireRole, mountAccountMenu, collection, getDocs, query, where, onSnapshot, esc, $, $$, toast, showError, loadInterviewsFor, cachedCollection,
   CRITERIA, STAGES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes
 } from "./common.js";
 import { mountSchedule } from "./schedule.js";
@@ -156,18 +156,15 @@ mountAccountMenu(ctx, $("#acct"));
 
 let personal = [], bank = [], sessions = [], meetings = [];
 try {
-  const [pq, qb, ss, mt, iv] = await Promise.all([
+  // 연습 기록·대면 피드백은 아래 실시간 구독이 처음 한 번 읽어 온다 (중복 읽기 없음)
+  const [pq, qb, iv] = await Promise.all([
     getDocs(collection(db, "students", me.studentNo, "personalQuestions")),
-    getDocs(collection(db, "questions")),
-    getDocs(query(collection(db, "sessions"), where("studentUid", "==", user.uid))),
-    getDocs(query(collection(db, "meetings"), where("studentUid", "==", user.uid), where("shared", "==", true))),
+    cachedCollection("questions"),   // 질문은행: 바뀌었을 때만 서버에서 받음
     loadInterviewsFor(me.studentNo)
   ]);
   me.universities = iv;
   const rows = (s) => s.docs.map((d) => ({ id: d.id, ...d.data() }));
-  personal = rows(pq); bank = rows(qb);
-  sessions = rows(ss).sort((a, b) => (b.startedAt?.seconds || 0) - (a.startedAt?.seconds || 0));
-  meetings = rows(mt).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  personal = rows(pq); bank = qb;
 } catch (e) { showError(e, "데이터 불러오기"); }
 $("#main").hidden = false;
 

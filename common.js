@@ -5,14 +5,15 @@ import {
   setPersistence, browserSessionPersistence, browserLocalPersistence
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
-  getFirestore, connectFirestoreEmulator, collection, doc, getDoc, getDocs, setDoc, addDoc,
-  updateDoc, deleteDoc, query, where, serverTimestamp, writeBatch, deleteField, runTransaction, onSnapshot
+  getFirestore, connectFirestoreEmulator, collection, doc, getDoc, getDocs,
+  setDoc as fsSetDoc, addDoc as fsAddDoc, updateDoc as fsUpdateDoc, deleteDoc as fsDeleteDoc, writeBatch as fsWriteBatch,
+  query, where, serverTimestamp, deleteField, runTransaction, onSnapshot
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { firebaseConfig, ADMIN_EMAILS, LOGIN_EMAIL_DOMAIN } from "./firebase-config.js";
 
 export {
-  collection, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc,
-  query, where, serverTimestamp, writeBatch, deleteField, signOut, signInWithEmailAndPassword, runTransaction, onSnapshot
+  collection, doc, getDoc, getDocs,
+  query, where, serverTimestamp, deleteField, signOut, signInWithEmailAndPassword, runTransaction, onSnapshot
 };
 
 // ---- 에뮬레이터(로컬 테스트) 스위치: 주소 뒤에 ?emu=1 을 한 번 붙이면 켜지고 ?emu=0 이면 꺼짐
@@ -163,6 +164,7 @@ export function requireRole(want) {
 
 export async function logout(reason = "out") {
   try { await signOut(auth); } catch (e) { console.warn("signOut", e); }
+  clearDataCache();
   try { sessionStorage.clear(); localStorage.removeItem(KEEP_KEY); localStorage.removeItem("myStaffName"); } catch (_) {}
   location.replace(`index.html?${reason === "idle" ? "idle" : "out"}=1`);
 }
@@ -264,6 +266,141 @@ export function mountAccountMenu(ctx, el) {
   const pwBtn = el.querySelector("#acctPw");
   if (ctx.account.bootstrap) pwBtn.hidden = true; // 관리자 이메일 계정은 Firebase 콘솔에서 관리
   pwBtn.onclick = () => openPasswordModal(ctx);
+}
+
+// ================= 읽기 줄이기: 변경 표시 + 브라우저 캐시 =================
+// Firebase 무료 요금제는 하루 읽기 5만 건. 자주 안 바뀌는 목록(학생·교사·면접일·대면 기록·질문은행·교사 불가 시간)은
+// 브라우저에 저장해 두고, meta/versions 문서 1건만 읽어 바뀐 목록만 서버에서 다시 받는다.
+// 이 목록에 쓰는 코드는 모두 아래 setDoc/updateDoc/addDoc/deleteDoc/writeBatch 를 거치므로 자동으로 '바뀜'이 표시된다.
+// (Apps Script 가 시트 내용을 앱에 쓸 때도 같은 표시를 남긴다)
+export const CACHED = ["students", "staff", "interviews", "meetings", "questions", "availability"];
+// 자주 바뀌는 목록은 바뀐 문서만 받아 합친다 (이 필드에 수정 시각(ms)을 항상 기록)
+const INCREMENTAL = { meetings: "updatedAtMs", interviews: "updatedAt" };
+const CLOCK_SLACK = 15 * 60 * 1000;   // 기기 시계 차이 대비 여유
+const PUBLIC_CACHE = ["questions", "availability"];   // 개인정보 아님 → 기기에 오래 보관
+const CACHE_PREFIX = "c1:";
+const CACHE_TTL = 12 * 3600 * 1000;
+let metaPromise = null;
+const pendingBump = new Set();
+let bumpTimer = null;
+
+function topCollection(path) { return String(path || "").split("/")[0]; }
+const pendingDeleted = {};
+function flushBumps() {
+  if (!pendingBump.size) return;
+  const now = Date.now();
+  const patch = {};
+  pendingBump.forEach((c) => { patch[c] = now; });
+  pendingBump.clear();
+  if (Object.keys(pendingDeleted).length) { patch.deleted = { ...pendingDeleted }; for (const k in pendingDeleted) delete pendingDeleted[k]; }
+  fsSetDoc(doc(db, "meta", "versions"), patch, { merge: true }).catch((e) => {
+    if (e?.code !== "permission-denied") console.warn("meta bump", e);   // 학생 계정은 표시 권한 없음 (영향 없음)
+  });
+}
+function markChanged(path, deleted = false) {
+  const c = topCollection(path);
+  if (!CACHED.includes(c)) return;
+  const parts = String(path).split("/");
+  if (deleted && parts.length === 2 && INCREMENTAL[c]) (pendingDeleted[c] ||= {})[parts[1]] = Date.now();
+  dropCache(c);
+  metaPromise = null;
+  pendingBump.add(c);
+  clearTimeout(bumpTimer);
+  bumpTimer = setTimeout(flushBumps, 400);
+}
+addEventListener("pagehide", flushBumps);
+
+// 증분 목록(대면 기록·면접일)에 쓸 때 수정 시각을 빠뜨리지 않게 자동으로 넣는다
+function stamp(path, data) {
+  const c = topCollection(path), f = INCREMENTAL[c];
+  if (!f || String(path).split("/").length !== 2 || !data || typeof data !== "object" || Array.isArray(data)) return data;
+  return f in data ? data : { ...data, [f]: Date.now() };
+}
+export async function setDoc(ref, data, opts) { const r = await fsSetDoc(ref, stamp(ref.path, data), opts); markChanged(ref.path); return r; }
+export async function updateDoc(ref, data) { const r = await fsUpdateDoc(ref, stamp(ref.path, data)); markChanged(ref.path); return r; }
+export async function addDoc(col, data) { const r = await fsAddDoc(col, stamp(col.path + "/x", data)); markChanged(r.path); return r; }
+export async function deleteDoc(ref) { const r = await fsDeleteDoc(ref); markChanged(ref.path, true); return r; }
+export function writeBatch(d) {
+  const b = fsWriteBatch(d), ops = [];
+  return {
+    set(ref, data, opts) { ops.push([ref.path, false]); b.set(ref, stamp(ref.path, data), opts); return this; },
+    update(ref, data) { ops.push([ref.path, false]); b.update(ref, stamp(ref.path, data)); return this; },
+    delete(ref) { ops.push([ref.path, true]); b.delete(ref); return this; },
+    async commit() { const r = await b.commit(); ops.forEach(([p, del]) => markChanged(p, del)); return r; }
+  };
+}
+
+function cacheStore(name) {
+  try { return PUBLIC_CACHE.includes(name) || keepLoginOn() ? localStorage : sessionStorage; } catch (_) { return null; }
+}
+function cacheKey(name) { return `${CACHE_PREFIX}${auth.currentUser?.uid || "-"}:${name}`; }
+function dropCache(name) {
+  try { localStorage.removeItem(cacheKey(name)); sessionStorage.removeItem(cacheKey(name)); } catch (_) {}
+}
+export function clearDataCache(publicToo = false) {
+  for (const st of [localStorage, sessionStorage]) {
+    try {
+      Object.keys(st).filter((k) => k.startsWith(CACHE_PREFIX)).forEach((k) => {
+        if (publicToo || !PUBLIC_CACHE.some((n) => k.endsWith(":" + n))) st.removeItem(k);
+      });
+    } catch (_) {}
+  }
+}
+// Firestore 날짜(Timestamp)를 저장했다가 되살림
+function reviveTs(v) {
+  if (Array.isArray(v)) return v.map(reviveTs);
+  if (v && typeof v === "object") {
+    if (typeof v.seconds === "number" && typeof v.nanoseconds === "number") {
+      const ms = v.seconds * 1000 + Math.floor(v.nanoseconds / 1e6);
+      return { seconds: v.seconds, nanoseconds: v.nanoseconds, toDate: () => new Date(ms), toMillis: () => ms };
+    }
+    const o = {}; for (const k in v) o[k] = reviveTs(v[k]); return o;
+  }
+  return v;
+}
+export function getMetaVersions(force = false) {
+  if (!metaPromise || force) {
+    metaPromise = getDoc(doc(db, "meta", "versions")).then((s) => (s.exists() ? s.data() : {})).catch(() => null);
+  }
+  return metaPromise;
+}
+export const readStats = { server: {}, cache: {} };
+/** 목록 전체를 캐시 우선으로 읽기. force: 서버에서 다시 받기 */
+export async function cachedCollection(name, { force = false } = {}) {
+  const meta = await getMetaVersions();
+  // 앱에서 바뀐 표시(name) + 시트 동기화가 바꾼 표시(s_name). null = 표시 문서를 못 읽음(규칙 미반영) → 캐시 안 씀
+  const ver = meta ? `${meta[name] || 0}:${meta["s_" + name] || 0}` : null;
+  const store = cacheStore(name), key = cacheKey(name);
+  const save = (rows, at) => {
+    if (ver === null || !store) return;
+    try { store.setItem(key, JSON.stringify({ v: ver, at, rows })); }
+    catch (_) { try { store.removeItem(key); } catch (__) {} }   // 저장 공간 부족 → 캐시 없이 사용
+  };
+  let c = null;
+  if (!force && ver !== null && store) {
+    try { c = JSON.parse(store.getItem(key) || "null"); } catch (_) { c = null; }
+    if (c && Date.now() - c.at >= CACHE_TTL) c = null;
+    if (c && c.v === ver) { readStats.cache[name] = c.rows.length; return reviveTs(c.rows); }
+    // 바뀐 문서만 받아 합치기
+    const f = INCREMENTAL[name];
+    if (c && f && Array.isArray(c.rows)) {
+      const since = Math.max(0, ...c.rows.map((r) => Number(r[f]) || 0)) - CLOCK_SLACK;
+      const snap = await getDocs(query(collection(db, name), where(f, ">", since)));
+      const byId = new Map(c.rows.map((r) => [r.id, r]));
+      snap.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+      const gone = (meta.deleted || {})[name] || {};
+      Object.entries(gone).forEach(([id, ms]) => { if (ms >= c.at - CLOCK_SLACK) byId.delete(id); });
+      const rows = [...byId.values()];
+      readStats.server[name] = snap.size;
+      save(JSON.parse(JSON.stringify(rows)), c.at);
+      return reviveTs(JSON.parse(JSON.stringify(rows)));
+    }
+  }
+  const snap = await getDocs(collection(db, name));
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  readStats.server[name] = rows.length;
+  save(rows, Date.now());
+  return rows;
 }
 
 // ================= UI 도우미 =================

@@ -2,7 +2,7 @@ import {
   db, collection, doc, addDoc, updateDoc, deleteDoc, writeBatch, serverTimestamp,
   $, $$, esc, toast, showError, copyText, parseLooseJSON, typeBadge, TYPES, FIELDS, TRACKS
 } from "./common.js";
-import { S, register, openModal, closeModal, readForm, lines, opt } from "./t-core.js";
+import { S, register, openModal, closeModal, readForm, lines, opt, ensureBank } from "./t-core.js";
 import { bankPrompt } from "./prompts.js";
 import { SEED_QUESTIONS } from "./seed-questions.js";
 import { savePersonal } from "./t-questions.js";
@@ -39,6 +39,11 @@ export function init(el) {
 }
 
 function render() {
+  if (!S.bankLoaded) {
+    $("#bList", root).innerHTML = '<div class="card empty">질문은행 불러오는 중…</div>';
+    ensureBank().then(render).catch((e) => showError(e, "질문은행 불러오기"));
+    return;
+  }
   const t = $("#bType", root).value, f = $("#bField", root).value, kw = $("#bSearch", root).value.trim();
   const list = S.bank.filter((q) => (!t || q.type === t) && (!f || q.track === f)
     && (!kw || `${q.text}${q.passage}${(q.majors || []).join()}`.includes(kw)));
@@ -160,6 +165,7 @@ async function addMany(qs) {
 }
 
 async function seed() {
+  await ensureBank();
   const have = new Set(S.bank.map((q) => q.seedId).filter(Boolean));
   const add = SEED_QUESTIONS.filter((q) => !have.has(q.seedId));
   if (!add.length) return toast("기본 질문은 이미 모두 들어 있습니다.");

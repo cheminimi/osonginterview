@@ -121,7 +121,7 @@
 
 <script type="app-module">
 import {
-  db, requireRole, collection, doc, getDocs, addDoc, updateDoc, serverTimestamp, loadInterviewsFor,
+  db, requireRole, collection, doc, getDocs, addDoc, updateDoc, serverTimestamp, loadInterviewsFor, cachedCollection,
   esc, $, toast, showError, TYPES, typeBadge, fmtSec, shuffle
 } from "./common.js";
 
@@ -147,9 +147,9 @@ try {
     const snap = await getDocs(collection(db, "students", profile.studentNo, "personalQuestions"));
     pool = snap.docs.map((d) => ({ id: d.id, source: "personal", type: "document", ...d.data() }));
   } else {
-    const snap = await getDocs(collection(db, "questions"));
+    const all = await cachedCollection("questions");   // 질문은행: 바뀌었을 때만 서버에서 받음
     const relevant = (q) => !q.majors?.length || depts.some((d) => q.majors.some((m) => d.includes(m)));
-    pool = snap.docs.map((d) => ({ id: d.id, source: "bank", ...d.data() })).filter((q) => {
+    pool = all.map((q) => ({ ...q, source: "bank" })).filter((q) => {
       if (mode === "personality") return q.type === "personality" || q.type === "mmi";
       if (mode === "passage") return q.type === "passage";
       return q.type === mode && relevant(q);

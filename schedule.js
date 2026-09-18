@@ -145,7 +145,7 @@ export function mountSchedule(root, opts) {
       </div>
       <div class="sc-legend"><span class="sc-chip s1">1차</span><span class="sc-chip s2">2차</span><span class="sc-chip s3">3차</span>
         <span class="sc-chip s1 req">점선 = 요청 중</span><span class="sc-legend-busy">회색 칸 = ${isStudent ? "선생님 불가" : "내 불가 시간"}</span>
-        <span class="muted">빈 칸을 누르면 ${isStudent ? "신청" : "일정 잡기"}</span></div>
+        <span class="muted">같은 교실·같은 시간은 겹칠 수 없어요 · <b>＋</b> 를 누르면 ${isStudent ? "신청" : "일정 잡기"}</span></div>
       <div id="scGrid" class="sc-grid-wrap"></div>
     </div>`;
 

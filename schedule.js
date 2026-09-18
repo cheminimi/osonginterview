@@ -20,7 +20,27 @@ export const DEFAULT_BLOCKS = [
   { key: "n1", label: "야자 1차시", start: "19:00", end: "20:10" },
   { key: "n2", label: "야자 2차시", start: "20:20", end: "21:30" }
 ];
-export const DEFAULT_ROOMS = ["SW실", "진로진학실"];
+// 장소: 문자열 또는 { name, off:{요일:[칸코드]}, offAll:[칸코드], note }
+export const DEFAULT_ROOMS = ["SW실", "진로진학실", "수학실(4층)", "지리실(5층)", "수학놀이방(5층)"];
+// 이름만 적힌 교실에 자동으로 붙는 기본 제한 (관리자가 한 번 저장하면 저장값이 우선)
+const ROOM_PRESETS = [
+  { match: /수학실/, offAll: ["after", "n1", "n2"], note: "일과 중(1~7교시·점심시간)만 사용 가능" },
+  { match: /지리실|수학놀이방/, off: { 1: ["p4"], 3: ["p7", "after"] }, note: "월 4교시, 수 7교시·방과후 사용 불가" }
+];
+export function normalizeRoom(r) {
+  const o = typeof r === "string" ? { name: r } : { ...(r || {}) };
+  o.name = String(o.name || "").trim();
+  if (!("off" in o) && !("offAll" in o)) {
+    const p = ROOM_PRESETS.find((x) => x.match.test(o.name));
+    if (p) { o.off = p.off ? JSON.parse(JSON.stringify(p.off)) : {}; o.offAll = [...(p.offAll || [])]; if (!o.note) o.note = p.note; }
+  }
+  o.off = o.off && typeof o.off === "object" ? o.off : {};
+  o.offAll = Array.isArray(o.offAll) ? o.offAll : [];
+  o.note = String(o.note || "");
+  return o;
+}
+export const normalizeRooms = (list) => (Array.isArray(list) ? list : []).map(normalizeRoom).filter((r) => r.name);
+export const roomNames = (rooms) => (rooms || []).map((r) => r.name);
 export const BOOK_STAGES = [
   { key: 1, label: "1차 담임", short: "1차", min: 0 },   // 1차: 칸(교시) 전체
   { key: 2, label: "2차 교과", short: "2차", min: 30 },
@@ -37,7 +57,7 @@ export async function loadScheduleConfig() {
   try { const s = await getDoc(doc(db, "config", "schedule")); if (s.exists()) c = s.data(); } catch (e) { console.warn("schedule config", e); }
   return {
     blocks: Array.isArray(c.blocks) && c.blocks.length ? c.blocks : DEFAULT_BLOCKS,
-    rooms: Array.isArray(c.rooms) ? c.rooms : DEFAULT_ROOMS,
+    rooms: normalizeRooms(Array.isArray(c.rooms) ? c.rooms : DEFAULT_ROOMS),
     syncUrl: c.syncUrl || ""
   };
 }
@@ -66,15 +86,38 @@ export function stageTeachers(st, stage) {
 }
 const who = (k) => k === "student" ? "학생" : k === "관리자" ? "관리자" : `${k} 선생님`;
 
+/** 교실이 그 날·그 칸에 쓸 수 없으면 안내 문구, 쓸 수 있으면 "" */
+export function roomOff(cfg, room, date, blockKey) {
+  if (!room || !blockKey) return "";
+  const r = (cfg?.rooms || []).find((x) => normRoom(x.name) === normRoom(room));
+  if (!r) return "";
+  const tail = r.note ? ` · ${r.note}` : "";
+  if ((r.offAll || []).includes(blockKey)) return `${r.name}은 이 시간에 쓸 수 없는 교실이에요${tail}`;
+  const d = toDate(date);
+  const dow = d ? String(d.getDay()) : "";
+  if (dow && (r.off?.[dow] || []).includes(blockKey)) return `${r.name}은 ${WEEK[Number(dow)]}요일 이 시간에 쓸 수 없어요${tail}`;
+  return "";
+}
+/** 교실 제한을 사람이 읽는 문구로 (관리 화면·안내용) */
+export function roomLimitText(r, blocks = DEFAULT_BLOCKS) {
+  const lab = (k) => blocks.find((b) => b.key === k)?.label || k;
+  const parts = [];
+  if (r.offAll?.length) parts.push(`매일 ${r.offAll.map(lab).join("·")}`);
+  Object.entries(r.off || {}).forEach(([d, ks]) => { if (ks?.length) parts.push(`${WEEK[Number(d)]} ${ks.map(lab).join("·")}`); });
+  return parts.length ? `${parts.join(", ")} 사용 불가` : "";
+}
+
 /**
  * 겹침 검사. 반환 [{hard, msg}]
  *  - 같은 교사 · 같은 장소 · 같은 학생이 시간이 겹치면 불가 (요청 중인 일정도 자리를 차지)
  *  - 교사 불가 시간(수업 등)은 다른 사람이 신청하면 불가, 본인·관리자는 경고만
  */
-export function findConflicts(b, items, { avail = {}, actor = "", isAdmin = false, student = null, bookingId = "" } = {}) {
+export function findConflicts(b, items, { avail = {}, actor = "", isAdmin = false, student = null, bookingId = "", cfg = null } = {}) {
   const out = [];
   const today = isoDay();
   if (b.date < today) out.push({ hard: !isAdmin, msg: "지난 날짜입니다." });
+  const offMsg = cfg ? roomOff(cfg, b.room, b.date, b.block) : "";
+  if (offMsg) out.push({ hard: !isAdmin, msg: offMsg });
   for (const [id, x] of Object.entries(items || {})) {
     if (id === bookingId || !ACTIVE(x.status) || !overlap(x, b)) continue;
     const label = `${x.start}–${x.end} ${x.stage}차${x.status === "requested" ? "(요청 중)" : ""}`;
@@ -113,7 +156,7 @@ export function mountSchedule(root, opts) {
   const isStudent = role === "student", isAdmin = role === "admin";
   const me = isStudent ? "student" : (opts.myName || "관리자");
   const st = {
-    cfg: { blocks: DEFAULT_BLOCKS, rooms: DEFAULT_ROOMS, syncUrl: "" },
+    cfg: { blocks: DEFAULT_BLOCKS, rooms: normalizeRooms(DEFAULT_ROOMS), syncUrl: "" },
     week: mondayOf(new Date()), dayIdx: Math.min((new Date().getDay() + 6) % 7, 4),
     view: window.innerWidth < 720 ? "day" : "week", weekend: false,
     days: {}, avail: {}, bookings: [],
@@ -146,6 +189,7 @@ export function mountSchedule(root, opts) {
       <div class="sc-legend"><span class="sc-chip s1">1차</span><span class="sc-chip s2">2차</span><span class="sc-chip s3">3차</span>
         <span class="sc-chip s1 req">점선 = 요청 중</span><span class="sc-legend-busy">회색 칸 = ${isStudent ? "선생님 불가" : "내 불가 시간"}</span>
         <span class="muted">같은 교실·같은 시간은 겹칠 수 없어요 · <b>＋</b> 를 누르면 ${isStudent ? "신청" : "일정 잡기"}</span></div>
+      <div id="scRoomNote" class="muted" style="padding:0 12px 8px"></div>
       <div id="scGrid" class="sc-grid-wrap"></div>
     </div>`;
 
@@ -202,17 +246,27 @@ export function mountSchedule(root, opts) {
 
   // ---------- 그리기 ----------
   function render() {
+    renderRoomNote();
     fillFilters();
     renderMine();
     renderGrid();
     opts.onBadge?.(needMine().length);
+  }
+  // 쓸 수 있는 시간이 정해진 교실 안내
+  function renderRoomNote() {
+    const el = $("#scRoomNote", root);
+    if (!el) return;
+    const lim = st.cfg.rooms.map((r) => ({ r, t: roomLimitText(r, st.cfg.blocks) })).filter((x) => x.t);
+    el.innerHTML = lim.length
+      ? `🏫 교실 사용 제한 · ${lim.map(({ r, t }) => `<b>${esc(r.name)}</b> ${esc(r.note || t)}`).join(" / ")}`
+      : "";
   }
   function fillFilters() {
     if (isStudent) return;
     const tSel = $("#scTeacher", root), rSel = $("#scRoom", root);
     const tNames = staffNames();
     tSel.innerHTML = `<option value="">모든 선생님</option>` + tNames.map((n) => `<option ${n === st.fTeacher ? "selected" : ""}>${esc(n)}</option>`).join("");
-    const rooms = [...new Set([...st.cfg.rooms, ...Object.values(st.days).flatMap((it) => Object.values(it).map((x) => x.room)).filter(Boolean)])];
+    const rooms = [...new Set([...roomNames(st.cfg.rooms), ...Object.values(st.days).flatMap((it) => Object.values(it).map((x) => x.room)).filter(Boolean)])];
     rSel.innerHTML = `<option value="">모든 장소</option>` + rooms.map((n) => `<option ${n === st.fRoom ? "selected" : ""}>${esc(n)}</option>`).join("");
   }
   const needMine = () => st.bookings.filter((b) => b.status === "requested" && (b.need || []).includes(me) && !(b.approvedBy || []).includes(me));
@@ -367,7 +421,8 @@ export function mountSchedule(root, opts) {
       </div>
       <div class="field"><label>시간 *</label><div id="bkSlots" class="sc-slots"></div></div>
       <div class="field"><label>장소</label><select name="room"></select>
-        <input name="roomOther" placeholder="장소 직접 입력 (예: 3-2 교실)" style="margin-top:6px" hidden></div>
+        <input name="roomOther" placeholder="장소 직접 입력 (예: 3-2 교실)" style="margin-top:6px" hidden>
+        <div class="muted" id="bkRoomHint" style="margin-top:4px"></div></div>
       <div class="field"><label>메시지 (선택)</label><input name="memo" maxlength="200" placeholder="${isStudent ? "예: 이 시간이 어려우면 다른 시간 제안 부탁드려요" : "예: 생기부 출력해서 오세요"}"></div>
       <div id="bkTeachers" class="muted" style="margin-bottom:8px"></div>
       <div id="bkWarn"></div>
@@ -392,12 +447,32 @@ export function mountSchedule(root, opts) {
     function fillRooms() {
       const sel = f("room");
       const cur = b0?.room || "";
-      const inList = !cur || st.cfg.rooms.includes(cur);
+      const names = roomNames(st.cfg.rooms);
+      const inList = !cur || names.includes(cur);
       sel.innerHTML = `<option value="">미정 (${isStudent ? "선생님과 협의" : "나중에 정함"})</option>` +
-        st.cfg.rooms.map((r) => `<option ${r === cur ? "selected" : ""}>${esc(r)}</option>`).join("") +
-        (isStudent ? (inList ? "" : `<option selected>${esc(cur)}</option>`) : `<option value="__other" ${inList ? "" : "selected"}>기타 (직접 입력)</option>`);
+        st.cfg.rooms.map((r) => {
+          const lim = roomLimitText(r, st.cfg.blocks);
+          return `<option value="${esc(r.name)}" ${r.name === cur ? "selected" : ""} title="${esc(r.note || lim)}">${esc(r.name)}</option>`;
+        }).join("") +
+        (isStudent ? (inList ? "" : `<option value="${esc(cur)}" selected>${esc(cur)}</option>`) : `<option value="__other" ${inList ? "" : "selected"}>기타 (직접 입력)</option>`);
       if (!isStudent && !inList) { f("roomOther").hidden = false; f("roomOther").value = cur; }
       sel.onchange = () => { f("roomOther").hidden = sel.value !== "__other"; check(); };
+      markRooms();
+    }
+    // 고른 날짜·칸에 못 쓰는 교실은 '이 시간 불가'로 표시하고 고를 수 없게
+    function markRooms() {
+      const sel = f("room"), d = f("date").value, bk = f("block").value;
+      [...sel.options].forEach((o) => {
+        if (!o.value || o.value === "__other") return;
+        const base = o.dataset.base || (o.dataset.base = o.textContent);
+        const off = roomOff(st.cfg, o.value, d, bk);
+        o.textContent = off ? `${base} · 이 시간 불가` : base;
+        o.disabled = !!off && o.value !== sel.value && !isAdmin;   // 관리자는 경고만 보고 고를 수 있음
+      });
+      const r = st.cfg.rooms.find((x) => x.name === sel.value);
+      const lim = r ? roomLimitText(r, st.cfg.blocks) : "";
+      const hint = $("#bkRoomHint", body);
+      if (hint) hint.innerHTML = lim ? `ℹ️ ${esc(r.name)}: ${esc(r.note || lim)}` : "";
     }
     const roomVal = () => f("room").value === "__other" ? f("roomOther").value.trim() : f("room").value;
 
@@ -408,13 +483,14 @@ export function mountSchedule(root, opts) {
       const d = f("date").value;
       const teachers = s ? stageTeachers(s, stageN) : [];
       $("#bkTeachers", body).textContent = teachers.length ? `상대: ${teachers.join(", ")} 선생님${isStudent ? "" : " · " + (s?.name || "") + " 학생"}` : "";
+      markRooms();
       if (!d || !blk) return;
       if (!(d in st.days)) {
         try { const snap = await getDoc(doc(db, "days", d)); st.days[d] = snap.exists() ? (snap.data().items || {}) : {}; } catch (e) { showError(e, "날짜 일정 확인"); }
       }
       const slots = slotOptions(blk, stageN);
       const base = { studentNo: s?.studentNo || "", teachers, date: d, block: blk.key, room: roomVal() };
-      const ctx = { avail: st.avail, actor: me, isAdmin, student: s, bookingId: b0?.id || "" };
+      const ctx = { avail: st.avail, actor: me, isAdmin, student: s, bookingId: b0?.id || "", cfg: st.cfg };
       const res = slots.map((sl) => ({ sl, c: findConflicts({ ...base, ...sl }, st.days[d], ctx) }));
       if (!chosen || !res.some((r) => r.sl.start === chosen.start && r.sl.end === chosen.end)) {
         const same = b0 && b0.date === d && b0.block === blk.key ? res.find((r) => r.sl.start === b0.start) : null;
@@ -460,7 +536,7 @@ export function mountSchedule(root, opts) {
       };
       if (!b0) Object.assign(next, { requestedBy: actorKey, createdAtMs: Date.now() });
       // 경고(비차단)는 한 번 더 묻기
-      const warns = findConflicts(next, st.days[next.date], { avail: st.avail, actor: me, isAdmin, student: s, bookingId: b0?.id || "" });
+      const warns = findConflicts(next, st.days[next.date], { avail: st.avail, actor: me, isAdmin, student: s, bookingId: b0?.id || "", cfg: st.cfg });
       const hard = warns.filter((x) => x.hard);
       if (hard.length && !force) return toast(hard[0].msg, "error");
       if (warns.length && !confirm(warns.map((x) => "• " + x.msg).join("\n") + "\n\n그래도 진행할까요?")) return;
@@ -492,7 +568,7 @@ export function mountSchedule(root, opts) {
       // 시간·장소가 그대로이고 이미 자리를 잡고 있던 일정(수락·확정)은 다시 검사하지 않음
       const sameSlot = cur && ACTIVE(cur.status) && ["date", "start", "end", "room"].every((k) => cur[k] === next[k]);
       if (ACTIVE(next.status) && !force && !sameSlot) {
-        const hard = findConflicts(next, dayItems[next.date], { avail: st.avail, actor: me, isAdmin, bookingId: bid }).filter((x) => x.hard);
+        const hard = findConflicts(next, dayItems[next.date], { avail: st.avail, actor: me, isAdmin, bookingId: bid, cfg: st.cfg }).filter((x) => x.hard);
         if (hard.length) throw Object.assign(new Error("방금 다른 일정이 먼저 잡혔어요: " + hard[0].msg), { conflict: true });
       }
       tx.set(ref, next);

@@ -7,7 +7,7 @@ import { getDoc, clearDataCache, readStats, getMetaVersions } from "./common.js"
 import { firebaseConfig } from "./firebase-config.js";
 import { importStaff } from "./importers.js";
 import { getSyncConfig, clearSyncCache, testConnection, requestSync } from "./sync.js";
-import { loadScheduleConfig, DEFAULT_BLOCKS } from "./schedule.js";
+import { loadScheduleConfig, DEFAULT_BLOCKS, DEFAULT_ROOMS, normalizeRoom, roomLimitText } from "./schedule.js";
 
 let root;
 export function init(el) {
@@ -309,16 +309,24 @@ async function renderSync() {
 async function renderSched() {
   const p = $("[data-adpanel=sched]", root);
   const cfg = await loadScheduleConfig();
-  let rooms = [...cfg.rooms];
+  let rooms = cfg.rooms.map((r) => ({ ...r, off: { ...(r.off || {}) }, offAll: [...(r.offAll || [])] }));
   let blocks = cfg.blocks.map((b) => ({ ...b }));
   const draw = () => {
     p.innerHTML = `
       <div class="grid grid-2" style="align-items:start">
         <div class="card">
           <h3>장소</h3>
-          <p class="muted" style="margin-top:0">학생·선생님이 고르는 장소 목록입니다. 목록에 없는 곳은 선생님이 '기타'로 직접 적을 수 있어요. 같은 장소·같은 시간은 겹쳐 잡을 수 없습니다.</p>
-          <div id="rmList">${rooms.map((r, i) => `<div class="row sc-miss"><b>${esc(r)}</b><div class="spacer"></div><button class="btn-sm btn-danger" data-rmdel="${i}">삭제</button></div>`).join("") || '<div class="muted">없음</div>'}</div>
-          <div class="row" style="margin-top:8px"><input id="rmNew" placeholder="예: 3학년 상담실" style="flex:1;width:auto"><button id="rmAdd">추가</button></div>
+          <p class="muted" style="margin-top:0">학생·선생님이 고르는 장소 목록입니다. 목록에 없는 곳은 선생님이 '기타'로 직접 적을 수 있어요. 같은 장소·같은 시간은 겹쳐 잡을 수 없습니다.<br>교실마다 <b>쓸 수 없는 시간</b>을 정해 두면 그 시간에는 아예 고를 수 없게 됩니다.</p>
+          <div id="rmList">${rooms.map((r, i) => {
+            const lim = roomLimitText(r, blocks);
+            return `<div class="sc-miss" style="display:block">
+              <div class="row"><b>${esc(r.name)}</b><div class="spacer"></div>
+                <button class="btn-sm" data-rmlim="${i}">사용 불가 시간</button>
+                <button class="btn-sm btn-danger" data-rmdel="${i}">삭제</button></div>
+              <div class="muted" style="margin-top:2px">${lim ? esc(r.note ? `${r.note} (${lim})` : lim) : "제한 없음 · 언제나 사용 가능"}</div>
+            </div>`;
+          }).join("") || '<div class="muted">없음</div>'}</div>
+          <div class="row" style="margin-top:8px"><input id="rmNew" placeholder="예: 3학년 상담실" style="flex:1;width:auto"><button id="rmAdd">추가</button><button class="btn-sm" id="rmPreset">학교 교실 불러오기</button></div>
         </div>
         <div class="card">
           <h3>시간표 (칸)</h3>
@@ -334,8 +342,15 @@ async function renderSched() {
       </div>
       <div class="row" style="margin-top:14px"><button class="btn-primary" id="schSave">저장</button><span class="muted">저장하면 학생·선생님 달력에 바로 적용됩니다 (새로고침).</span></div>`;
     $$("[data-rmdel]", p).forEach((b) => b.onclick = () => { rooms.splice(Number(b.dataset.rmdel), 1); draw(); });
-    $("#rmAdd", p).onclick = () => { const v = $("#rmNew", p).value.trim(); if (!v) return; if (rooms.includes(v)) return toast("이미 있는 장소입니다.", "error"); rooms.push(v); draw(); };
+    $("#rmAdd", p).onclick = () => { const v = $("#rmNew", p).value.trim(); if (!v) return; if (rooms.some((r) => r.name === v)) return toast("이미 있는 장소입니다.", "error"); rooms.push(normalizeRoom(v)); draw(); };
+    $$("[data-rmlim]", p).forEach((b) => b.onclick = () => openRoomLimit(Number(b.dataset.rmlim)));
     $("#rmNew", p).onkeydown = (e) => { if (e.key === "Enter") $("#rmAdd", p).click(); };
+    $("#rmPreset", p).onclick = () => {
+      const add = DEFAULT_ROOMS.filter((n) => !rooms.some((r) => r.name === n));
+      if (!add.length) return toast("이미 모두 있습니다.");
+      add.forEach((n) => rooms.push(normalizeRoom(n)));
+      toast(`${add.join(", ")} 추가 (사용 불가 시간도 같이 들어갑니다)`); draw();
+    };
     $$("[data-bi]", p).forEach((el) => el.oninput = () => { blocks[el.dataset.bi][el.dataset.bk] = el.value.trim(); });
     $$("[data-bdel]", p).forEach((b) => b.onclick = () => { blocks.splice(Number(b.dataset.bdel), 1); draw(); });
     $("#bkAdd", p).onclick = () => { blocks.push({ key: "x" + (blocks.length + 1), label: "", start: "", end: "" }); draw(); };
@@ -349,6 +364,33 @@ async function renderSched() {
       catch (e) { showError(e, "일정 설정 저장"); }
     };
   };
+
+  // 교실별 '쓸 수 없는 시간' 편집
+  function openRoomLimit(i) {
+    const r = rooms[i];
+    const days = [[1, "월"], [2, "화"], [3, "수"], [4, "목"], [5, "금"]];
+    const on = (d, k) => (d === "all" ? (r.offAll || []) : (r.off?.[d] || [])).includes(k);
+    const body = openModal(`${r.name} · 사용 불가 시간`, `
+      <p class="muted" style="margin-top:0">체크한 칸은 이 교실을 <b>고를 수 없게</b> 됩니다. '매일'에 체크하면 요일과 상관없이 막힙니다.</p>
+      <div class="table-wrap"><table><thead><tr><th></th>${blocks.map((b) => `<th style="font-size:12px">${esc(b.label)}</th>`).join("")}</tr></thead><tbody>
+        <tr><td class="nowrap"><b>매일</b></td>${blocks.map((b) => `<td><input type="checkbox" data-d="all" data-k="${esc(b.key)}" ${on("all", b.key) ? "checked" : ""}></td>`).join("")}</tr>
+        ${days.map(([d, n]) => `<tr><td class="nowrap">${n}</td>${blocks.map((b) => `<td><input type="checkbox" data-d="${d}" data-k="${esc(b.key)}" ${on(String(d), b.key) ? "checked" : ""}></td>`).join("")}</tr>`).join("")}
+      </tbody></table></div>
+      <div class="field"><label>안내 문구 (선택)</label><input id="rlNote" maxlength="60" value="${esc(r.note || "")}" placeholder="예: 일과 중(1~7교시·점심시간)만 사용 가능"></div>
+      <div class="row"><button class="btn-primary" id="rlSave">확인</button><button class="btn-sm" id="rlClear">제한 모두 해제</button>
+        <div class="spacer"></div><span class="muted">저장 버튼을 눌러야 최종 반영됩니다.</span></div>`);
+    $("#rlClear", body).onclick = () => $$("input[type=checkbox]", body).forEach((c) => c.checked = false);
+    $("#rlSave", body).onclick = () => {
+      const off = {}, offAll = [];
+      $$("input[type=checkbox]:checked", body).forEach((c) => {
+        if (c.dataset.d === "all") offAll.push(c.dataset.k);
+        else (off[c.dataset.d] = off[c.dataset.d] || []).push(c.dataset.k);
+      });
+      Object.keys(off).forEach((d) => { off[d] = off[d].filter((k) => !offAll.includes(k)); if (!off[d].length) delete off[d]; });
+      rooms[i] = { ...r, off, offAll, note: $("#rlNote", body).value.trim() };
+      closeModal(); draw();
+    };
+  }
   draw();
 }
 

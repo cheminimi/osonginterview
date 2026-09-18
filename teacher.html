@@ -59,6 +59,21 @@
       }).catch(function () { return []; });
     })).then(function (lists) { return check([].concat.apply([], lists), seen, sig); });
   }
+  // 화면 코드가 오류로 멈추면 안내 (하얀 화면·눌리지 않는 화면 방지)
+  var failShown = false;
+  function failBar(msg) {
+    if (failShown) return; failShown = true;
+    var lock = document.querySelector(".login.loading");
+    if (lock) lock.classList.remove("loading");   // 로그인 화면은 일단 쓸 수 있게
+    var sub = document.getElementById("submit"); if (sub) sub.disabled = false;
+    var d = document.createElement("div");
+    d.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:9999;background:#d33a3a;color:#fff;padding:10px 14px;font-size:.92rem;line-height:1.5";
+    d.innerHTML = '화면을 제대로 불러오지 못했어요. <b>새로고침</b>해 보고, 그래도 같으면 <a href="index.html?reset=1" style="color:#fff">여기를 눌러 초기화</a>하세요.<br><span style="opacity:.85;font-size:.85rem"></span>';
+    d.querySelector("span").textContent = String(msg || "").slice(0, 140);
+    (document.body || document.documentElement).appendChild(d);
+  }
+  addEventListener("error", function (e) { if (e && (e.message || e.error)) failBar(e.message || e.error); }, true);
+  addEventListener("unhandledrejection", function (e) { failBar(e.reason && (e.reason.message || e.reason)); });
   function sigText(sig) { return Object.keys(sig).sort().map(function (k) { return k + "=" + sig[k]; }).join("|"); }
   function banner() {
     if (document.getElementById("newVersionBar")) return;
@@ -101,6 +116,12 @@
     }
     check(initial, {}, sig).then(go, go);
     setTimeout(go, 5000);
+    // 10초가 지나도 화면이 비어 있으면 안내
+    setTimeout(function () {
+      var m = document.querySelector("main");
+      var filled = m && m.querySelector(".card, .q-item, table, .stage, .mode, #app > *");
+      if (m && !filled) failBar("화면 내용을 불러오지 못했습니다.");
+    }, 10000);
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
 })();

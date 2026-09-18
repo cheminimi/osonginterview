@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword,
   connectAuthEmulator, EmailAuthProvider, reauthenticateWithCredential, updatePassword,
-  setPersistence, browserSessionPersistence, browserLocalPersistence
+  setPersistence, browserSessionPersistence, browserLocalPersistence, inMemoryPersistence
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore, connectFirestoreEmulator, collection, doc, getDoc, getDocs,
@@ -92,7 +92,13 @@ const IDLE_MIN = 60;
 export function keepLoginOn() { try { return localStorage.getItem(KEEP_KEY) === "1"; } catch (_) { return false; } }
 export async function signIn(email, pw, keep = false) {
   try { keep ? localStorage.setItem(KEEP_KEY, "1") : localStorage.removeItem(KEEP_KEY); } catch (_) {}
-  await setPersistence(auth, keep ? browserLocalPersistence : browserSessionPersistence);
+  try {
+    await setPersistence(auth, keep ? browserLocalPersistence : browserSessionPersistence);
+  } catch (e) {   // 브라우저가 이 사이트의 저장소를 막은 경우(쿠키·사이트 데이터 차단)에도 로그인은 되게
+    console.warn("persistence", e);
+    try { await setPersistence(auth, inMemoryPersistence); } catch (_) {}
+    toast("이 브라우저가 사이트 데이터를 막고 있어, 창을 닫으면 로그아웃됩니다.", "error", 7000);
+  }
   return signInWithEmailAndPassword(auth, email, pw);
 }
 function startIdleLogout() {

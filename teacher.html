@@ -69,9 +69,19 @@
     var d = document.createElement("div");
     d.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:9999;background:#d33a3a;color:#fff;padding:10px 14px;font-size:.92rem;line-height:1.5";
     d.innerHTML = '화면을 제대로 불러오지 못했어요. <b>새로고침</b>해 보고, 그래도 같으면 <a href="index.html?reset=1" style="color:#fff">여기를 눌러 초기화</a>하세요.<br><span style="opacity:.85;font-size:.85rem"></span>';
-    d.querySelector("span").textContent = String(msg || "").slice(0, 140);
+    var text = String(msg || "");
+    if (/gstatic|googleapis|firebase/i.test(text) || blockedFirebase) {
+      d.querySelector("b").insertAdjacentHTML("afterend", " · 브라우저 확장 프로그램(광고 차단 등)이나 보안 프로그램이 firebase 파일을 막고 있을 수 있어요.");
+    }
+    d.querySelector("span").textContent = text.slice(0, 140);
     (document.body || document.documentElement).appendChild(d);
   }
+  // Firebase 파일을 받을 수 있는지 미리 확인 (확장 프로그램·보안 프로그램 차단 진단용)
+  var blockedFirebase = false;
+  try {
+    fetch("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js", { method: "GET", mode: "no-cors" })
+      .catch(function () { blockedFirebase = true; });
+  } catch (e) { blockedFirebase = true; }
   addEventListener("error", function (e) { if (e && (e.message || e.error)) failBar(e.message || e.error); }, true);
   addEventListener("unhandledrejection", function (e) { failBar(e.reason && (e.reason.message || e.reason)); });
   function sigText(sig) { return Object.keys(sig).sort().map(function (k) { return k + "=" + sig[k]; }).join("|"); }
@@ -104,6 +114,16 @@
         }
       }).catch(function () {}).then(function (reloading) {
         if (reloading) return;
+        // 앱 파일이 바뀌면 이 기기에 저장해 둔 화면용 데이터를 비운다 (옛 형식이 남아 생기는 오류 방지)
+        try {
+          var sigKey = "appSig:" + page, prevSig = localStorage.getItem(sigKey);
+          if (prevSig && prevSig !== first) {   // 이 화면이 업데이트됐을 때만 정리
+            [localStorage, sessionStorage].forEach(function (st) {
+              Object.keys(st).filter(function (k) { return k.indexOf("c1:") === 0; }).forEach(function (k) { st.removeItem(k); });
+            });
+          }
+          if (prevSig !== first) localStorage.setItem(sigKey, first);
+        } catch (e) {}
         var css = document.querySelector('link[rel="stylesheet"][href^="style.css"]');
         if (css && sig["style.css"]) css.href = "style.css?v=" + encodeURIComponent(sig["style.css"]).replace(/%/g, "");
         mains.forEach(function (old) { var s = document.createElement("script"); s.type = "module"; s.textContent = old.textContent; old.replaceWith(s); });

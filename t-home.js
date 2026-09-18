@@ -41,16 +41,16 @@ function render() {
     </div>
 
     <div class="section-title"><h3>내 담당 학생</h3><span class="muted">${esc(name || "이름 미지정")}</span></div>
-    <div class="card table-wrap">${mine.length ? `<table>
+    <div class="card table-wrap">${mine.length ? `<table class="rows-sm">
       <thead><tr><th>학생</th><th>트랙</th><th>내 역할</th><th class="nowrap">다음 면접</th><th>진행</th><th></th></tr></thead>
       <tbody>${mine.sort((a, b) => (nextInterview(a) || 9e15) - (nextInterview(b) || 9e15)).map((s) => `
         <tr class="clickable" data-no="${s.studentNo}">
-          <td class="nowrap"><b>${esc(s.name)}</b> <span class="muted">${esc(s.studentNo)}</span></td>
-          <td>${esc(s.track || "")}${s.special && s.special !== "없음" ? ` <span class="badge badge-violet">${esc(s.special)}</span>` : ""}</td>
-          <td class="nowrap">${myRoles(s, name).join(" · ")}</td>
-          <td class="nowrap">${nextBadge(s)}</td>
-          <td class="nowrap">${stageChips(s)}</td>
-          <td class="nowrap">${s.sheetUrl ? `<a class="btn btn-sm" href="${esc(s.sheetUrl)}" target="_blank" rel="noopener" data-stop>시트</a>` : ""}
+          <td class="nowrap head" data-l="-"><b>${esc(s.name)}</b> <span class="muted">${esc(s.studentNo)}</span> <span class="sm-only">${nextBadge(s)}</span></td>
+          <td class="pack" data-l="트랙">${esc(s.track || "")}${s.special && s.special !== "없음" ? ` <span class="badge badge-violet">${esc(s.special)}</span>` : ""}</td>
+          <td class="nowrap pack" data-l="내 역할">${myRoles(s, name).join(" · ")}</td>
+          <td class="nowrap lg-only">${nextBadge(s)}</td>
+          <td class="nowrap" data-l="진행">${stageChips(s)}</td>
+          <td class="nowrap" data-l="-">${s.sheetUrl ? `<a class="btn btn-sm" href="${esc(s.sheetUrl)}" target="_blank" rel="noopener" data-stop>시트</a>` : ""}
             <button class="btn-sm btn-primary" data-rec="${s.studentNo}">기록</button></td>
         </tr>`).join("")}</tbody></table>` : `<div class="empty">${name ? "배정된 학생이 없습니다. (배정표의 교사명과 계정 이름이 같은지 확인하세요)" : "이름이 지정되지 않았습니다."}</div>`}
     </div>

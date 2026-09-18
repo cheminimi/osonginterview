@@ -17,8 +17,8 @@ export function init(el) {
       <button class="btn-primary" id="mAdd">+ 대면 기록 추가</button>
     </div>
     <div id="mHidden"></div>
-    <div class="card table-wrap"><table>
-      <thead><tr><th>실시일</th><th>학생</th><th>차수</th><th>면접 유형</th><th>담당교사</th><th>학생 공개</th></tr></thead>
+    <div class="card table-wrap"><table class="rows-sm">
+      <thead><tr><th>학생</th><th>실시일</th><th>차수</th><th>면접 유형</th><th>담당교사</th><th>학생 공개</th></tr></thead>
       <tbody id="meetBody"></tbody></table></div>
     <p class="muted">'통합 플랫폼' 시트의 모의 면접 기록 탭과 쌍방으로 맞춰집니다. 시트에서 실시일·유형·담당교사를 고치면 앱에도 반영되고, 회차는 학생별 실시일 순서로 매겨집니다.</p>`;
   ["#mWho", "#mStage"].forEach((s) => $(s, root).onchange = render);
@@ -58,9 +58,10 @@ function render() {
   }
   $("#meetBody", root).innerHTML = list.map((m) => `
     <tr class="clickable" data-id="${m.id}">
-      <td class="nowrap">${fmtDay(m.date)}</td><td class="nowrap"><b>${esc(m.name)}</b> <span class="muted">${esc(m.studentNo)}</span></td>
-      <td class="nowrap">${stageLabel(m.stage)}</td><td>${esc(m.type)}</td><td>${esc((m.teachers || []).join(", "))}</td>
-      <td>${m.shared ? "공개" : '<span class="muted">비공개</span>'} ${syncBadge(m)}</td></tr>`).join("");
+      <td class="nowrap head" data-l="-"><b>${esc(m.name)}</b> <span class="muted">${esc(m.studentNo)}</span> <span class="sm-only badge">${stageLabel(m.stage)}</span></td>
+      <td class="nowrap pack" data-l="실시일">${fmtDay(m.date)}</td>
+      <td class="nowrap lg-only">${stageLabel(m.stage)}</td><td class="pack" data-l="유형">${esc(m.type)}</td><td class="pack" data-l="담당">${esc((m.teachers || []).join(", "))}</td>
+      <td data-l="학생 공개">${m.shared ? "공개" : '<span class="muted">비공개</span>'} ${syncBadge(m)}</td></tr>`).join("");
   $$("tr[data-id]", root).forEach((tr) => tr.onclick = () => openMeetingForm({ id: tr.dataset.id }));
 }
 

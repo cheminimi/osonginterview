@@ -1,5 +1,3 @@
-@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css");
-
 :root {
   --bg: #f5f6f8;
   --card: #ffffff;
@@ -119,7 +117,7 @@ tr.clickable { cursor: pointer; } tr.clickable:hover td { background: #f8f9fb; }
 .score-row input[type=range] { padding: 0; }
 .stat { font-size: 1.6rem; font-weight: 700; }
 .grid > .card + .card { margin-top: 0; }
-.tabs.sub { margin-bottom: 14px; }
+.tabs.sub { margin-bottom: 14px; position: static; }   /* 하위 탭은 고정하지 않음 */
 .tabs.sub button { padding: 8px 12px; font-size: .92rem; }
 
 /* ===== 모의면접 일정 달력 ===== */
@@ -191,3 +189,68 @@ table.av-grid input { width: 18px; height: 18px; }
 .ai-intro + .ai-step { border-top: none; }
 .ai-num { width: 24px; height: 24px; border-radius: 50%; background: #1b1f27; color: #fff; font-size: .8rem; font-weight: 700; display: grid; place-items: center; margin-top: 2px; }
 .ai-body > b { display: block; margin-bottom: 2px; }
+
+/* ===== 홈 화면 추가 안내 (PWA) ===== */
+.pwa-tip { display: flex; align-items: center; gap: 10px; background: #fff; border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px 12px; box-shadow: var(--shadow); margin-bottom: 14px; }
+.pwa-tip img { border-radius: 9px; flex: none; }
+.pwa-tip-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pwa-tip-body b { font-size: .95rem; }
+.pwa-tip-body .muted { font-size: .82rem; line-height: 1.45; }
+.pwa-tip #pwaNo { border: none; background: none; color: var(--ink-3); padding: 4px 6px; }
+
+/* ===== 휴대폰 화면 정리 ===== */
+/* 탭: 좁은 화면에서는 가로 스크롤 대신 두 줄로 접어 모두 보이게 */
+.tabs { position: sticky; top: 52px; z-index: 15; background: var(--bg); }
+@media (max-width: 720px) {
+  body { font-size: 15.5px; }
+  .topbar { position: static; }          /* 화면이 좁을 땐 탭 줄을 위에 고정 */
+  .tabs { top: 0; }
+  .wrap { padding: 14px 12px 72px; }
+  .card { padding: 14px; }
+  .tabs { flex-wrap: wrap; gap: 6px; border-bottom: none; padding: 8px 0 10px; overflow: visible;
+    box-shadow: 0 6px 10px -10px rgba(20,30,50,.5); margin-bottom: 12px; }
+  .tabs button { border: 1px solid var(--line); border-radius: 99px; background: #fff; padding: 7px 13px;
+    font-size: .92rem; min-height: 38px; }
+  .tabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tabs.sub button { padding: 6px 11px; }
+  /* 통계 카드 2열 */
+  .grid-4 { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .grid-4 .card { padding: 12px; }
+  .stat-card .stat { font-size: 1.5rem !important; }
+  /* 버튼·입력은 손가락 크기로 */
+  button, .btn { min-height: 40px; }
+  .btn-sm { min-height: 32px; }
+  input, select, textarea { font-size: 16px; padding: 10px 12px; }  /* 16px 미만이면 아이폰이 확대함 */
+  .modal-bg { padding: 12px 8px 40px; }
+  .modal { padding: 16px; border-radius: 12px; }
+  .toolbar { gap: 6px; }
+  .toolbar select, .toolbar input:not([type=checkbox]) { min-width: 0; flex: 1 1 42%; }
+}
+
+/* 표 → 카드형 목록 (좁은 화면) : td에 data-l="항목이름" 이 있으면 이름표가 붙는다 */
+@media (max-width: 720px) {
+  table.rows-sm thead { display: none; }
+  table.rows-sm, table.rows-sm tbody, table.rows-sm tr, table.rows-sm td { display: block; width: 100%; }
+  table.rows-sm tr { border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 10px 12px; margin-bottom: 8px; }
+  table.rows-sm tr.clickable:active { background: #f4f7ff; }
+  table.rows-sm td { border: none; padding: 2px 0; font-size: .92rem; }
+  table.rows-sm td:empty { display: none; }
+  table.rows-sm td[data-l]::before { content: attr(data-l); color: var(--ink-3); font-size: .78rem; margin-right: 6px; }
+  table.rows-sm td[data-l="-"]::before { content: ""; margin: 0; }
+  table.rows-sm td.head { font-size: 1.02rem; margin-bottom: 2px; }
+  table.rows-sm td.pack { display: inline-block; width: auto; margin-right: 12px; }
+  /* 일정 탭: 차수별 신청 카드를 한 줄로 */
+  .sc-stage-grid { grid-template-columns: 1fr; gap: 8px; }
+  .sc-stage { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+  .sc-stage button { margin-top: 0; margin-left: auto; }
+  .sc-card { padding: 10px; }
+  .sc-legend { font-size: .76rem; }
+  table.rows-sm .empty { border: none; }
+  .table-wrap { overflow-x: visible; }
+}
+/* 넓은 화면에서는 평범한 표 그대로 */
+@media (min-width: 721px) { table.rows-sm td.head .sub { color: var(--ink-3); } }
+/* 좁은 화면 전용 / 넓은 화면 전용 조각 */
+.sm-only { display: none; }
+@media (max-width: 720px) { .sm-only { display: inline; } .lg-only { display: none !important; } }

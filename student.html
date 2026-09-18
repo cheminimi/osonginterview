@@ -2,8 +2,18 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#18308d">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="면접 스튜디오">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>면접 스튜디오 · 학생</title>
+<link rel="icon" type="image/png" href="icons/favicon-32.png">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" media="print" onload="this.media='all'">
 <link rel="stylesheet" href="style.css">
 <style>
   .hero { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: center; }
@@ -22,7 +32,14 @@
   .fb-box { background: #f7f9ff; border: 1px solid #dfe6fb; border-radius: 10px; padding: 12px 14px; margin-top: 8px; }
   .ans { background: #fafbfc; border-radius: 8px; padding: 10px 12px; margin-top: 6px; white-space: pre-wrap; }
   .kv dd { white-space: pre-wrap; }
-  @media (max-width: 560px) { .hero { grid-template-columns: 1fr; } }
+  @media (max-width: 720px) {
+    /* D-day와 학생 정보를 한눈에 (세로로 길어지지 않게) */
+    .hero { grid-template-columns: auto 1fr; gap: 12px; align-items: start; }
+    .dday { min-width: 84px; text-align: left; }
+    .dday .n { font-size: 1.9rem; }
+    .mode .title { font-size: 1rem; }
+    .mode { gap: 4px; }
+  }
 </style>
 <script>
 /* 새 버전 확인 (수정 금지 · 모든 화면 공통)
@@ -148,6 +165,7 @@
 </div></header>
 
 <main class="wrap" id="main" hidden>
+  <div id="pwaTip"></div>
   <section class="card hero">
     <div class="dday" id="dday"></div>
     <div>
@@ -157,16 +175,18 @@
     </div>
   </section>
 
-  <h2 style="margin-top:26px">말하기 연습</h2>
-  <div class="grid grid-4" id="modes"></div>
-
-  <div class="tabs" style="margin-top:28px">
-    <button class="active" data-tab="schedule">모의면접 일정<span id="scDot"></span></button>
+  <div class="tabs" style="margin-top:18px">
+    <button class="active" data-tab="practice">말하기 연습</button>
+    <button data-tab="schedule">모의면접 일정<span id="scDot"></span></button>
     <button data-tab="feedback">선생님 피드백<span id="fbDot"></span></button>
     <button data-tab="history">연습 기록</button>
     <button data-tab="mine">내 예상질문</button>
   </div>
-  <section data-panel="schedule"><div id="schedule"></div></section>
+  <section data-panel="practice">
+    <p class="muted" style="margin:0 0 10px">혼자 말로 답해 보고, 답변을 선생님께 보낼 수 있어요.</p>
+    <div class="grid grid-4" id="modes"></div>
+  </section>
+  <section data-panel="schedule" hidden><div id="schedule"></div></section>
   <section data-panel="feedback" hidden><div id="feedback"></div></section>
   <section data-panel="history" hidden><div id="history"></div></section>
   <section data-panel="mine" hidden>
@@ -190,6 +210,7 @@ import {
   CRITERIA, STAGES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes
 } from "./common.js";
 import { mountSchedule } from "./schedule.js";
+import { registerSW, mountInstallTip } from "./pwa.js";
 
 const ctx = await requireRole("student");
 const { user, profile: me } = ctx;
@@ -250,9 +271,13 @@ mountSchedule($("#schedule"), {
 });
 
 // ---- 탭
+registerSW();
+mountInstallTip($("#pwaTip"));
+
 $$(".tabs button").forEach((b) => b.onclick = () => {
   $$(".tabs button").forEach((x) => x.classList.toggle("active", x === b));
   $$("[data-panel]").forEach((p) => p.hidden = p.dataset.panel !== b.dataset.tab);
+  window.scrollTo({ top: 0, behavior: "instant" });
 });
 
 // ---- 선생님 피드백 (대면 모의면접 + 말하기 연습 피드백을 한곳에)

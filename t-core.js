@@ -132,6 +132,7 @@ export function switchTab(tab) {
   $$(".tabs:not(.sub) > button").forEach((x) => x.classList.toggle("active", x.dataset.tab === tab));
   $$("[data-panel]").forEach((p) => p.hidden = p.dataset.panel !== tab);
   try { sessionStorage.setItem("teacherTab", tab); } catch (_) {}
+  if (window.innerWidth <= 720) window.scrollTo({ top: 0, behavior: "instant" });
 }
 
 export const readForm = (root) => Object.fromEntries($$("input[name],select[name],textarea[name]", root)

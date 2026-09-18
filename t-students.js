@@ -21,7 +21,7 @@ export function init(el) {
       <select id="fSort"><option value="dday">다음 면접 순</option><option value="no">학번 순</option></select>
       <div class="spacer"></div><span class="muted" id="fCount"></span>
     </div>
-    <div class="card table-wrap"><table>
+    <div class="card table-wrap"><table class="rows-sm">
       <thead><tr><th>학번</th><th>이름</th><th>트랙</th><th class="nowrap">다음 면접</th><th>1차 담임</th><th>2차 교과</th><th>3차 위원</th><th>진행</th><th>연습</th><th>시트</th></tr></thead>
       <tbody id="stBody"></tbody></table></div>`;
   ["#fCls", "#fTrack", "#fSpecial", "#fMine", "#fSort"].forEach((s) => $(s, root).onchange = render);
@@ -53,12 +53,13 @@ function render() {
     const a = s.assign || {};
     const practice = S.sessions.filter((x) => x.studentNo === s.studentNo && x.status === "submitted").length;
     return `<tr class="clickable" data-no="${s.studentNo}">
-      <td>${esc(s.studentNo)}</td><td class="nowrap"><b>${esc(s.name)}</b></td>
-      <td>${esc(s.track || "")}${s.special && s.special !== "없음" ? ` <span class="badge badge-violet">${esc(s.special)}</span>` : ""}</td>
-      <td class="nowrap">${nextBadge(s)}</td>
-      <td class="nowrap">${hl(a.s1)}</td><td class="nowrap">${hl(a.s2)}</td><td class="nowrap">${hl(a.s3a)}${a.s3b ? " · " + hl(a.s3b) : ""}</td>
-      <td class="nowrap">${stageChips(s)}</td><td>${practice || "-"}</td>
-      <td>${s.sheetUrl ? `<a href="${esc(s.sheetUrl)}" target="_blank" rel="noopener" data-stop>열기</a>` : "-"}</td></tr>`;
+      <td class="lg-only">${esc(s.studentNo)}</td>
+      <td class="nowrap head" data-l="-"><b>${esc(s.name)}</b> <span class="sm-only muted">${esc(s.studentNo)}</span> <span class="sm-only">${nextBadge(s)}</span></td>
+      <td class="pack" data-l="트랙">${esc(s.track || "")}${s.special && s.special !== "없음" ? ` <span class="badge badge-violet">${esc(s.special)}</span>` : ""}</td>
+      <td class="nowrap lg-only">${nextBadge(s)}</td>
+      <td class="nowrap pack" data-l="1차">${hl(a.s1)}</td><td class="nowrap pack" data-l="2차">${hl(a.s2)}</td><td class="nowrap pack" data-l="3차">${hl(a.s3a)}${a.s3b ? " · " + hl(a.s3b) : ""}</td>
+      <td class="nowrap" data-l="진행">${stageChips(s)}</td><td class="pack" data-l="연습">${practice || "-"}</td>
+      <td class="pack" data-l="시트">${s.sheetUrl ? `<a href="${esc(s.sheetUrl)}" target="_blank" rel="noopener" data-stop>열기</a>` : "-"}</td></tr>`;
   }).join("");
   $$("tr[data-no]", root).forEach((tr) => tr.onclick = (e) => { if (!e.target.closest("[data-stop]")) openStudent(tr.dataset.no); });
 }

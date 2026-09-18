@@ -2,9 +2,18 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#18308d">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="면접 스튜디오">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>오송고 면접 스튜디오 · 로그인</title>
-<link rel="icon" type="image/png" href="osong-logo.png">
+<link rel="icon" type="image/png" href="icons/favicon-32.png">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" media="print" onload="this.media='all'">
 <link rel="stylesheet" href="style.css">
 <style>
   body { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px 16px; }
@@ -165,11 +174,16 @@
     <p class="muted" id="hint" style="margin:12px 0 0">처음이면 선생님께 받은 초기 비밀번호로 로그인한 뒤 바꿔 주세요.</p>
     <p class="muted" style="margin:6px 0 0">체크하지 않으면 브라우저를 닫거나 60분 동안 사용하지 않을 때 자동으로 로그아웃됩니다.</p>
   </div>
+  <div id="pwaTip" style="margin-top:14px"></div>
   <p class="muted" style="text-align:center;margin-top:14px;font-size:.85rem">화면이 이상하거나 로그인이 계속 안 되면 <a href="index.html?reset=1">여기를 눌러 초기화</a></p>
 </div>
 <script type="app-module">
 import { auth, signIn, signOut, resolveLoginEmail, showError, toast, loginLabel, $, $$ } from "./common.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { registerSW, mountInstallTip } from "./pwa.js";
+
+registerSW();
+mountInstallTip($("#pwaTip"));
 
 let kind = "student";
 $$(".seg button").forEach((b) => b.onclick = () => {

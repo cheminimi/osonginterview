@@ -12,7 +12,7 @@ import { S, register, rerender, myName, myRoles, switchTab, setDot, opt } from "
 import { openStudent } from "./t-students.js";
 import { openMeetingForm } from "./t-meetings.js";
 import { openBookingRecord, gotoSchedule } from "./t-schedule.js";
-import { BOOK_STAGES, stageTeachers, ACTIVE } from "./schedule.js";
+import { BOOK_STAGES, stageTeachers, ACTIVE, DONE } from "./schedule.js";
 
 const WIDE = window.matchMedia("(min-width: 721px)");
 const WEEK = "일월화수목금토";
@@ -46,8 +46,9 @@ function collect() {
   const mine = me ? S.students.filter((s) => myRoles(s, me).length) : [];
   const scope = me ? mine : S.students;   // 이름 미지정 관리자는 전체 기준
 
+  // 완료 처리한 면접은 '오늘 면접'에서 빠진다 (기록을 저장하거나 '면접 완료'를 누르면 done 이 선다)
   const mineToday = (S.bookings || [])
-    .filter((b) => b.date === today && ACTIVE(b.status) && (!me || (b.teachers || []).includes(me)))
+    .filter((b) => b.date === today && ACTIVE(b.status) && !DONE(b) && (!me || (b.teachers || []).includes(me)))
     .sort((a, b) => a.start.localeCompare(b.start));
 
   const noRecord = S.meetings

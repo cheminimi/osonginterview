@@ -53,6 +53,9 @@ h1 { font-size: 1.5rem; } h2 { font-size: 1.2rem; } h3 { font-size: 1.05rem; }
 .grid-2 { grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); }
 .grid-4 { grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+/* 격자 칸은 기본값(min-width:auto) 때문에 안에 든 것보다 좁아지지 못한다.
+   날짜 입력처럼 기본 너비가 큰 요소가 들어가면 칸째로 밖으로 밀려나므로 풀어 준다. */
+.grid > * { min-width: 0; }
 .stack > * + * { margin-top: 10px; }
 
 /* 폼 */
@@ -62,8 +65,22 @@ input, select, textarea {
   border-radius: var(--radius-btn); background: var(--card);
 }
 textarea { resize: vertical; min-height: 90px; }
+/* 날짜·시각 입력: 아이폰 사파리가 기본 너비를 크게 잡아 상자가 칸 밖으로 삐져나온다.
+   기본 모양을 끄고 최소 너비를 풀어, 다른 입력칸과 같은 폭·같은 높이로 맞춘다. */
+input[type="date"], input[type="time"], input[type="datetime-local"], input[type="month"] {
+  -webkit-appearance: none; appearance: none;
+  min-width: 0; max-width: 100%; min-height: 42px;
+  display: block; text-align: left;
+}
+input[type="date"]::-webkit-date-and-time-value,
+input[type="time"]::-webkit-date-and-time-value,
+input[type="datetime-local"]::-webkit-date-and-time-value,
+input[type="month"]::-webkit-date-and-time-value { text-align: left; width: 100%; margin: 0; }
+input[type="date"]::-webkit-calendar-picker-indicator { margin-left: auto; }
+/* 가로로 늘어놓는 줄 안에서도 입력칸이 줄어들 수 있게 */
+.row > input, .row > select, .toolbar > input, .toolbar > select { min-width: 0; }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
-.field { margin-bottom: 12px; }
+.field { margin-bottom: 12px; min-width: 0; }
 
 /* 버튼 */
 button, .btn {

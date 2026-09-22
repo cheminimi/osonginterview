@@ -50,6 +50,9 @@ export const STATUS = {
   requested: ["요청 중", "orange"], confirmed: ["확정", "green"], cancelled: ["취소", "gray"], rejected: ["거절", "red"]
 };
 export const ACTIVE = (s) => s === "requested" || s === "confirmed";
+// 면접을 마친 일정. 상태(status)는 그대로 '확정'으로 두고 done 만 세운다.
+// → 시간 겹침 검사와 '일정 없는 차수' 계산은 그대로 두고, 앞으로 올 일정 목록에서만 빠진다.
+export const DONE = (b) => b?.done === true;
 const WEEK = "일월화수목금토";
 
 export function scheduleConfigOf(c = {}) {
@@ -291,6 +294,7 @@ export function mountSchedule(root, opts) {
   }
   const needMine = () => st.bookings.filter((b) => b.status === "requested" && (b.need || []).includes(me) && !(b.approvedBy || []).includes(me));
   const statusBadge = (s) => `<span class="badge badge-${STATUS[s]?.[1] || "gray"}">${STATUS[s]?.[0] || s}</span>`;
+  const badgeOf = (b) => DONE(b) ? '<span class="badge badge-gray">완료</span>' : statusBadge(b.status);
   const timeText = (b) => `${fmtDay(b.date)} ${blockLabel(b.block)} ${b.start}–${b.end}`;
   const blockLabel = (k) => st.cfg.blocks.find((x) => x.key === k)?.label || "";
   const waiting = (b) => (b.need || []).filter((n) => !(b.approvedBy || []).includes(n)).map(who).join(", ");
@@ -301,7 +305,7 @@ export function mountSchedule(root, opts) {
       <div class="row"><span class="sc-chip s${b.stage}">${b.stage}차</span>
         ${withStudent ? `<b>${esc(s?.name || b.studentName)}</b> <span class="muted">${esc(b.studentNo)}</span>` : `<b>${esc((b.teachers || []).join("·"))} 선생님</b>`}
         <span>${timeText(b)}</span><span class="muted">${esc(b.room || "장소 미정")}</span>
-        <div class="spacer"></div>${statusBadge(b.status)}</div>
+        <div class="spacer"></div>${badgeOf(b)}</div>
       ${b.status === "requested" ? `<div class="q-meta">수락 대기: ${esc(waiting(b))}${b.memo ? ` · “${esc(b.memo)}”` : ""}</div>` : b.memo ? `<div class="q-meta">“${esc(b.memo)}”</div>` : ""}
     </div>`;
   }
@@ -319,7 +323,7 @@ export function mountSchedule(root, opts) {
         if (!ts.length) body = `<div class="muted">배정된 선생님이 없어요</div>`;
         else if (!cur) body = `<div class="muted">아직 신청하지 않았어요</div><button class="btn-sm btn-primary" data-new="${sg.key}">달력에서 신청</button>`;
         else body = `<div><b>${timeText(cur)}</b></div><div class="muted">${esc(cur.room || "장소 미정")}</div>
-          <div class="row" style="margin-top:4px">${statusBadge(cur.status)}${cur.status === "requested" ? `<span class="muted">대기: ${esc(waiting(cur))}</span>` : ""}
+          <div class="row" style="margin-top:4px">${badgeOf(cur)}${cur.status === "requested" ? `<span class="muted">대기: ${esc(waiting(cur))}</span>` : ""}
           ${needMine().some((x) => x.id === cur.id) ? '<span class="badge badge-red">내 응답 필요</span>' : ""}</div>
           <button class="btn-sm" data-bid="${cur.id}">자세히</button>`;
         return `<div class="card sc-stage"><div class="row"><span class="sc-chip s${sg.key}">${sg.short}</span><b>${sg.label}</b></div>
@@ -327,8 +331,12 @@ export function mountSchedule(root, opts) {
       }).join("")}</div>`;
     } else {
       const pend = needMine().sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
-      const mineUp = st.bookings.filter((b) => (b.teachers || []).includes(me) && b.status === "confirmed" && b.date >= today)
+      const mineUp = st.bookings.filter((b) => (b.teachers || []).includes(me) && b.status === "confirmed" && !DONE(b) && b.date >= today)
         .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start)).slice(0, 8);
+      // 완료 처리한 면접은 위 목록에서 빠지므로, 되돌릴 수 있게 최근 2주치를 접어서 따로 둔다
+      const since = isoDay(new Date(Date.now() - 14 * 86400000));
+      const mineDone = st.bookings.filter((b) => (b.teachers || []).includes(me) && DONE(b) && b.date >= since)
+        .sort((a, b) => (b.date + b.start).localeCompare(a.date + a.start)).slice(0, 10);
       const myStudents = isAdmin ? students() : students().filter((s) => BOOK_STAGES.some((sg) => stageTeachers(s, sg.key).includes(me)));
       const missing = [];
       for (const s of myStudents) for (const sg of BOOK_STAGES) {
@@ -341,6 +349,9 @@ export function mountSchedule(root, opts) {
           <div style="margin-top:8px">${pend.length ? pend.map((b) => bookingLine(b)).join("") : '<div class="muted">새 요청이 없습니다.</div>'}</div></div>
         <div class="card"><h3 style="margin:0 0 8px">다가오는 확정 일정</h3>
           ${mineUp.length ? mineUp.map((b) => bookingLine(b)).join("") : '<div class="muted">확정된 일정이 없습니다.</div>'}
+          ${mineDone.length ? `<details style="margin-top:10px"><summary class="muted">최근 완료한 면접 ${mineDone.length}건</summary>
+            <div style="margin-top:6px">${mineDone.map((b) => bookingLine(b)).join("")}</div>
+            <div class="muted" style="font-size:.82rem">되돌리려면 눌러서 '완료 취소'</div></details>` : ""}
           <details style="margin-top:10px"><summary class="muted">일정이 없는 ${isAdmin ? "" : "담당 "}학생·차수 ${missing.length}건</summary>
             <div style="max-height:260px;overflow-y:auto;margin-top:6px">${missing.map(({ s, sg }) => `<div class="row sc-miss"><span class="sc-chip s${sg.key}">${sg.short}</span>${esc(s.name)} <span class="muted">${esc(s.studentNo)}</span><div class="spacer"></div>
               <button class="btn-sm" data-newfor="${esc(s.studentNo)}" data-stage="${sg.key}">일정 잡기</button></div>`).join("") || '<div class="muted">모두 신청됨</div>'}</div>
@@ -622,7 +633,8 @@ export function mountSchedule(root, opts) {
     try { const s = await getDoc(doc(db, "bookings", id)); if (s.exists()) b = { id, ...s.data() }; } catch (e) { if (!b) return showError(e, "일정 열기"); }
     if (!b) return toast("일정을 찾을 수 없습니다.", "error");
     const s = studentByNo(b.studentNo);
-    const part = isStudent || (b.need || []).includes(me) || isAdmin;
+    // 이 일정에 이름이 올라간 선생님이면 수락 명단에 없어도 다룰 수 있게 한다
+    const part = isStudent || (b.need || []).includes(me) || (b.teachers || []).includes(me) || isAdmin;
     const iApproved = (b.approvedBy || []).includes(me);
     const act = ACTIVE(b.status);
     const canAccept = b.status === "requested" && (b.need || []).includes(me) && !iApproved;
@@ -632,7 +644,7 @@ export function mountSchedule(root, opts) {
         <dt>선생님</dt><dd>${esc((b.teachers || []).join(", "))}</dd>
         <dt>일시</dt><dd><b>${timeText(b)}</b></dd>
         <dt>장소</dt><dd>${esc(b.room || "미정")}</dd>
-        <dt>상태</dt><dd>${statusBadge(b.status)}</dd>
+        <dt>상태</dt><dd>${badgeOf(b)}${DONE(b) ? ' <span class="muted">면접을 마친 일정입니다</span>' : ""}</dd>
         <dt>수락</dt><dd>${(b.need || []).map((n) => `<span class="chip ${(b.approvedBy || []).includes(n) ? "chip-on" : ""}">${esc(who(n))} ${(b.approvedBy || []).includes(n) ? "✓" : "대기"}</span>`).join(" ")}</dd>
         ${b.memo ? `<dt>메시지</dt><dd>“${esc(b.memo)}” <span class="muted">— ${esc(b.updatedBy || "")}</span></dd>` : ""}
       </dl>
@@ -644,6 +656,9 @@ export function mountSchedule(root, opts) {
         <button class="btn-danger" id="bdCancel">일정 취소</button>
         ${isAdmin && b.status !== "confirmed" ? '<button id="bdForce">바로 확정</button>' : ""}
         <div class="spacer"></div>
+        ${!isStudent && b.status === "confirmed" ? (DONE(b)
+          ? '<button id="bdUndone">완료 취소</button>'
+          : '<button class="btn-primary" id="bdDone">면접 완료</button>') : ""}
         ${!isStudent && b.status === "confirmed" && opts.openMeeting ? '<button id="bdMeet">대면 기록 쓰기</button>' : ""}
       </div>` : ""}
       ${!isStudent ? '<h3 style="margin-top:18px">변경 기록</h3><div id="bdLog" class="muted">불러오는 중…</div>' : ""}`);
@@ -664,6 +679,8 @@ export function mountSchedule(root, opts) {
     $("#bdReject", body)?.addEventListener("click", () => { if (confirm("이 요청을 거절할까요? 시간이 비워집니다.")) run({ status: "rejected" }, "거절", "거절했습니다."); });
     $("#bdCancel", body)?.addEventListener("click", () => { if (confirm("이 일정을 취소할까요? 시간이 비워지고 상대에게도 취소로 보입니다.")) run({ status: "cancelled" }, "취소", "취소했습니다."); });
     $("#bdForce", body)?.addEventListener("click", () => run({ approvedBy: b.need || [], status: "confirmed" }, "관리자 확정", "확정했습니다.", { force: true }));
+    $("#bdDone", body)?.addEventListener("click", () => run({ done: true }, "완료", "완료 처리했습니다. 다가오는 일정에서 빠집니다."));
+    $("#bdUndone", body)?.addEventListener("click", () => run({ done: false }, "완료 취소", "완료를 취소했습니다."));
     $("#bdChange", body)?.addEventListener("click", () => openForm({ booking: b }));
     $("#bdMeet", body)?.addEventListener("click", () => { close(); opts.openMeeting(b); });
 

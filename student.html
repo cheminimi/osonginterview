@@ -199,7 +199,7 @@ import {
   db, requireRole, mountAccountMenu, collection, getDocs, query, where, onSnapshot, esc, $, $$, toast, showError, loadInterviewsFor, cachedCollection,
   CRITERIA, STAGES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes, icon, isoDay
 } from "./common.js";
-import { mountSchedule, BOOK_STAGES, stageTeachers, ACTIVE, STATUS } from "./schedule.js";
+import { mountSchedule, BOOK_STAGES, stageTeachers, ACTIVE, DONE, STATUS } from "./schedule.js";
 import { registerSW, mountInstallTip, showInstallTipAgain, isStandalone } from "./pwa.js";
 
 const ctx = await requireRole("student");
@@ -333,7 +333,8 @@ function homeData() {
   const next = nextInterview(me);
   const nd = next ? dday(next) : null;
   const nextU = (me.universities || []).find((u) => u.date && next && isoDay(u.date) === isoDay(next));
-  const up = (bookings || []).filter((b) => ACTIVE(b.status) && b.date >= today)
+  // 선생님이 완료 처리한 면접은 '다가오는 / 잡힌 일정'에서 빠진다
+  const up = (bookings || []).filter((b) => ACTIVE(b.status) && !DONE(b) && b.date >= today)
     .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
   return { today, now, next, nd, nextU, up };
 }
@@ -358,10 +359,13 @@ function homeWide({ now, next, nd, nextU, up }) {
   // 차수별 진행 상태
   const stageState = BOOK_STAGES.map((sg) => {
     const done = meetings.find((m) => Number(m.stage) === sg.key);
-    const bk = (bookings || []).filter((b) => b.stage === sg.key && ACTIVE(b.status))
-      .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))[0];
+    const all = (bookings || []).filter((b) => b.stage === sg.key && ACTIVE(b.status))
+      .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
+    const bk = all.find((b) => !DONE(b));       // 아직 안 본 면접
+    const bkDone = all.find((b) => DONE(b));    // 선생님이 완료 처리한 면접
     const teachers = stageTeachers(me, sg.key);
     if (done) return { sg, cls: "done", label: `완료 · ${fmtDay(done.date).replace(/\(.\)$/, "")}` };
+    if (bkDone && !bk) return { sg, cls: "done", label: `완료 · ${fmtDay(bkDone.date).replace(/\(.\)$/, "")}` };
     if (bk) return { sg, cls: "now", label: `${fmtDay(bk.date).replace(/\(.\)$/, "")} ${bk.status === "confirmed" ? "예정" : "요청 중"}` };
     return { sg, cls: "", label: teachers.length ? "아직 신청 전" : "선생님 미배정" };
   });
@@ -470,7 +474,7 @@ function homeNarrow({ today, next, nd, nextU }) {
   else if (!sessions.length) todos.push({ ic: "mic", t: "말하기 연습을 아직 해 보지 않았어요",
     d: "혼자 말로 답해 보고 선생님께 보낼 수 있어요", cta: "연습", attr: 'data-go="practice"' });
 
-  const up = bookings.filter((b) => ACTIVE(b.status) && b.date >= today)
+  const up = bookings.filter((b) => ACTIVE(b.status) && !DONE(b) && b.date >= today)
     .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start)).slice(0, 5);
 
   const todoHtml = !todos.length

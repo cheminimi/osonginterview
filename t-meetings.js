@@ -93,6 +93,26 @@ function guessStage(st) {
   return [1, 2, 3].find((k) => !done.has(k)) || 4;
 }
 
+// 이 기록이 어느 일정에서 나왔는지 찾는다 (일정 확정 시 자동 생성된 기록은 id 가 'bk_예약ID')
+function bookingIdOf(m) {
+  if (!m) return "";
+  if (m.bookingId) return m.bookingId;
+  return typeof m.id === "string" && m.id.startsWith("bk_") ? m.id.slice(3) : "";
+}
+
+// 일정에 done 표시만 세운다. 상태(확정)와 시간·장소는 건드리지 않으므로
+// 시간 겹침 검사나 '일정 없는 차수' 계산에는 영향이 없다.
+async function markBookingDone(bookingId) {
+  const b = (S.bookings || []).find((x) => x.id === bookingId);
+  if (b && b.done) return;
+  try {
+    await updateDoc(doc(db, "bookings", bookingId), { done: true, doneAtMs: Date.now(), updatedAtMs: Date.now() });
+    if (b) b.done = true;
+  } catch (err) {
+    console.warn("일정 완료 표시 실패", err);   // 기록은 이미 저장됐으므로 조용히 넘어간다
+  }
+}
+
 // preset: 일정 탭 '대면 기록 쓰기' → { id: 'bk_예약ID', stage, date, teachers, bookingId }
 export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
   const m = id ? S.meetings.find((x) => x.id === id) : null;
@@ -163,6 +183,12 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
         S.meetings.unshift({ id: newId, ...data });
       }
     } catch (err) { showError(err, "기록 저장"); $("#mSave", body).disabled = false; return; }
+
+    // 이 기록이 잡아 둔 일정에서 나온 것이면 그 일정을 '완료'로 표시한다.
+    // → 오늘 면접 / 다가오는 확정 일정 목록에서 빠진다. (실패해도 기록 저장은 그대로 둔다)
+    const bid = bookingIdOf(m) || bookingIdOf({ id: preset?.id, bookingId: preset?.bookingId });
+    if (bid) await markBookingDone(bid);
+
     closeModal();
     toast("기록을 저장했습니다. 시트에 반영 중…");
     rerender("meetings", "home", "students");

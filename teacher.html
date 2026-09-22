@@ -194,6 +194,7 @@
   <section data-panel="schedule" hidden></section>
   <section data-panel="students" hidden></section>
   <section data-panel="meetings" hidden></section>
+  <section data-panel="reviews" hidden></section>
   <section data-panel="questions" hidden></section>
   <section data-panel="bank" hidden></section>
   <section data-panel="review" hidden></section>
@@ -213,6 +214,7 @@ import * as home from "./t-home.js";
 import * as schedule from "./t-schedule.js";
 import * as students from "./t-students.js";
 import * as meetings from "./t-meetings.js";
+import * as reviews from "./t-reviews.js";
 import * as questions from "./t-questions.js";
 import * as bank from "./t-bank.js";
 import * as review from "./t-review.js";
@@ -229,6 +231,7 @@ mountAccountMenu(S.ctx, $("#acct"), {
   subtitle: S.ctx.account?.loginId || S.ctx.user.email,
   items: [
     { icon: "note", label: "대면 기록 전체", desc: "지금까지 쓴 모의면접 기록", id: "goMeetings", onClick: () => switchTab("meetings") },
+    { icon: "pen", label: "대학 면접 후기", desc: "학생이 다녀와서 쓴 실제 면접 후기", id: "goReviews", onClick: () => { switchTab("reviews"); reviews.load(); } },
     { icon: "check", label: "연습 리뷰", desc: "학생이 제출한 말하기 연습", id: "goReviewMenu", onClick: () => switchTab("review") },
     S.ctx.isAdmin ? { icon: "gear", label: "앱 관리", desc: "시트 연동 · 계정 · 일정 설정 · 백업", id: "goAdmin", onClick: () => switchTab("admin") } : null,
     isStandalone() ? null : { icon: "phone", label: "홈 화면에 앱으로 추가", onClick: () => { switchTab("home"); showInstallTipAgain($("#pwaTip")); } }
@@ -240,6 +243,7 @@ home.init(panel("home"));
 schedule.init(panel("schedule"));
 students.init(panel("students"));
 meetings.init(panel("meetings"));
+reviews.init(panel("reviews"));
 questions.init(panel("questions"));
 bank.init(panel("bank"));
 review.init(panel("review"));

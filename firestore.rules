@@ -66,6 +66,34 @@ service cloud.firestore {
       allow write: if isStaff();
     }
 
+    // 실제 대학 면접 후기 (문서 id = 면접일 문서 id). 선생님 전체 · 학생은 자기 것만
+    function reviewFields() {
+      return ['studentNo', 'name', 'cls', 'interviewId', 'univ', 'dept', 'admission', 'format',
+              'date', 'year', 'questions', 'helped', 'regret', 'mood', 'difficulty',
+              'createdAtMs', 'updatedAtMs'];
+    }
+    function reviewShapeOk() {
+      let d = request.resource.data;
+      return d.keys().hasAll(['studentNo', 'date', 'updatedAtMs'])
+        && d.keys().hasOnly(reviewFields())
+        && d.studentNo is string
+        && d.get('mood', 0) is int && d.get('mood', 0) >= 0 && d.get('mood', 0) <= 5
+        && d.get('difficulty', 0) is int && d.get('difficulty', 0) >= 0 && d.get('difficulty', 0) <= 5
+        && d.get('questions', '').size() <= 4000
+        && d.get('helped', '').size() <= 2000
+        && d.get('regret', '').size() <= 2000;
+    }
+    match /reviews/{rid} {
+      allow read: if isStaff() || isStudent(resource.data.studentNo);
+      allow create: if reviewShapeOk()
+        && (isStaff() || isStudent(request.resource.data.studentNo));
+      // 남의 후기로 바꿔치기 금지: 학번은 절대 바뀌지 않는다
+      allow update: if reviewShapeOk()
+        && request.resource.data.studentNo == resource.data.studentNo
+        && (isStaff() || isStudent(resource.data.studentNo));
+      allow delete: if isStaff();
+    }
+
     // 교사 전용 메모 등 (학생 접근 불가)
     match /studentNotes/{no} {
       allow read, write: if isStaff();

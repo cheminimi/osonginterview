@@ -179,6 +179,7 @@
   <section data-panel="home">
     <div id="pwaTip"></div>
     <div id="homeBody"></div>
+    <div id="rvForm" hidden></div>
   </section>
 
   <section data-panel="practice" hidden>
@@ -213,7 +214,7 @@
 
 <script type="app-module">
 import {
-  db, requireRole, mountAccountMenu, collection, getDocs, query, where, onSnapshot, esc, $, $$, toast, showError, loadInterviewsFor, cachedCollection,
+  db, requireRole, mountAccountMenu, collection, doc, setDoc, getDocs, query, where, onSnapshot, esc, $, $$, toast, showError, loadInterviewsFor, cachedCollection,
   CRITERIA, STAGES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes, icon, isoDay
 } from "./common.js";
 import { mountSchedule, BOOK_STAGES, stageTeachers, ACTIVE, DONE, STATUS } from "./schedule.js";
@@ -222,17 +223,18 @@ import { registerSW, mountInstallTip, showInstallTipAgain, isStandalone } from "
 const ctx = await requireRole("student");
 const { user, profile: me } = ctx;
 
-let personal = [], bank = [], sessions = [], meetings = [];
+let personal = [], bank = [], sessions = [], meetings = [], reviews = [];
 try {
   // 연습 기록·대면 피드백은 아래 실시간 구독이 처음 한 번 읽어 온다 (중복 읽기 없음)
-  const [pq, qb, iv] = await Promise.all([
+  const [pq, qb, iv, rv] = await Promise.all([
     getDocs(collection(db, "students", me.studentNo, "personalQuestions")),
     cachedCollection("questions"),   // 질문은행: 바뀌었을 때만 서버에서 받음
-    loadInterviewsFor(me.studentNo)
+    loadInterviewsFor(me.studentNo),
+    getDocs(query(collection(db, "reviews"), where("studentNo", "==", String(me.studentNo))))
   ]);
   me.universities = iv;
   const rows = (s) => s.docs.map((d) => ({ id: d.id, ...d.data() }));
-  personal = rows(pq); bank = qb;
+  personal = rows(pq); bank = qb; reviews = rows(rv);
 } catch (e) { showError(e, "데이터 불러오기"); }
 $("#main").hidden = false;
 $("#tabs").hidden = false;
@@ -343,6 +345,131 @@ let wasWide = WIDE.matches;
   WIDE.addEventListener ? WIDE.addEventListener("change", onWide) : WIDE.addListener(onWide);
 }
 
+// ================= 대학 면접 후기 =================
+// 후기 1건 = 지원 대학 1곳. 문서 id 를 면접일 문서 id 와 똑같이 써서 짝이 어긋날 수 없게 한다.
+// 시트에서 면접일 행을 지웠다 다시 만들어 id 가 바뀐 경우에만, 학번·대학·학과·면접일이
+// '모두 정확히' 같은 후기를 찾는다 (날짜가 가깝다는 이유로 짝짓지 않는다).
+const SNOOZE_KEY = `rvSnooze:${me.studentNo}`;
+const schoolYear = () => { const d = new Date(); return d.getMonth() + 1 >= 3 ? d.getFullYear() + 1 : d.getFullYear(); };
+const sameInterview = (r, u) => String(r.studentNo) === String(me.studentNo)
+  && String(r.univ || "") === String(u.univ || "") && String(r.dept || "") === String(u.dept || "")
+  && String(r.date || "") === String(u.date || "");
+function reviewOf(u) {
+  if (!u) return null;
+  return reviews.find((r) => r.id === u.id) || reviews.find((r) => sameInterview(r, u)) || null;
+}
+// 면접이 끝났고(다음날부터) 아직 안 쓴 것
+function pendingReviews() {
+  const today = isoDay();
+  return (me.universities || [])
+    .filter((u) => u.date && isoDay(u.date) < today && !reviewOf(u))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+const snoozed = () => { try { return JSON.parse(localStorage.getItem(SNOOZE_KEY) || "{}"); } catch (e) { return {}; } };
+function snooze(id) {
+  try { const s = snoozed(); s[id] = Date.now() + 3 * 86400000; localStorage.setItem(SNOOZE_KEY, JSON.stringify(s)); } catch (e) {}
+}
+// 알림에 띄울 것 (지원 대학 칸에는 숨긴 것도 계속 보인다)
+function nudgeReviews() {
+  const s = snoozed(), now = Date.now();
+  return pendingReviews().filter((u) => !(s[u.id] > now));
+}
+const uniOf = (id) => (me.universities || []).find((u) => u.id === id);
+
+// ---- 지원 대학 줄 (컴퓨터·휴대폰 공통)
+function uniRowsHtml() {
+  const today = isoDay();
+  return (me.universities || []).map((u) => {
+    const past = u.date && isoDay(u.date) < today;
+    const r = reviewOf(u);
+    const d = dday(u.date);
+    const dt = u.date ? new Date(String(u.date).replace(/-/g, "/")) : null;
+    const end = r ? `<button type="button" class="done-tag" data-rv="${esc(u.id)}" title="후기 다시 보기">${icon("check", 15)} 후기 작성함</button>`
+      : past ? `<button type="button" class="btn-sm btn-primary" data-rv="${esc(u.id)}">후기 쓰기</button>`
+      : d != null ? `<span class="badge badge-${d <= 7 ? "red" : d <= 21 ? "orange" : "blue"}">${d === 0 ? "D-DAY" : "D-" + d}</span>` : "";
+    return `<div class="uni-row${past ? " past" : ""}">
+      <span class="u-day">${dt ? `<b>${dt.getMonth() + 1}/${dt.getDate()}</b><span>${"일월화수목금토"[dt.getDay()]}</span>` : "<b>-</b>"}</span>
+      <span class="u-tx"><b>${esc(u.univ || "")} ${esc(u.dept || "")}</b>
+        <span>${esc([u.admission, u.format].filter(Boolean).join(" · "))}</span></span>
+      <span class="u-end">${end}</span></div>`;
+  }).join("");
+}
+
+// ---- 후기 쓰기 화면 (홈 안의 하위 화면)
+const RV_MAX = { questions: 4000, helped: 2000, regret: 2000 };
+function starsHtml(name, n) {
+  return `<span class="stars" data-star="${name}">${[1, 2, 3, 4, 5].map((i) => `<button type="button" class="st${i <= n ? " on" : ""}" data-v="${i}"
+    aria-label="${i}점">${icon("star", 22)}</button>`).join("")}</span>`;
+}
+function openReview(id) {
+  const u = uniOf(id);
+  if (!u) return toast("면접 정보를 찾지 못했어요. 새로고침해 보세요.", "error");
+  const r = reviewOf(u) || {};
+  const box = $("#rvForm");
+  box.innerHTML = `
+    <div class="sub-head"><button type="button" class="btn-sm btn-back" id="rvBack"></button><h2 style="margin:0">면접 후기</h2></div>
+    <div class="rv-head"><b>${esc(u.univ || "")} ${esc(u.dept || "")}</b>
+      <span>${esc([u.admission, u.format].filter(Boolean).join(" · "))}${u.date ? " · " + fmtDay(u.date) : ""}</span></div>
+    <div class="rv-note">선생님만 봅니다. 다른 학생에게는 보이지 않아요.<br>
+      빈칸으로 두어도 괜찮아요 — 기억나는 것만 적으면 됩니다.</div>
+    <div class="field"><label for="rvQ">실제로 받은 질문</label>
+      <textarea id="rvQ" class="rv tall" maxlength="${RV_MAX.questions}" placeholder="한 줄에 하나씩 적어 주세요">${esc(r.questions || "")}</textarea>
+      <div class="rv-hint">한 줄에 하나씩. 정확하지 않아도 괜찮아요.</div></div>
+    <div class="field"><label for="rvH">준비하면서 도움된 것</label>
+      <textarea id="rvH" class="rv" maxlength="${RV_MAX.helped}" placeholder="예) 3차 모의면접에서 연습한 꼬리 질문이 그대로 나왔어요">${esc(r.helped || "")}</textarea></div>
+    <div class="field"><label for="rvR">아쉬웠던 것 · 다시 한다면</label>
+      <textarea id="rvR" class="rv" maxlength="${RV_MAX.regret}" placeholder="예) 답을 너무 길게 말해서 중간에 끊겼어요">${esc(r.regret || "")}</textarea></div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="field" style="margin-bottom:16px"><label>면접 분위기</label>
+        <div class="rate"><span class="lab-l">편안했다</span>${starsHtml("mood", Number(r.mood) || 0)}<span class="lab-r">긴장됐다</span></div></div>
+      <div class="field" style="margin-bottom:0"><label>체감 난이도</label>
+        <div class="rate"><span class="lab-l">쉬웠다</span>${starsHtml("difficulty", Number(r.difficulty) || 0)}<span class="lab-r">어려웠다</span></div></div>
+    </div>
+    <div class="rv-save"><button type="button" class="btn-primary" id="rvSave">저장</button>
+      <button type="button" id="rvCancel">취소</button><div class="spacer"></div>
+      <span class="muted" style="font-size:.84rem">저장 뒤에도 언제든 고칠 수 있어요</span></div>`;
+
+  const picked = { mood: Number(r.mood) || 0, difficulty: Number(r.difficulty) || 0 };
+  $$(".stars", box).forEach((row) => {
+    const key = row.dataset.star;
+    row.onclick = (e) => {
+      const b = e.target.closest("[data-v]"); if (!b) return;
+      const v = Number(b.dataset.v);
+      picked[key] = picked[key] === v ? 0 : v;         // 같은 별을 다시 누르면 취소
+      $$("[data-v]", row).forEach((x) => x.classList.toggle("on", Number(x.dataset.v) <= picked[key]));
+    };
+  });
+  const close = () => { box.hidden = true; box.innerHTML = ""; $("#homeBody").hidden = false; renderHome(); window.scrollTo({ top: 0, behavior: "instant" }); };
+  $("#rvBack", box).onclick = close;
+  $("#rvCancel", box).onclick = close;
+  $("#rvSave", box).onclick = async () => {
+    const btn = $("#rvSave", box); btn.disabled = true;
+    const data = {
+      studentNo: String(me.studentNo), name: me.name || "", cls: me.cls || "",
+      interviewId: u.id, univ: u.univ || "", dept: u.dept || "", admission: u.admission || "",
+      format: u.format || "", date: u.date || "", year: schoolYear(),
+      questions: $("#rvQ", box).value.trim().slice(0, RV_MAX.questions),
+      helped: $("#rvH", box).value.trim().slice(0, RV_MAX.helped),
+      regret: $("#rvR", box).value.trim().slice(0, RV_MAX.regret),
+      mood: picked.mood, difficulty: picked.difficulty,
+      createdAtMs: r.createdAtMs || Date.now(), updatedAtMs: Date.now()
+    };
+    try {
+      // 옛 면접일 id 로 이미 쓴 후기가 있으면 그 문서를 그대로 고친다 (중복 생성 방지)
+      const existing = reviewOf(u);
+      const rid = existing ? existing.id : u.id;
+      await setDoc(doc(db, "reviews", rid), data);
+      reviews = [...reviews.filter((x) => x.id !== rid), { id: rid, ...data }];
+      toast("후기를 저장했어요. 고마워요!");
+      close();
+    } catch (e) { btn.disabled = false; showError(e, "후기 저장"); }
+  };
+  $("#homeBody").hidden = true;
+  box.hidden = false;
+  switchTab("home");
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
+
 // 두 화면이 함께 쓰는 값
 function homeData() {
   const today = isoDay();
@@ -365,6 +492,8 @@ function renderHome() {
   $$("[data-go]", box).forEach((b) => b.onclick = () => switchTab(b.dataset.go));
   $$("[data-mode]", box).forEach((b) => b.onclick = () => location.href = `interview.html?mode=${b.dataset.mode}`);
   $$("[data-stage]", box).forEach((b) => b.onclick = () => { switchTab("schedule"); sched.focusStage(Number(b.dataset.stage)); });
+  $$("[data-rv]", box).forEach((b) => b.onclick = () => openReview(b.dataset.rv));
+  $$("[data-rvlater]", box).forEach((b) => b.onclick = () => { snooze(b.dataset.rvlater); renderHome(); });
   if (WIDE.matches) bindWide(box); else bindNarrow(box);
 }
 
@@ -405,6 +534,8 @@ function homeWide({ now, next, nd, nextU, up }) {
         <div class="t">${nextU ? esc(nextU.univ) + " " + esc(nextU.dept || "") : "대학 면접"}<br>
           ${fmtDay(next)}${nextU?.admission ? " · " + esc(nextU.admission) : ""}</div></div>` : ""}
     </div>
+
+    ${rvCallHtml()}
 
     <div class="cols">
       <section class="hero">
@@ -471,6 +602,14 @@ function bindWide() { /* 컴퓨터 화면 전용 클릭은 없음 (모두 data-g
 // ================= 휴대폰 화면 (720px 이하) — 예전 구성 =================
 function homeNarrow({ today, next, nd, nextU }) {
   const todos = [];
+  // 0) 다녀온 대학 면접 후기 (가장 먼저 — 기억이 남아 있을 때 써야 한다)
+  nudgeReviews().forEach((u) => {
+    const dt = new Date(String(u.date).replace(/-/g, "/"));
+    const gap = Math.round((new Date(today).getTime() - dt.getTime()) / 86400000);
+    todos.push({ ic: "pen", t: `${u.univ || "대학"} 면접 후기 쓰기`,
+      d: `${gap <= 1 ? "어제" : `${dt.getMonth() + 1}/${dt.getDate()}`} 본 면접이에요. 5분이면 됩니다.`,
+      cta: "후기 쓰기", attr: `data-rv="${esc(u.id)}"` });
+  });
   // 1) 아직 신청하지 않은 차수
   BOOK_STAGES.forEach((sg) => {
     const ts = stageTeachers(me, sg.key);
@@ -573,17 +712,26 @@ function docRowsHtml() {
         <span class="tx"><b>${esc(m.title)}</b><small>${m.n ? `${esc(m.desc)} · ${m.n}문항` : "아직 질문이 없어요"}</small></span>
         <span class="end">${icon("chevron", 18)}</span></button>`).join("")}`;
 }
-function univRowsHtml() {
-  return (me.universities || []).map((u) => {
-    const d = dday(u.date);
-    return `<div class="univ" style="${d != null && d < 0 ? "opacity:.5" : ""}"><b>${u.date ? fmtDay(u.date) : "-"}</b> ${esc(u.univ)} <span>${esc(u.dept)}</span> <span class="muted">${esc(u.admission)} · ${esc(u.format)}</span></div>`;
-  }).join("");
-}
+const univRowsHtml = uniRowsHtml;   // 지원 대학 줄 = 면접 후기 상태까지 보여 주는 줄
 function univHtml() {
   if (!(me.universities || []).length) return "";
   return `<section class="card" style="margin-top:14px">
     <div class="head-row"><h3>지원 대학</h3><span class="n">${me.universities.length}곳</span></div>
-    ${univRowsHtml()}</section>`;
+    ${uniRowsHtml()}</section>`;
+}
+// 후기 알림 띠 (컴퓨터 홈) — 안 쓴 후기가 있을 때만
+function rvCallHtml() {
+  const u = nudgeReviews()[0];
+  if (!u) return "";
+  const dt = new Date(String(u.date).replace(/-/g, "/"));
+  const gap = Math.round((new Date(isoDay()).getTime() - dt.getTime()) / 86400000);
+  const when = gap <= 1 ? "어제" : `${dt.getMonth() + 1}/${dt.getDate()}`;
+  return `<div class="rv-call">
+    <span class="r-ic">${icon("pen", 22)}</span>
+    <span class="r-tx"><b>${when} ${esc(u.univ || "")} 면접, 어땠나요?</b>
+      <span>받은 질문과 느낀 점을 적어 두면 선생님이 다음 준비를 도와줄 수 있어요. 5분이면 됩니다.</span></span>
+    <span class="r-act"><button type="button" class="btn-primary" data-rv="${esc(u.id)}">후기 쓰기 →</button>
+      <button type="button" class="btn-sm" data-rvlater="${esc(u.id)}">나중에</button></span></div>`;
 }
 
 // ---- 선생님 피드백 (대면 모의면접 + 말하기 연습 피드백을 한곳에)

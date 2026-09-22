@@ -570,7 +570,8 @@ table.av-grid input { width: 18px; height: 18px; }
 .dday-card .d-body b { font-weight: 600; font-size: .98rem; line-height: 1.3; }
 .dday-card .d-body .muted { display: block; margin-top: 4px; font-variant-numeric: tabular-nums; color: var(--ink-2); }
 
-.sec-head { display: flex; align-items: baseline; gap: 8px; margin: 24px 2px 10px; }
+.sec-head { display: flex; align-items: baseline; gap: 8px; margin: 24px 2px 10px; flex-wrap: wrap; }
+.sec-head .btn-sm { flex: none; }
 .sec-head h2 { margin: 0; font-size: 1.02rem; font-weight: 700; }
 .sec-head .n { font-size: .85rem; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .sec-head .spacer + button, .sec-head > button { align-self: center; }
@@ -634,3 +635,51 @@ button.r-tx:hover { background: none; border: none; }
   background: linear-gradient(to top, #fff 0, #fff 62%, rgba(255,255,255,0) 100%); }
 .modal-foot .btn-primary { width: 100%; justify-content: center; min-height: 50px; font-size: 1.02rem; }
 @media (max-width: 720px) { .modal-foot { margin: 16px -16px -16px; padding: 24px 16px 16px; } }
+
+/* ===== 대학 면접 후기 ===== */
+/* 지원 대학 줄 (날짜 + 대학 + 후기 상태) — 홈의 컴퓨터·휴대폰 화면 공통 */
+.uni-row { display: flex; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line-3); }
+.uni-row:last-child { border-bottom: none; }
+.uni-row .u-day { width: 58px; flex: none; font-variant-numeric: tabular-nums; }
+.uni-row .u-day b { display: block; font-weight: 700; font-size: .95rem; letter-spacing: -.02em; }
+.uni-row .u-day span { display: block; font-size: .78rem; color: var(--ink-2); }
+.uni-row .u-tx { flex: 1; min-width: 0; }
+.uni-row .u-tx b { font-weight: 600; font-size: .95rem; }
+.uni-row .u-tx span { display: block; font-size: .82rem; color: var(--ink-2); margin-top: 2px; }
+.uni-row.past { opacity: .62; }
+.uni-row .u-end { flex: none; }
+.uni-row button.done-tag { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px;
+  background: none; border: none; font-size: .82rem; color: var(--ok, #3f7d4e); white-space: nowrap; cursor: pointer; }
+.uni-row button.done-tag:hover { text-decoration: underline; }
+.uni-row button.done-tag svg { width: 15px; height: 15px; }
+
+/* 후기 쓰기 알림 띠 (컴퓨터 홈) */
+.rv-call { display: flex; gap: 14px; align-items: center; background: var(--accent-soft);
+  border: 1px solid var(--accent-line); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 14px; }
+.rv-call .r-ic { flex: none; width: 42px; height: 42px; border-radius: 12px; background: #fff;
+  border: 1px solid var(--accent-line); display: grid; place-items: center; color: var(--accent); }
+.rv-call .r-tx { flex: 1; min-width: 0; }
+.rv-call .r-tx b { display: block; font-weight: 700; font-size: .99rem; }
+.rv-call .r-tx span { display: block; font-size: .86rem; color: var(--ink-2); margin-top: 3px; }
+.rv-call .r-act { flex: none; display: flex; gap: 8px; align-items: center; }
+@media (max-width: 720px) { .rv-call { flex-wrap: wrap; } .rv-call .r-act { width: 100%; } .rv-call .r-act button { flex: 1; } }
+
+/* 별점 고르기 */
+.rate { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.rate .lab-l, .rate .lab-r { font-size: .8rem; color: var(--ink-3); white-space: nowrap; }
+.stars { display: inline-flex; gap: 2px; }
+.stars .st { background: none; border: none; padding: 2px; color: var(--line); cursor: pointer;
+  display: grid; place-items: center; min-height: 0; }
+.stars .st.on { color: #e8a13a; }
+.stars .st svg { fill: currentColor; stroke: none; }
+
+/* 후기 쓰기 화면 */
+.rv-head { background: var(--accent-faint); border: 1px solid var(--accent-line); border-radius: var(--radius);
+  padding: 14px 16px; margin-bottom: 16px; }
+.rv-head b { font-size: 1.02rem; font-weight: 700; }
+.rv-head span { display: block; font-size: .85rem; color: var(--ink-2); margin-top: 3px; }
+.rv-note { font-size: .84rem; color: var(--ink-2); background: #faf8f7; border-radius: 10px; padding: 10px 12px; margin: 4px 0 16px; }
+.rv-hint { font-size: .8rem; color: var(--ink-3); margin-top: 5px; }
+.rv-save { display: flex; gap: 8px; align-items: center; margin-top: 18px; flex-wrap: wrap; }
+textarea.rv { min-height: 92px; }
+textarea.rv.tall { min-height: 130px; }

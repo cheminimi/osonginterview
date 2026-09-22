@@ -7,7 +7,7 @@ import {
 export const S = {
   ctx: null,
   students: [], staff: [], meetings: [], sessions: [], bank: [], interviews: [],
-  bookings: [], needMine: [], blockLabel: () => "",
+  bookings: [], needMine: [], reviews: [], blockLabel: () => "",
   renderers: {}
 };
 
@@ -140,6 +140,7 @@ export const TOP_TABS = [
 const SUB = {
   bank: { parent: "questions", title: "" },
   meetings: { parent: "students", title: "대면 기록 전체", back: "students", backLabel: "학생" },
+  reviews: { parent: "students", title: "대학 면접 후기", back: "students", backLabel: "학생" },
   review: { parent: "home", title: "연습 리뷰", back: "home", backLabel: "오늘" },
   admin: { parent: null, title: "앱 관리", back: "home", backLabel: "오늘" }
 };

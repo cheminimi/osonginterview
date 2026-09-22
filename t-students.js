@@ -29,12 +29,15 @@ export function init(el) {
       </div>
     </details>
     <div class="sec-head" style="margin-top:14px"><h2>학생</h2><span class="n" id="fCount"></span>
-      <div class="spacer"></div><button class="btn-sm" data-tab="meetings" id="goMeetList">대면 기록 전체</button></div>
+      <div class="spacer"></div>
+      <button class="btn-sm" data-tab="reviews" id="goRvList">대학 면접 후기</button>
+      <button class="btn-sm" data-tab="meetings" id="goMeetList">대면 기록 전체</button></div>
     <div class="list-card" id="stBody"></div>
     <label hidden><input type="checkbox" id="fMine"></label>`;
   ["#fCls", "#fTrack", "#fSpecial", "#fSort"].forEach((s) => $(s, root).onchange = render);
   $("#fSearch", root).oninput = render;
   $("#goMeetList", root).onclick = () => switchTab("meetings");
+  $("#goRvList", root).onclick = async () => { switchTab("reviews"); (await import("./t-reviews.js")).load(); };
   $$("#fChips button", root).forEach((b) => b.onclick = () => {
     $$("#fChips button", root).forEach((x) => x.classList.toggle("on", x === b));
     $("#fMine", root).checked = b.dataset.f === "mine";   // 옛 동작(내 담당만)과 맞춤

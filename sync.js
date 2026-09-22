@@ -45,7 +45,7 @@ async function send(kinds, quiet) {
   } catch (e) {
     console.error("sheet sync", e);
     // 정기 대조(timedSync)가 도는 항목만 '자동 반영'을 약속한다
-    const AUTO = ["students", "interviews", "meetings", "bookings"];
+    const AUTO = ["students", "interviews", "meetings", "bookings", "reviews"];
     const autoOk = kinds.every((k) => AUTO.includes(k));
     toast(`앱에는 저장했지만 시트 반영이 늦어집니다: ${e.message}`
       + (autoOk ? " — 시트 스크립트의 정기 대조(07~22시, 30분마다)가 돌고 있으면 그때 맞춰집니다."

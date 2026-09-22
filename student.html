@@ -51,11 +51,28 @@
   }
   var RX = /(?:import|export)\s[^;]*?from\s*["'](\.\/[^"']+)["']|import\(\s*["'](\.\/[^"']+)["']\s*\)/g;
   function deps(text) { var out = [], m; RX.lastIndex = 0; while ((m = RX.exec(text))) out.push(m[1] || m[2]); return out; }
+  // 느린 네트워크·응답 없는 서버에서 화면 준비가 영영 끝나지 않는 것을 막는다
+  function fetchT(url, ms) {
+    var ctl = null;
+    try { if (window.AbortController) ctl = new AbortController(); } catch (e) {}
+    return new Promise(function (ok, no) {
+      var settled = false;
+      var t = setTimeout(function () {
+        if (settled) return; settled = true;
+        try { if (ctl) ctl.abort(); } catch (e) {}
+        no(new Error("시간 초과: " + url));
+      }, ms);
+      var opt = { cache: "no-cache" };
+      if (ctl) opt.signal = ctl.signal;
+      fetch(url, opt).then(function (r) { if (settled) return; settled = true; clearTimeout(t); ok(r); },
+        function (e) { if (settled) return; settled = true; clearTimeout(t); no(e); });
+    });
+  }
   function check(files, seen, sig) {
     files = files.filter(function (f) { if (seen[f]) return false; seen[f] = 1; return true; });
     if (!files.length) return Promise.resolve();
     return Promise.all(files.map(function (f) {
-      return fetch(f, { cache: "no-cache" }).then(function (r) {
+      return fetchT(f, 8000).then(function (r) {
         sig[f] = r.headers.get("etag") || r.headers.get("last-modified") || "";
         return /\.js$/.test(f) ? r.text().then(deps) : [];
       }).catch(function () { return []; });
@@ -106,7 +123,7 @@
       if (done) return; done = true;
       var first = sigText(sig);
       // 화면(HTML) 자체가 옛 버전이면 한 번만 새로 불러온다
-      fetch(page, { cache: "no-cache" }).then(function (r) { return r.text(); }).then(function (html) {
+      fetchT(page, 6000).then(function (r) { return r.text(); }).then(function (html) {
         var cur = mains.map(function (s) { return s.textContent.trim(); }).join("\n");
         var key = "reloadedFor:" + page;
         if (cur && html.indexOf(cur) < 0 && sessionStorage.getItem(key) !== sig[page]) {

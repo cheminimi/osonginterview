@@ -130,24 +130,63 @@ export async function resolveLoginEmail(kind, id) {
  * want: 'staff' | 'student'
  * 반환: { user, account: {role, key}, profile }  profile = staff 또는 students 문서
  */
+// 화면이 영영 '불러오는 중'으로 멈추지 않도록, 막힌 이유를 알리고 스스로 고칠 수 있게 한다
+export function holdScreen(title, detail, { retry = true } = {}) {
+  document.querySelectorAll(".boot-hold").forEach((x) => x.remove());
+  const box = document.createElement("div");
+  box.className = "boot-hold";
+  box.style.cssText = "position:fixed;inset:0;z-index:9998;background:#fff;display:flex;align-items:center;justify-content:center;padding:24px";
+  box.innerHTML = `<div style="max-width:430px;width:100%;text-align:center">
+    <h2 style="margin:0 0 10px;font-size:1.15rem">${esc(title)}</h2>
+    <p style="margin:0 0 6px;color:#5a5f66;line-height:1.6">${esc(detail)}</p>
+    <p style="margin:0 0 18px;color:#8b9098;font-size:.85rem">인터넷이 느리거나 잠시 끊겼을 수 있어요.</p>
+    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+      ${retry ? '<button type="button" class="btn-primary" data-a="retry">다시 시도</button>' : ""}
+      <button type="button" data-a="out">로그아웃</button>
+      <button type="button" data-a="reset">처음부터 다시</button>
+    </div></div>`;
+  box.addEventListener("click", (e) => {
+    const a = e.target.closest("[data-a]")?.dataset.a;
+    if (a === "retry") location.reload();
+    else if (a === "out") logout("out");
+    else if (a === "reset") location.replace("index.html?reset=1");
+  });
+  (document.body || document.documentElement).appendChild(box);
+}
+
+const withTimeout = (p, ms, what) => Promise.race([p,
+  new Promise((_, no) => setTimeout(() => no(Object.assign(new Error(what + " 응답이 없습니다."), { timeout: true })), ms))]);
+// 한 번은 다시 시도해 본다 (잠깐 끊긴 경우 대비)
+async function getDocT(ref, what, ms = 8000) {
+  try { return await withTimeout(getDoc(ref), ms, what); }
+  catch (e) { return await withTimeout(getDoc(ref), ms, what); }
+}
+
 export function requireRole(want) {
   return new Promise((resolve) => {
+    let answered = false;
+    // 로그인 상태 확인 자체가 돌아오지 않는 경우 (오프라인·차단 등)
+    const watchdog = setTimeout(() => {
+      if (answered) return; answered = true;
+      try { unsub(); } catch (_) {}
+      holdScreen("로그인 상태를 확인하지 못했어요", "로그인 정보를 확인하는 데 너무 오래 걸립니다.");
+    }, 12000);
     const unsub = onAuthStateChanged(auth, async (user) => {
+      if (answered) return; answered = true;
+      clearTimeout(watchdog);
       unsub();
       if (!user) { location.replace("index.html"); return; }
       try {
         let account = null;
-        const a = await getDoc(doc(db, "accounts", user.uid));
+        const a = await getDocT(doc(db, "accounts", user.uid), "계정 정보");
         if (a.exists()) account = a.data();
         else if (isAdminEmail(user.email)) account = { role: "admin", key: null, bootstrap: true };
         if (!account) {
-          toast("계정 정보가 없습니다. 관리자에게 문의하세요.", "error", 10000);
-          setTimeout(() => signOut(auth).then(() => location.replace("index.html")), 2500);
+          holdScreen("계정 정보가 없습니다", "이 계정은 아직 등록되어 있지 않아요. 관리자에게 문의하세요.", { retry: false });
           return;
         }
         if (account.role === "sync") {
-          toast("시트 동기화 전용 계정은 화면에 로그인할 수 없습니다.", "error", 8000);
-          setTimeout(() => signOut(auth).then(() => location.replace("index.html")), 2500);
+          holdScreen("이 계정으로는 들어올 수 없어요", "시트 동기화 전용 계정입니다. 본인 계정으로 로그아웃 후 다시 로그인하세요.", { retry: false });
           return;
         }
         const isStaff = account.role === "admin" || account.role === "teacher";
@@ -155,15 +194,23 @@ export function requireRole(want) {
         if (want === "student" && isStaff) { location.replace("teacher.html"); return; }
         let profile = null;
         if (account.key) {
-          const p = await getDoc(doc(db, isStaff ? "staff" : "students", account.key));
+          const p = await getDocT(doc(db, isStaff ? "staff" : "students", account.key), "사용자 정보");
           if (p.exists()) profile = { id: p.id, ...p.data() };
         }
-        if (!isStaff && !profile) { toast("학생 정보가 없습니다. 선생님께 문의하세요.", "error", 10000); return; }
+        if (!isStaff && !profile) {
+          holdScreen("학생 정보를 찾지 못했어요", "명렬표에 이 학번이 없습니다. 선생님께 문의하세요.", { retry: false });
+          return;
+        }
         const ctx = { user, account, profile, isAdmin: account.role === "admin", isStaff };
         if (profile?.mustChangePw) await forcePasswordChange(ctx);
         startIdleLogout();
         resolve(ctx);
-      } catch (e) { showError(e, "로그인 정보 확인"); }
+      } catch (e) {
+        console.warn("requireRole", e);
+        holdScreen(e?.timeout ? "정보를 불러오지 못했어요" : "로그인 정보를 확인하지 못했어요",
+          e?.timeout ? "서버 응답이 너무 늦습니다. 잠시 뒤 다시 시도해 주세요." : (e?.message || "알 수 없는 오류"));
+      }
+      // 어느 실패 경로에서도 resolve 하지 않는다 — 보호된 화면은 절대 실행되지 않음
     });
   });
 }

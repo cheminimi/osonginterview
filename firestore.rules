@@ -112,6 +112,17 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // 목록별 '바뀐 시각' 표시 (브라우저 캐시를 쓸지 판단 · 읽기 줄이기). 교사·동기화 계정이 바꿀 때 기록
+    match /meta/{docId} {
+      allow read: if hasAcct() || isAdmin();
+      allow write: if isStaff();
+    }
+
+    // 백업(시트 Apps Script)용: 모든 학생의 예상질문을 한 번에 읽기 — 교사·동기화 계정만
+    match /{path=**}/personalQuestions/{qid} {
+      allow read: if isStaff();
+    }
+
     // ================= 모의면접 일정 =================
     function isStudentAcct() { return hasAcct() && acct().role == 'student'; }
 
@@ -124,18 +135,43 @@ service cloud.firestore {
     // 날짜별 일정 요약 (달력). 로그인한 사람 모두 읽기 — 교사·장소 겹침을 서로 보고 피하도록
     // 학생은 자기 일정 한 건(lastId)만 넣거나 뺄 수 있다
     function dayItemsBefore() { return resource == null ? {} : resource.data.get('items', {}); }
-    function studentDayWrite() {
+    function bkPath(id) { return /databases/$(database)/documents/bookings/$(id); }
+    // 같은 트랜잭션에서 저장되는 예약 문서(getAfter)와 요약이 실제로 일치하는지 확인한다.
+    // 학생이 요약만 따로 고쳐 남의 일정을 지우거나 시간·상태를 위조하지 못하게 한다.
+    function dayItemMatchesBooking(date, id, it) {
+      return existsAfter(bkPath(id)) && dayItemEq(date, id, it);
+    }
+    function dayItemEq(date, id, it) {
+      let b = getAfter(bkPath(id)).data;
+      return b.studentNo == acct().key
+        && it.no == acct().key
+        && b.date == date
+        && it.status == b.status
+        && it.stage == b.stage
+        && it.block == b.block
+        && it.start == b.start
+        && it.end == b.end
+        && it.room == b.get('room', '')
+        && it.teachers == b.teachers;
+    }
+    // 요약에서 뺄 때: 원래 내 일정이어야 하고, 예약 문서가 남아 있다면 그것도 내 것이어야 한다
+    function dayItemRemoveOk(id, before) {
+      return id in before && before[id].no == acct().key
+        && (!existsAfter(bkPath(id)) || getAfter(bkPath(id)).data.studentNo == acct().key);
+    }
+    function studentDayWrite(date) {
       let id = request.resource.data.lastId;
       let after = request.resource.data.get('items', {});
       let before = dayItemsBefore();
       return isStudentAcct()
         && request.resource.data.keys().hasOnly(['items', 'lastId', 'updatedAtMs'])
         && after.diff(before).affectedKeys().hasOnly([id])
-        && (id in after ? after[id].no == acct().key : (id in before && before[id].no == acct().key));
+        && (!(id in before) || before[id].no == acct().key)
+        && (id in after ? dayItemMatchesBooking(date, id, after[id]) : dayItemRemoveOk(id, before));
     }
     match /days/{date} {
       allow read: if hasAcct() || isAdmin();
-      allow create, update: if isStaff() || studentDayWrite();
+      allow create, update: if isStaff() || studentDayWrite(date);
       allow delete: if isAdmin();
     }
 
@@ -161,7 +197,9 @@ service cloud.firestore {
             && resource.data.status in ['requested', 'confirmed']
             && request.resource.data.status in ['requested', 'confirmed', 'cancelled', 'rejected']
             && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['approvedBy', 'status', 'date', 'block', 'start', 'end', 'room', 'memo', 'proposedBy', 'updatedAtMs', 'updatedBy'])
+                 .hasOnly(['approvedBy', 'status', 'date', 'block', 'start', 'end', 'room', 'memo', 'proposedBy', 'updatedAtMs', 'updatedBy', 'done', 'doneAtMs'])
+            // 학생은 '완료'를 세울 수 없다. 시간을 옮겨 다시 잡을 때 푸는 것만 가능
+            && request.resource.data.get('done', false) == false
             // 학생이 교사 수락을 추가할 수는 없음
             && request.resource.data.approvedBy.toSet().difference(resource.data.approvedBy.toSet()).hasOnly(['student'])
             // 시간·장소를 바꾸면 교사 수락은 모두 초기화

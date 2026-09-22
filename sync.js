@@ -44,7 +44,12 @@ async function send(kinds, quiet) {
     return { ok: true, result: data.result };
   } catch (e) {
     console.error("sheet sync", e);
-    toast(`시트 반영 지연: ${e.message} — 30분 안에(07~22시) 자동으로 다시 맞춰집니다.`, "error", 8000);
+    // 정기 대조(timedSync)가 도는 항목만 '자동 반영'을 약속한다
+    const AUTO = ["students", "interviews", "meetings", "bookings"];
+    const autoOk = kinds.every((k) => AUTO.includes(k));
+    toast(`앱에는 저장했지만 시트 반영이 늦어집니다: ${e.message}`
+      + (autoOk ? " — 시트 스크립트의 정기 대조(07~22시, 30분마다)가 돌고 있으면 그때 맞춰집니다."
+                : " — 자동으로 다시 맞추지 않으니 관리자 화면에서 [시트 동기화]를 눌러 주세요."), "error", 9000);
     return { ok: false, error: e.message };
   }
 }

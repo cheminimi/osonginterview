@@ -10,7 +10,7 @@
 import { $, $$, esc, icon, isoDay, fmtDay, fmtDate, dday, nextInterview, toDate } from "./common.js";
 import { S, register, rerender, myName, myRoles, switchTab, setDot, opt } from "./t-core.js";
 import { openStudent } from "./t-students.js";
-import { openMeetingForm } from "./t-meetings.js";
+import { openMeetingForm, recordWrittenFor } from "./t-meetings.js";
 import { openBookingRecord, gotoSchedule } from "./t-schedule.js";
 import { BOOK_STAGES, stageTeachers, ACTIVE, DONE } from "./schedule.js";
 
@@ -51,11 +51,10 @@ function collect() {
     .filter((b) => b.date === today && ACTIVE(b.status) && !DONE(b) && (!me || (b.teachers || []).includes(me)))
     .sort((a, b) => a.start.localeCompare(b.start));
 
-  // 같은 학생·차수로 이미 내용을 쓴 기록이 있으면 그 '기록 전' 자리는 다 쓴 것으로 본다
-  // (예전 방식으로 기록을 따로 만들어 빈 자리가 남은 경우 — 대면 기록 화면에서 정리할 수 있다)
-  const written = (m) => S.meetings.some((x) => !x.planned && x.studentNo === m.studentNo && Number(x.stage) === Number(m.stage));
+  // '작성할 피드백'도 같은 예약 단위로 판단한다 (recordWrittenFor).
+  // 같은 학생·같은 차수라도 다른 날짜·다른 예약의 면접은 따로 센다.
   const noRecord = S.meetings
-    .filter((m) => m.planned && !written(m) && (!me || (m.teachers || []).includes(me)) && (m.date || "") <= today)
+    .filter((m) => m.planned && !recordWrittenFor(m) && (!me || (m.teachers || []).includes(me)) && (m.date || "") <= today)
     .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 
   const pending = S.sessions.filter((x) => x.status === "submitted" && !x.reviewedAt);
@@ -213,8 +212,7 @@ function renderRows(scope) {
   const me = myName();
   const kw = ($("#hSearch", root)?.value || "").trim();
   const noRec = (s) => !S.meetings.some((m) => m.studentNo === s.studentNo && !m.planned);
-  const waitingFb = (s) => S.meetings.some((m) => m.studentNo === s.studentNo && m.planned
-      && !S.meetings.some((x) => !x.planned && x.studentNo === m.studentNo && Number(x.stage) === Number(m.stage)))
+  const waitingFb = (s) => S.meetings.some((m) => m.studentNo === s.studentNo && m.planned && !recordWrittenFor(m))
     || S.sessions.some((x) => x.studentNo === s.studentNo && x.status === "submitted" && !x.reviewedAt);
   const noSched = (s) => BOOK_STAGES.some((sg) => {
     const ts = stageTeachers(s, sg.key);
@@ -262,7 +260,7 @@ function renderRows(scope) {
   $$("#hBody [data-row]", root).forEach((b) => b.onclick = () => {
     if (b.dataset.act === "sched") return gotoSchedule();
     if (b.dataset.act === "fb") {
-      const m = S.meetings.find((x) => x.studentNo === b.dataset.row && x.planned);
+      const m = S.meetings.find((x) => x.studentNo === b.dataset.row && x.planned && !recordWrittenFor(x));
       if (m) return openMeetingForm({ id: m.id });
       return switchTab("review");
     }

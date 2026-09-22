@@ -598,6 +598,10 @@ export function mountSchedule(root, opts) {
       for (const d of dates) { const s = await tx.get(doc(db, "days", d)); dayItems[d] = s.exists() ? (s.data().items || {}) : {}; }
       // 시간·장소가 그대로이고 이미 자리를 잡고 있던 일정(수락·확정)은 다시 검사하지 않음
       const sameSlot = cur && ACTIVE(cur.status) && ["date", "start", "end", "room"].every((k) => cur[k] === next[k]);
+      // 완료 표시된 일정을 다른 날짜·시간으로 옮기면 '다시 잡은 면접'이므로 완료를 푼다.
+      // (그대로 두면 미래 일정인데도 '다가오는 일정'에서 빠져 버린다)
+      const slotMoved = cur && ["date", "start", "end", "room"].some((k) => cur[k] !== next[k]);
+      if (cur && cur.done === true && slotMoved && data.done === undefined) { next.done = false; next.doneAtMs = 0; }
       if (ACTIVE(next.status) && !force && !sameSlot) {
         const hard = findConflicts(next, dayItems[next.date], { avail: st.avail, actor: me, isAdmin, bookingId: bid, cfg: st.cfg }).filter((x) => x.hard);
         if (hard.length) throw Object.assign(new Error("방금 다른 일정이 먼저 잡혔어요: " + hard[0].msg), { conflict: true });

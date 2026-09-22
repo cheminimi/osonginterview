@@ -136,8 +136,34 @@ service cloud.firestore {
 
     // 시트 동기화 설정 등. 'schedule'(시간표·장소·동기화 주소)은 학생도 읽기
     match /config/{docId} {
-      allow read: if isStaff() || (docId == 'schedule' && hasAcct());
+      // push: 웹 푸시 공개 키 (원래 공개되는 값 · 학생도 읽어야 알림을 켤 수 있음)
+      allow read: if isStaff() || (docId in ['schedule', 'push'] && hasAcct());
       allow write: if isAdmin();
+    }
+
+    // 휴대폰 알림을 받을 기기 목록. 본인 것만 넣고 뺄 수 있고, 보내는 쪽(교사·동기화)만 전체를 읽는다
+    match /pushTokens/{token} {
+      allow read: if isStaff();
+      allow create, update: if hasAcct()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['uid', 'role', 'key', 'name', 'createdAtMs', 'lastSeenMs'])
+        && request.resource.data.role in ['student', 'staff']
+        && request.resource.data.key == string(acct().get('key', ''));
+      // 본인 기기이거나, 보내다가 '없는 기기' 로 확인된 것을 동기화 계정이 정리
+      allow delete: if isStaff() || (resource != null && resource.data.uid == request.auth.uid);
+    }
+
+    // 보낼 알림 대기열. 교사만 적고, 보낸 표시는 동기화 계정이 한다. 아무도 읽을 필요가 없다
+    match /notify/{nid} {
+      allow read: if isStaff();
+      allow create: if isStaff()
+        && request.resource.data.keys().hasOnly(['role', 'key', 'title', 'body', 'url', 'tag', 'createdAtMs', 'sentAtMs'])
+        && request.resource.data.sentAtMs == 0
+        && request.resource.data.title.size() <= 80
+        && request.resource.data.get('body', '').size() <= 140;
+      allow update: if isStaff()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sentAtMs']);
+      allow delete: if isStaff();
     }
 
     // 목록별 '바뀐 시각' 표시 (브라우저 캐시를 쓸지 판단 · 읽기 줄이기). 교사·동기화 계정이 바꿀 때 기록

@@ -4,6 +4,7 @@ import {
 } from "./common.js";
 import { S, register, rerender, myName, openModal, closeModal, readForm, opt, studentOptions, studentByNo } from "./t-core.js";
 import { requestSync } from "./sync.js";
+import { queueNotify } from "./notify.js";
 
 let root;
 export function init(el) {
@@ -331,6 +332,12 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
       toast("기록은 저장했습니다. 다만 일정을 '완료'로 표시하지 못했어요. 일정 탭에서 그 일정을 열어 [면접 완료]를 눌러 주세요.", "error", 9000);
     } else {
       toast(filledSlot ? "잡혀 있던 면접의 기록으로 저장했습니다. 시트에 반영 중…" : "기록을 저장했습니다. 시트에 반영 중…");
+    }
+    // 학생에게 공개한 기록이면 휴대폰으로 알린다 (알림을 켜 둔 학생만)
+    if (data.shared && hasContent(data)) {
+      queueNotify({ key: data.studentNo, title: "선생님 피드백이 도착했어요",
+        body: `${stageLabel(data.stage)} · ${(data.teachers || []).join(", ")} 선생님`,
+        url: "student.html#feedback", tag: `fb_m_${savedId}` });
     }
     rerender("meetings", "home", "students");
     await requestSync(["meetings"]);

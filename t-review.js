@@ -3,6 +3,7 @@ import {
 } from "./common.js";
 import { S, register, rerender, openModal, closeModal, opt, myRoles, loadAllSessions, RECENT_DAYS, setDot } from "./t-core.js";
 import { feedbackPrompt } from "./prompts.js";
+import { queueNotify } from "./notify.js";
 
 let root;
 export function init(el) {
@@ -90,6 +91,10 @@ export function openReview(id) {
       await updateDoc(doc(db, "sessions", id), d);
       Object.assign(s, d, publish ? { reviewedAt: { seconds: Date.now() / 1000 } } : {});
       toast(publish ? "학생에게 공개했습니다." : "임시 저장했습니다.");
+      // 학생 휴대폰으로 알림 (알림을 켜 둔 학생만 받습니다)
+      if (publish) queueNotify({ key: s.studentNo, title: "선생님 피드백이 도착했어요",
+        body: `${s.modeLabel || s.mode || "말하기 연습"} · ${S.ctx.profile?.name || ""} 선생님`,
+        url: "student.html#feedback", tag: `fb_s_${id}` });
       if (publish) closeModal();
       rerender("review", "home", "students");
     } catch (e) { showError(e, "피드백 저장"); }

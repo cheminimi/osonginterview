@@ -219,6 +219,7 @@ import {
 } from "./common.js";
 import { mountSchedule, BOOK_STAGES, stageTeachers, ACTIVE, DONE, STATUS } from "./schedule.js";
 import { registerSW, mountInstallTip, showInstallTipAgain, isStandalone } from "./pwa.js";
+import { pushState, pushOn, enablePush, disablePush, refreshPush, wasAsked, markAsked, onPushOpen } from "./push.js";
 
 const ctx = await requireRole("student");
 const { user, profile: me } = ctx;
@@ -241,13 +242,41 @@ $("#tabs").hidden = false;
 
 // ---- 계정 메뉴 (오른쪽 위 동그라미)
 const teacherLine = BOOK_STAGES.map((sg) => { const t = stageTeachers(me, sg.key); return t.length ? `${sg.short} ${t.join("·")}` : ""; }).filter(Boolean).join(", ");
-mountAccountMenu(ctx, $("#acct"), {
-  subtitle: `${me.studentNo}${me.track ? " · " + me.track : ""}`,
-  items: [
-    teacherLine ? { icon: "user", label: "내 담당 선생님", desc: teacherLine, info: true } : null,
-    me.sheetUrl ? { icon: "sheet", label: "내 준비 시트 열기", href: me.sheetUrl } : null,
-    isStandalone() ? null : { icon: "phone", label: "홈 화면에 앱으로 추가", onClick: () => { switchTab("home"); showInstallTipAgain($("#pwaTip")); } }
-  ]
+// 알림 상태가 바뀌면 메뉴 글씨도 같이 바뀌어야 해서 다시 그릴 수 있게 함수로 둔다
+function mountMenu() {
+  mountAccountMenu(ctx, $("#acct"), {
+    subtitle: `${me.studentNo}${me.track ? " · " + me.track : ""}`,
+    items: [
+      teacherLine ? { icon: "user", label: "내 담당 선생님", desc: teacherLine, info: true } : null,
+      me.sheetUrl ? { icon: "sheet", label: "내 준비 시트 열기", href: me.sheetUrl } : null,
+      { icon: "chat", label: pushOn() ? "휴대폰 알림 끄기" : "휴대폰 알림 켜기",
+        desc: pushOn() ? "일정 확정·피드백을 휴대폰으로 받고 있어요" : "일정이 확정되면 휴대폰으로 알려드려요",
+        id: "pushToggle", onClick: () => togglePush() },
+      isStandalone() ? null : { icon: "phone", label: "홈 화면에 앱으로 추가", onClick: () => { switchTab("home"); showInstallTipAgain($("#pwaTip")); } }
+    ]
+  });
+}
+mountMenu();
+
+// ---- 휴대폰 알림
+async function togglePush() {
+  if (pushOn()) { await disablePush(); mountMenu(); return; }
+  const st = pushState();
+  if (!st.can) {
+    toast(st.why, "error", 10000);
+    if (st.needInstall) { switchTab("home"); showInstallTipAgain($("#pwaTip")); }
+    return;
+  }
+  await enablePush(ctx);
+  mountMenu();
+}
+// 이미 켜 둔 사람은 조용히 토큰만 갱신 (권한을 다시 묻지 않음) → 끝나면 메뉴 글씨도 맞춘다
+refreshPush(ctx).then(mountMenu, mountMenu);
+// 알림을 눌러서 들어오면 해당 탭으로
+onPushOpen((url) => {
+  if (/feedback/.test(url)) switchTab("feedback");
+  else if (/schedule/.test(url)) switchTab("schedule");
+  else switchTab("home");
 });
 
 // ---- 연습 모드
@@ -294,8 +323,21 @@ let bookings = [], blockLabelOf = () => "", homeReady = false;
 const sched = mountSchedule($("#schedule"), {
   role: "student", student: me,
   onBadge: (n) => setDot("#scDot", n),
-  onData: (d) => { bookings = d.bookings || []; blockLabelOf = d.blockLabel; renderHome(); }
+  onData: (d) => { bookings = d.bookings || []; blockLabelOf = d.blockLabel; renderHome(); },
+  onBooked: () => askPushOnce()
 });
+
+// 신청·제안 직후 딱 한 번 물어본다 (가장 받고 싶은 순간이라 수락률이 높다)
+function askPushOnce() {
+  if (wasAsked() || pushOn()) return;
+  const st = pushState();
+  if (!st.can && !st.needInstall) return;
+  markAsked();
+  setTimeout(() => {
+    if (!confirm("선생님이 수락해서 일정이 확정되면 휴대폰으로 알려드릴까요?")) return;
+    togglePush();
+  }, 900);
+}
 
 // ---- 탭 (좁은 화면은 아래 고정 탭바)
 registerSW();

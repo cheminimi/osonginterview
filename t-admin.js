@@ -19,16 +19,18 @@ export function init(el) {
       <button data-ad="student">③ 학생 계정</button>
       <button data-ad="sched">④ 일정 설정</button>
       <button data-ad="backup">⑤ 백업·사용량</button>
+      <button data-ad="push">⑥ 휴대폰 알림</button>
     </div>
     <div data-adpanel="sync"></div>
     <div data-adpanel="staff" hidden></div>
     <div data-adpanel="student" hidden></div>
     <div data-adpanel="sched" hidden></div>
-    <div data-adpanel="backup" hidden></div>`;
+    <div data-adpanel="backup" hidden></div>
+    <div data-adpanel="push" hidden></div>`;
   $$("[data-ad]", root).forEach((b) => b.onclick = () => {
     $$("[data-ad]", root).forEach((x) => x.classList.toggle("active", x === b));
     $$("[data-adpanel]", root).forEach((p) => p.hidden = p.dataset.adpanel !== b.dataset.ad);
-    ({ sync: renderSync, sched: renderSched, backup: renderBackup })[b.dataset.ad]?.();   // 설정 문서는 탭을 열 때만 읽기
+    ({ sync: renderSync, sched: renderSched, backup: renderBackup, push: renderPush })[b.dataset.ad]?.();   // 설정 문서는 탭을 열 때만 읽기
   });
   register("admin", render);
 }
@@ -397,6 +399,65 @@ async function renderSched() {
 // ================= ⑤ 백업 · 사용량 =================
 const BACKUP_COLS = ["students", "staff", "accounts", "logins", "interviews", "studentNotes", "questions",
   "sessions", "meetings", "bookings", "bookingLogs", "days", "availability", "meta"];
+// ================= ⑥ 휴대폰 알림 =================
+async function renderPush() {
+  const p = $("[data-adpanel=push]", root);
+  p.innerHTML = '<div class="card"><p class="muted" style="margin:0">불러오는 중…</p></div>';
+  let cfg = {};
+  try { const s = await getDoc(doc(db, "config", "push")); if (s.exists()) cfg = s.data(); } catch (_) {}
+  let nStu = 0, nStaff = 0;
+  try {
+    const snap = await getDocs(collection(db, "pushTokens"));
+    snap.docs.forEach((d) => { (d.data().role === "student" ? nStu++ : nStaff++); });
+  } catch (e) { console.warn("pushTokens", e); }
+
+  p.innerHTML = `
+    <div class="card">
+      <h3>휴대폰 알림 (웹 푸시)</h3>
+      <p class="muted" style="margin-top:0">일정이 확정되거나 피드백이 도착하면 학생 휴대폰으로 알립니다.
+        보내는 일은 시트 Apps Script가 맡습니다 — <b>추가 비용은 없습니다.</b></p>
+      <dl class="kv">
+        <dt>알림을 받는 기기</dt><dd><b>학생 ${nStu}대</b> · 선생님 ${nStaff}대</dd>
+      </dl>
+      <div class="field" style="margin-top:14px">
+        <label for="pvKey">웹 푸시 인증서 (공개 키)</label>
+        <input id="pvKey" value="${esc(cfg.vapidKey || "")}" placeholder="B... 로 시작하는 긴 문자열">
+        <p class="muted" style="margin:6px 0 0;font-size:.84rem">Firebase 콘솔 → 프로젝트 설정 → <b>클라우드 메시징</b> → 웹 푸시 인증서 → 키 쌍 생성.
+          공개되는 값이라 여기 넣어도 괜찮습니다.</p>
+      </div>
+      <div class="row"><button class="btn-primary" id="pvSave">저장</button>
+        <span class="muted" id="pvState"></span></div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h3>학생에게 안내할 것</h3>
+      <p class="muted" style="margin-top:0"><b>아이폰은 홈 화면에 앱으로 추가해야만</b> 알림을 받을 수 있습니다.
+        사파리 탭으로 쓰면 오지 않아요. (iOS 16.4 이상)<br>
+        안드로이드는 크롬에서 알림을 허용하기만 하면 됩니다.</p>
+      <p class="muted" style="margin-bottom:0">학생은 일정을 신청한 직후 한 번 안내를 받고, 그 뒤에는
+        <b>내 정보 → 휴대폰 알림 켜기</b>에서 언제든 켜고 끌 수 있습니다.
+        위 '알림을 받는 기기' 숫자로 몇 명이 켰는지 확인하세요.</p>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h3>보내는 쪽 (Apps Script)</h3>
+      <p class="muted" style="margin:0">Firebase 콘솔 → 프로젝트 설정 → <b>서비스 계정</b> → 새 비공개 키 생성으로 받은
+        JSON 파일의 내용을 <b>시트 Apps Script 메뉴 → 알림 보내기 설정</b>에 붙여넣으세요.<br>
+        <b>이 JSON 파일은 GitHub·공유 폴더에 올리면 안 됩니다.</b> 이 키 하나로 앱의 모든 자료를 읽고 쓸 수 있습니다.</p>
+    </div>`;
+
+  $("#pvSave", p).onclick = async () => {
+    const key = $("#pvKey", p).value.trim();
+    $("#pvSave", p).disabled = true;
+    try {
+      await setDoc(doc(db, "config", "push"), { vapidKey: key, updatedAt: serverTimestamp() }, { merge: true });
+      $("#pvState", p).textContent = key ? "저장했습니다." : "비웠습니다 (알림 꺼짐).";
+      toast("저장했습니다.");
+    } catch (e) { showError(e, "알림 설정 저장"); }
+    $("#pvSave", p).disabled = false;
+  };
+}
+
 async function renderBackup() {
   const p = $("[data-adpanel=backup]", root);
   let last = null;

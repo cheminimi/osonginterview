@@ -577,6 +577,8 @@ export function mountSchedule(root, opts) {
         close();
         toast(force ? "확정했습니다." : isStudent ? "신청했습니다. 선생님이 수락하면 확정돼요." : "제안을 보냈습니다. 상대가 수락하면 확정돼요.");
         await refresh();
+        // 방금 신청·제안한 직후가 '알림을 받고 싶은' 순간이라, 이때 한 번만 물어본다
+        try { opts.onBooked?.(); } catch (_) {}
       } catch (err) { if (err.conflict) { toast(err.message, "error", 7000); delete st.days[next.date]; check(); } else showError(err, "일정 저장"); $("#bkSave", body).disabled = false; }
     };
   }

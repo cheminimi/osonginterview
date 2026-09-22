@@ -283,8 +283,7 @@ export const ICONS = {
   note: '<path d="M5 4.5A1.5 1.5 0 0 1 6.5 3h8L19 7.5V20a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 20Z"/><path d="M14 3v5h5M8.5 13h7M8.5 16.5h4"/>',
   list: '<path d="M4 6.5h1M4 12h1M4 17.5h1M9 6.5h11M9 12h11M9 17.5h11"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
-  plus: '<path d="M12 5v14M5 12h14"/>',
-  pin: '<path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11Z"/><circle cx="12" cy="10" r="2.6"/>'
+  plus: '<path d="M12 5v14M5 12h14"/>'
 };
 export function icon(name, size = 20) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ""}</svg>`;

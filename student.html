@@ -161,7 +161,23 @@
 <main class="wrap" id="main" hidden>
   <section data-panel="home">
     <div id="pwaTip"></div>
-    <div id="homeBody"></div>
+    <div class="me-row">
+      <div style="flex:1;min-width:0">
+        <div class="me-name" id="pName"></div>
+        <div class="me-sub" id="pSub"></div>
+      </div>
+    </div>
+    <div id="ddayCard"></div>
+
+    <div class="sec-head"><h2>오늘 할 일</h2><span class="n" id="todoN"></span></div>
+    <div id="todo"></div>
+
+    <div class="sec-head"><h2>잡힌 일정</h2><div class="spacer"></div>
+      <button class="btn-sm" id="goSched">일정 전체 보기</button></div>
+    <div id="homeSched"></div>
+
+    <div class="sec-head"><h2>지원 대학</h2><span class="n" id="univN"></span></div>
+    <div class="list-card" style="padding:4px 16px"><div id="univs"></div></div>
   </section>
 
   <section data-panel="practice" hidden>
@@ -231,6 +247,26 @@ mountAccountMenu(ctx, $("#acct"), {
   ]
 });
 
+// ---- 홈: 이름 · D-day · 지원 대학
+$("#pName").textContent = me.name || "";
+$("#pSub").textContent = `${me.studentNo}${me.track ? " · " + me.track : ""}${me.special && me.special !== "없음" ? " · " + me.special : ""}`;
+const next = nextInterview(me);
+const n = next ? dday(next) : null;
+const nextU = (me.universities || []).find((u) => u.date && next && isoDay(u.date) === isoDay(next))
+  || (me.universities || []).filter((u) => dday(u.date) != null && dday(u.date) >= 0).sort((a, b) => String(a.date).localeCompare(String(b.date)))[0];
+$("#ddayCard").innerHTML = next
+  ? `<div class="dday-card ${n != null && n <= 7 ? "urgent" : ""}">
+      <div class="d-box"><div class="d-lab">다음 면접</div><div class="d-n">${n === 0 ? "D-DAY" : "D-" + n}</div></div>
+      <div class="d-body"><b>${nextU ? esc(nextU.univ) + " " + esc(nextU.dept || "") : "대학 면접"}</b>
+        <span class="muted">${fmtDay(next)}${nextU?.admission ? " · " + esc(nextU.admission) : ""}</span></div>
+    </div>`
+  : `<div class="dday-card"><div class="d-body" style="border:none;padding:0"><b>면접일이 등록되지 않았어요</b><span class="muted">선생님께 지원 대학·면접일 등록을 부탁하세요.</span></div></div>`;
+$("#univN").textContent = (me.universities || []).length ? `${me.universities.length}곳` : "";
+$("#univs").innerHTML = (me.universities || []).length ? me.universities.map((u) => {
+  const d = dday(u.date);
+  return `<div class="univ" style="${d != null && d < 0 ? "opacity:.5" : ""}"><b>${u.date ? fmtDay(u.date) : "-"}</b> ${esc(u.univ)} <span>${esc(u.dept)}</span> <span class="muted">${esc(u.admission)} · ${esc(u.format)}</span></div>`;
+}).join("") : '<div class="muted" style="padding:12px 0">지원 대학 정보가 없습니다.</div>';
+
 // ---- 연습 모드
 const relevant = (q) => !q.majors?.length || (me.universities || []).some((u) => q.majors.some((m) => (u.dept || "").includes(m)));
 const rec = recommendedModes(me);
@@ -277,6 +313,7 @@ const sched = mountSchedule($("#schedule"), {
   onBadge: (n) => setDot("#scDot", n),
   onData: (d) => { bookings = d.bookings || []; blockLabelOf = d.blockLabel; renderHome(); }
 });
+$("#goSched").onclick = () => switchTab("schedule");
 
 // ---- 탭 (좁은 화면은 아래 고정 탭바)
 registerSW();
@@ -318,140 +355,58 @@ function markFeedbackSeen() {
 function renderHome() {
   if (!homeReady) return;   // 아래 준비가 끝나기 전에 일정 달력이 먼저 그려질 수 있음
   const today = isoDay();
-  const now = new Date();
-  const WEEK = "일월화수목금토";
+  const todos = [];
 
-  // ---- 대학 면접 D-day
-  const next = nextInterview(me);
-  const nd = next ? dday(next) : null;
-  const nextU = (me.universities || []).find((u) => u.date && next && isoDay(u.date) === isoDay(next));
-
-  // ---- 다가오는 모의면접 (오늘 이후 · 취소되지 않은 것 중 가장 빠른 것)
-  const up = (bookings || []).filter((b) => ACTIVE(b.status) && b.date >= today)
-    .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
-  const nb = up[0];
-
-  // ---- 차수별 진행 상태
-  const stageState = BOOK_STAGES.map((sg) => {
-    const done = meetings.find((m) => Number(m.stage) === sg.key);
-    const bk = (bookings || []).filter((b) => b.stage === sg.key && ACTIVE(b.status))
-      .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))[0];
-    const teachers = stageTeachers(me, sg.key);
-    if (done) return { sg, cls: "done", label: `완료 · ${fmtDay(done.date).replace(/\(.\)$/, "")}` };
-    if (bk) return { sg, cls: "now", label: `${fmtDay(bk.date).replace(/\(.\)$/, "")} ${bk.status === "confirmed" ? "예정" : "요청 중"}` };
-    return { sg, cls: "", label: teachers.length ? "아직 신청 전" : "선생님 미배정" };
+  // 1) 아직 신청하지 않은 차수
+  BOOK_STAGES.forEach((sg) => {
+    const ts = stageTeachers(me, sg.key);
+    if (!ts.length) return;
+    if (bookings.some((b) => b.stage === sg.key && ACTIVE(b.status))) return;
+    const nm = /면접$/.test(sg.label) ? sg.label : `${sg.label} 면접`;
+    todos.push({ ic: "calendar", t: `${nm}을 신청하지 않았어요`, d: `${ts.join("·")} 선생님`,
+      cta: "시간 신청하기", go: () => { switchTab("schedule"); sched.focusStage(sg.key); } });
   });
-  const doneCount = stageState.filter((x) => x.cls === "done").length;
-  const barPct = Math.max(0, Math.min(100, (doneCount + (stageState.some((x) => x.cls === "now") ? 0.5 : 0)) / 2 * 100));
+  // 2) 새로 온 피드백
+  const nf = unseenFb().length;
+  if (nf) todos.push({ ic: "chat", t: `새 피드백 ${nf}개`, d: "선생님이 남긴 피드백을 아직 보지 않았어요", cta: "보기", go: () => switchTab("feedback") });
+  // 3) 아직 해 보지 않은 연습
+  const donePersonal = sessions.some((s) => s.mode === "personal");
+  if (personal.length && !donePersonal) todos.push({ ic: "mic", t: `내 생기부 질문 ${personal.length}개 준비됨`, d: "아직 연습하지 않았어요", cta: "연습", go: () => location.href = "interview.html?mode=personal" });
+  else if (!sessions.length) todos.push({ ic: "mic", t: "말하기 연습을 아직 해 보지 않았어요", d: "혼자 말로 답해 보고 선생님께 보낼 수 있어요", cta: "연습", go: () => switchTab("practice") });
 
-  // ---- 최근 피드백 1건
-  const fbList = [
-    ...meetings.map((m) => ({ at: toDateSafe(m.date)?.getTime() || 0, key: "m" + m.id,
-      title: m.improve || m.good || m.nextGoal || "대면 모의면접 피드백",
-      sub: `${stageLabel(m.stage)} · ${(m.teachers || []).join(", ")} 선생님 · ${fmtDay(m.date).replace(/\(.\)$/, "")}`,
-      quote: m.questions ? `“${m.questions}”` : (m.good ? `잘한 점: ${m.good}` : "") })),
-    ...sessions.filter((x) => x.reviewedAt).map((x) => ({ at: (x.reviewedAt?.seconds || 0) * 1000, key: "s" + x.id,
-      title: x.teacherFeedback?.comment || "말하기 연습 피드백",
-      sub: `${x.modeLabel || x.mode} · ${x.reviewedBy || ""} 선생님`,
-      quote: "" }))
-  ].sort((a, b) => b.at - a.at);
-  const fb = fbList[0];
-  const unread = unseenFb().length;
-
-  // ---- 연습 시작 버튼이 열 유형
-  const best = modes.find((m) => m.n > 0);
-
-  $("#homeBody").innerHTML = `
-    <div class="greet">
-      <div style="flex:1;min-width:0">
-        <div class="greet-date">${now.getMonth() + 1}월 ${now.getDate()}일 ${WEEK[now.getDay()]}요일</div>
-        <div class="greet-h">${esc(me.name || "")}, 오늘도 힘내라!</div>
-        <div class="greet-s">연습, 또 연습! 지칠 때까지 연습하자!</div>
+  $("#todoN").textContent = todos.length ? String(todos.length) : "";
+  if (!todos.length) {
+    $("#todo").innerHTML = `<div class="list-card"><div class="empty"><b style="display:block;color:var(--ink);font-size:1rem">지금 할 일은 없어요</b>
+      <span style="display:block;margin-top:4px">면접 일정도 연습도 모두 챙겼어요. 아래 일정만 확인하세요.</span></div></div>`;
+  } else {
+    const [first, ...rest] = todos;
+    $("#todo").innerHTML = `
+      <div class="todo-main">
+        <span class="t-ic">${icon(first.ic, 20)}</span>
+        <div style="flex:1;min-width:0"><b>${esc(first.t)}</b><span class="muted">${esc(first.d)}</span>
+          <button type="button" class="btn-primary" data-todo="0">${esc(first.cta)}</button></div>
       </div>
-      ${next ? `<div class="dday-chip ${nd != null && nd <= 7 ? "urgent" : ""}">
-        <div class="n">${nd === 0 ? "D-DAY" : "D-" + nd}</div>
-        <div class="t">${nextU ? esc(nextU.univ) + " " + esc(nextU.dept || "") : "대학 면접"}<br>
-          ${fmtDay(next)}${nextU?.admission ? " · " + esc(nextU.admission) : ""}</div></div>` : ""}
-    </div>
+      ${rest.length ? `<div class="list-card">${rest.map((x, i) => `
+        <div class="list-row" style="cursor:default">
+          <span class="r-ic">${icon(x.ic, 20)}</span>
+          <span class="r-tx"><b>${esc(x.t)}</b><span class="muted">${esc(x.d)}</span></span>
+          <button type="button" class="btn-sm" data-todo="${i + 1}">${esc(x.cta)}</button>
+        </div>`).join("")}</div>` : ""}`;
+    $$("#todo [data-todo]").forEach((b) => b.onclick = () => todos[Number(b.dataset.todo)].go());
+  }
 
-    <div class="cols">
-      <section class="hero">
-        <div class="eyebrow">오늘의 면접 연습</div>
-        <h2>스스로 연습하기</h2>
-        <p>${best ? "선생님이 보내준 질문으로 연습해봅시다." : "아직 준비된 질문이 없어요. 선생님께 예상질문을 부탁해 보세요."}</p>
-        <div class="acts">
-          <button type="button" class="btn-primary" id="goPractice" ${best ? "" : "disabled"}>면접 연습 시작하기 →</button>
-          <button type="button" class="again" id="goModes">다른 유형 고르기</button>
-        </div>
-        <svg class="art" width="112" height="112" viewBox="0 0 24 24" fill="none" stroke="var(--accent-line)"
-          stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
-      </section>
-
-      <section class="card next-card">
-        <div class="top"><h3>다가오는 모의면접</h3>
-          ${nb ? `<span class="badge badge-${nb.status === "confirmed" ? "green" : "orange"}">${nb.status === "confirmed" ? "확정" : "요청 중"}</span>` : ""}</div>
-        ${nb ? `
-          <div class="next-big"><span class="ic">${icon("calendar", 28)}</span>
-            <b>${fmtDay(nb.date)}</b></div>
-          <div class="meta">
-            <div><span class="ic">${icon("clock", 17)}</span>${esc(blockLabelOf(nb.block) || "")} · ${esc(nb.start)} – ${esc(nb.end)}</div>
-            <div><span class="ic">${icon("user", 17)}</span>${nb.stage}차 · ${esc((nb.teachers || []).join(", "))} 선생님</div>
-            <div><span class="ic">${icon("pin", 17)}</span>${esc(nb.room || "장소 미정")}</div>
-          </div>`
-        : `<p class="muted" style="margin:14px 0">아직 잡힌 모의면접이 없어요.<br>달력에서 선생님과 시간을 정해 보세요.</p>`}
-        <div class="card-foot"><button type="button" class="go" data-go="schedule">${nb ? "일정 확인 →" : "시간 신청하기 →"}</button></div>
-      </section>
-    </div>
-
-    <section class="card journey">
-      <h3>나의 모의면접 여정</h3>
-      <div class="steps">
-        <div class="bar"><i style="width:${barPct}%"></i></div>
-        ${stageState.map(({ sg, cls, label }) => `<button type="button" class="step" data-go="schedule">
-          <span class="dot ${cls}">${cls === "done" ? icon("check", 15) : ""}</span>
-          <b>${esc(sg.label)}</b><span>${esc(label)}</span></button>`).join("")}
-      </div>
-    </section>
-
-    <div class="cols-half">
-      <section class="card">
-        <div class="head-row"><h3>최근 피드백</h3>${unread ? `<span class="badge badge-red">새 ${unread}</span>` : ""}
-          <button type="button" class="go" data-go="feedback">전체 보기 →</button></div>
-        ${fb ? `
-          <div class="fb-title"><i></i>${esc(String(fb.title).slice(0, 60))}</div>
-          <div class="fb-sub">${esc(fb.sub)}</div>
-          ${fb.quote ? `<div class="quote">${esc(fb.quote)}</div>` : '<div style="height:12px"></div>'}
-          <button type="button" class="go" data-go="feedback" style="font-size:.92rem">피드백 확인하기 →</button>`
-        : `<div class="empty">아직 받은 피드백이 없어요.<br>연습을 제출하거나 면접을 보면 여기에 보여요.</div>`}
-      </section>
-
-      <section class="card">
-        <div class="head-row"><h3>나의 준비 자료</h3>
-          <button type="button" class="go" data-go="practice">전체 보기 →</button></div>
-        ${me.sheetUrl ? `<a class="doc-row" href="${esc(me.sheetUrl)}" target="_blank" rel="noopener">
-          <span class="doc-ic">${icon("sheet", 18)}</span>
-          <span class="tx"><b>내 준비 시트 열기</b><small>구글 시트에 정리한 내 답변</small></span>
-          <span class="end">${icon("chevron", 18)}</span></a>` : ""}
-        ${["personal", "personality"].map((k) => modes.find((m) => m.mode === k)).filter(Boolean).map((m) => `<button type="button" class="doc-row" data-mode="${m.mode}">
-          <span class="doc-ic">${icon("note", 18)}</span>
-          <span class="tx"><b>${esc(m.title)}</b><small>${m.n ? `${esc(m.desc)} · ${m.n}문항` : "아직 질문이 없어요"}</small></span>
-          <span class="end">${icon("chevron", 18)}</span></button>`).join("")}
-      </section>
-    </div>
-
-    ${(me.universities || []).length ? `<section class="card" style="margin-top:14px">
-      <div class="head-row"><h3>지원 대학</h3><span class="n">${me.universities.length}곳</span></div>
-      ${me.universities.map((u) => {
-        const d = dday(u.date);
-        return `<div class="univ" style="${d != null && d < 0 ? "opacity:.5" : ""}"><b>${u.date ? fmtDay(u.date) : "-"}</b> ${esc(u.univ)} <span>${esc(u.dept)}</span> <span class="muted">${esc(u.admission)} · ${esc(u.format)}</span></div>`;
-      }).join("")}
-    </section>` : ""}`;
-
-  $("#goPractice", $("#homeBody")).onclick = () => { if (best) location.href = `interview.html?mode=${best.mode}`; };
-  $("#goModes", $("#homeBody")).onclick = () => switchTab("practice");
-  $$("#homeBody [data-go]").forEach((b) => b.onclick = () => switchTab(b.dataset.go));
-  $$("#homeBody [data-mode]").forEach((b) => b.onclick = () => location.href = `interview.html?mode=${b.dataset.mode}`);
+  // 잡힌 일정
+  const up = bookings.filter((b) => ACTIVE(b.status) && b.date >= today).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start)).slice(0, 5);
+  $("#homeSched").innerHTML = up.length ? `<div class="list-card">${up.map((b) => {
+    const d = new Date(b.date.replace(/-/g, "/"));
+    const [lab, cls] = STATUS[b.status] || ["", "gray"];
+    return `<button type="button" class="list-row" data-go="1">
+      <span class="r-day"><b>${d.getMonth() + 1}/${d.getDate()}</b><span>${"일월화수목금토"[d.getDay()]} ${esc(blockLabelOf(b.block) || "")}</span></span>
+      <span class="r-tx"><b>${b.stage}차</b> ${esc((b.teachers || []).join("·"))}
+        <span class="muted">${esc(b.room || "장소 미정")} · ${esc(b.start)}–${esc(b.end)}</span></span>
+      <span class="badge badge-${cls}" style="flex:none">${esc(lab)}</span></button>`;
+  }).join("")}</div>` : `<div class="list-card"><div class="empty">잡힌 면접 일정이 없어요.</div></div>`;
+  $$("#homeSched [data-go]").forEach((el) => el.onclick = () => switchTab("schedule"));
 }
 
 // ---- 선생님 피드백 (대면 모의면접 + 말하기 연습 피드백을 한곳에)

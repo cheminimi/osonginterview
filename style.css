@@ -34,14 +34,16 @@ a { color: var(--accent); }
 h1, h2, h3 { line-height: 1.25; letter-spacing: -0.02em; margin: 0 0 .5em; }
 h1 { font-size: 1.5rem; } h2 { font-size: 1.2rem; } h3 { font-size: 1.05rem; }
 .muted { color: var(--ink-3); font-size: .9em; }
-.wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+/* 본문 폭은 여기 한 곳에서 정한다. 상단 바와 탭 줄도 같은 폭에 맞춰 줄을 세운다. */
+:root { --page: 1320px; }
+.wrap { max-width: var(--page); margin: 0 auto; padding: 20px 16px 60px; }
 
 /* 상단 바 */
 .topbar {
   position: sticky; top: 0; z-index: 20; background: rgba(255,255,255,.92);
   backdrop-filter: blur(8px); border-bottom: 1px solid var(--line);
 }
-.topbar .inner { max-width: 1100px; margin: 0 auto; padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.topbar .inner { max-width: var(--page); margin: 0 auto; padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .brand { font-weight: 700; font-size: 1.05rem; }
 .brand small { color: var(--ink-3); font-weight: 500; margin-left: 6px; }
 .spacer { flex: 1; }
@@ -335,7 +337,8 @@ table.av-grid input { width: 18px; height: 18px; }
 
 /* ===== 탭바 (넓은 화면=위 / 좁은 화면=아래 고정) ===== */
 .tabbar { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 18px;
-  position: sticky; top: 52px; z-index: 15; background: var(--bg); }
+  position: sticky; top: 52px; z-index: 15; background: var(--bg);
+  max-width: var(--page); margin-left: auto; margin-right: auto; width: 100%; padding: 0 16px; }
 .tabbar button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none;
   color: var(--ink-3); padding: 10px 14px; position: relative; }
 .tabbar button svg { width: 18px; height: 18px; }
@@ -344,7 +347,9 @@ table.av-grid input { width: 18px; height: 18px; }
   background: var(--danger); color: #fff; font-size: .72rem; font-weight: 700; text-align: center; }
 .tb-dot:empty { display: none; }
 @media (max-width: 720px) {
+  /* 좁은 화면에서는 탭 줄이 아래로 내려가 화면 끝까지 쓴다 */
   .tabbar {
+    max-width: none; margin-left: 0; margin-right: 0;
     position: fixed; left: 0; right: 0; bottom: 0; top: auto; z-index: 30; display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 0;
     background: #fff; border-top: 1px solid var(--line); border-bottom: none;

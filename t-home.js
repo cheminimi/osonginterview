@@ -51,8 +51,11 @@ function collect() {
     .filter((b) => b.date === today && ACTIVE(b.status) && !DONE(b) && (!me || (b.teachers || []).includes(me)))
     .sort((a, b) => a.start.localeCompare(b.start));
 
+  // 같은 학생·차수로 이미 내용을 쓴 기록이 있으면 그 '기록 전' 자리는 다 쓴 것으로 본다
+  // (예전 방식으로 기록을 따로 만들어 빈 자리가 남은 경우 — 대면 기록 화면에서 정리할 수 있다)
+  const written = (m) => S.meetings.some((x) => !x.planned && x.studentNo === m.studentNo && Number(x.stage) === Number(m.stage));
   const noRecord = S.meetings
-    .filter((m) => m.planned && (!me || (m.teachers || []).includes(me)) && (m.date || "") <= today)
+    .filter((m) => m.planned && !written(m) && (!me || (m.teachers || []).includes(me)) && (m.date || "") <= today)
     .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 
   const pending = S.sessions.filter((x) => x.status === "submitted" && !x.reviewedAt);
@@ -210,7 +213,8 @@ function renderRows(scope) {
   const me = myName();
   const kw = ($("#hSearch", root)?.value || "").trim();
   const noRec = (s) => !S.meetings.some((m) => m.studentNo === s.studentNo && !m.planned);
-  const waitingFb = (s) => S.meetings.some((m) => m.studentNo === s.studentNo && m.planned)
+  const waitingFb = (s) => S.meetings.some((m) => m.studentNo === s.studentNo && m.planned
+      && !S.meetings.some((x) => !x.planned && x.studentNo === m.studentNo && Number(x.stage) === Number(m.stage)))
     || S.sessions.some((x) => x.studentNo === s.studentNo && x.status === "submitted" && !x.reviewedAt);
   const noSched = (s) => BOOK_STAGES.some((sg) => {
     const ts = stageTeachers(s, sg.key);

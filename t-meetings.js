@@ -16,6 +16,7 @@ export function init(el) {
       <div class="spacer"></div>
       <button class="btn-primary" id="mAdd">+ 대면 기록 추가</button>
     </div>
+    <div id="mLeft"></div>
     <div id="mHidden"></div>
     <div class="card table-wrap"><table class="rows-sm">
       <thead><tr><th>학생</th><th>실시일</th><th>차수</th><th>면접 유형</th><th>담당교사</th><th>학생 공개</th></tr></thead>
@@ -41,6 +42,22 @@ function render() {
     && (!stage || String(m.stage) === stage)
     && (!kw || `${m.name}${m.studentNo}`.includes(kw)));
   const hidden = S.meetings.filter((m) => !m.shared && hasContent(m) && (!me || (m.teachers || []).includes(me) || S.ctx.isAdmin));
+  const left = leftoverPlanned();
+  $("#mLeft", root).innerHTML = left.length ? `<div class="notice row">기록을 이미 쓴 면접인데 <b>'일정 확정 · 기록 전'</b> 빈 자리가 ${left.length}건 남아 있어요.
+    지우지 않으면 '작성할 피드백' 에 계속 뜹니다.
+    <div class="spacer"></div><button class="btn-sm btn-primary" id="mClean">빈 자리 ${left.length}건 지우기</button></div>` : "";
+  $("#mClean", root)?.addEventListener("click", async () => {
+    if (!confirm(`내용이 비어 있는 '기록 전' ${left.length}건을 지울까요? 이미 쓴 기록은 그대로 남습니다.`)) return;
+    try {
+      const b = writeBatch(db);
+      left.forEach((m) => b.delete(doc(db, "meetings", m.id)));
+      await b.commit();
+      const ids = new Set(left.map((m) => m.id));
+      S.meetings = S.meetings.filter((m) => !ids.has(m.id));
+      toast(`${ids.size}건을 정리했습니다.`); rerender("meetings", "home", "students");
+      await requestSync(["meetings"]);
+    } catch (e) { showError(e, "정리"); }
+  });
   $("#mHidden", root).innerHTML = hidden.length ? `<div class="notice row">피드백을 적었지만 <b>학생에게 비공개</b>인 기록이 ${hidden.length}건 있어요. 학생 화면에 안 보입니다.
     <div class="spacer"></div><button class="btn-sm btn-primary" id="mShowAll">모두 학생에게 공개</button></div>` : "";
   $("#mShowAll", root)?.addEventListener("click", async () => {
@@ -91,6 +108,22 @@ function guessStage(st) {
   if (a.s2 === me && !done.has(2)) return 2;
   if ((a.s3a === me || a.s3b === me) && !done.has(3)) return 3;
   return [1, 2, 3].find((k) => !done.has(k)) || 4;
+}
+
+// 같은 학생·차수로 미리 만들어져 있는 '일정 확정 · 기록 전' 자리를 찾는다.
+// 날짜가 여럿이면 지금 적는 실시일과 가장 가까운 것을 고른다.
+export function findPlannedSlot(studentNo, stage, date) {
+  const cand = (S.meetings || []).filter((x) => x.planned && x.studentNo === studentNo && Number(x.stage) === Number(stage));
+  if (!cand.length) return null;
+  const t = new Date(date || Date.now()).getTime();
+  const gap = (d) => { const v = new Date(d || 0).getTime(); return Number.isFinite(v) ? Math.abs(v - t) : Infinity; };
+  return [...cand].sort((a, b) => gap(a.date) - gap(b.date))[0];
+}
+
+// 이미 내용을 적은 기록이 있는데도 '기록 전' 자리가 따로 남아 있는 것 (예전 방식으로 새로 만들어 생긴 찌꺼기)
+export function leftoverPlanned() {
+  return (S.meetings || []).filter((m) => m.planned
+    && S.meetings.some((x) => !x.planned && x.studentNo === m.studentNo && Number(x.stage) === Number(m.stage)));
 }
 
 // 이 기록이 어느 일정에서 나왔는지 찾는다 (일정 확정 시 자동 생성된 기록은 id 가 'bk_예약ID')
@@ -169,28 +202,41 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
       questions: f.questions, answerSummary: f.answerSummary, good: f.good, improve: f.improve, nextGoal: f.nextGoal,
       shared: !!f.shared, planned: false, updatedAt: serverTimestamp(), updatedAtMs: Date.now()
     };
+    // 새 기록이라도, 일정 확정으로 미리 만들어진 '기록 전' 자리가 있으면 그 자리에 쓴다.
+    // 따로 만들면 빈 자리가 남아 '작성할 피드백' 에 계속 떠 있게 된다.
+    const slot = m ? null
+      : preset?.id ? { id: preset.id, bookingId: preset.bookingId }
+      : findPlannedSlot(no, Number(f.stage), f.date);
+    const filledSlot = !m && !preset?.id && !!slot;
     $("#mSave", body).disabled = true;
+    let savedId = "";
     try {
       if (m) {
         await updateDoc(doc(db, "meetings", m.id), data);
         Object.assign(m, data);
+        savedId = m.id;
       } else {
         data.createdAt = serverTimestamp(); data.createdByUid = S.ctx.user.uid; data.createdBy = myName() || S.ctx.user.email;
-        if (preset?.bookingId) data.bookingId = preset.bookingId;
-        let newId;
-        if (preset?.id) { await setDoc(doc(db, "meetings", preset.id), data, { merge: true }); newId = preset.id; }
-        else newId = (await addDoc(collection(db, "meetings"), data)).id;
-        S.meetings.unshift({ id: newId, ...data });
+        if (slot?.bookingId) data.bookingId = slot.bookingId;
+        if (slot) {
+          await setDoc(doc(db, "meetings", slot.id), data, { merge: true });
+          savedId = slot.id;
+          const old = S.meetings.find((x) => x.id === slot.id);
+          if (old) Object.assign(old, data); else S.meetings.unshift({ id: slot.id, ...data });
+        } else {
+          savedId = (await addDoc(collection(db, "meetings"), data)).id;
+          S.meetings.unshift({ id: savedId, ...data });
+        }
       }
     } catch (err) { showError(err, "기록 저장"); $("#mSave", body).disabled = false; return; }
 
     // 이 기록이 잡아 둔 일정에서 나온 것이면 그 일정을 '완료'로 표시한다.
     // → 오늘 면접 / 다가오는 확정 일정 목록에서 빠진다. (실패해도 기록 저장은 그대로 둔다)
-    const bid = bookingIdOf(m) || bookingIdOf({ id: preset?.id, bookingId: preset?.bookingId });
+    const bid = bookingIdOf(m) || bookingIdOf({ id: savedId, bookingId: slot?.bookingId || data.bookingId });
     if (bid) await markBookingDone(bid);
 
     closeModal();
-    toast("기록을 저장했습니다. 시트에 반영 중…");
+    toast(filledSlot ? "잡혀 있던 면접의 기록으로 저장했습니다. 시트에 반영 중…" : "기록을 저장했습니다. 시트에 반영 중…");
     rerender("meetings", "home", "students");
     await requestSync(["meetings"]);
   };

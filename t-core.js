@@ -1,12 +1,13 @@
 // 교사 화면 공통 상태·도우미
 import {
   db, collection, getDocs, query, where, onSnapshot, $, $$, esc, toast, showError, STAGES, toDate, nextInterview, ddayBadge, fmtDay,
-  cachedCollection, getMetaVersions
+  cachedCollection, getMetaVersions, icon
 } from "./common.js";
 
 export const S = {
   ctx: null,
   students: [], staff: [], meetings: [], sessions: [], bank: [], interviews: [],
+  bookings: [], needMine: [], blockLabel: () => "",
   renderers: {}
 };
 
@@ -128,11 +129,50 @@ export function openModal(title, html, wide = false) {
 }
 export const closeModal = () => { $("#modal").hidden = true; };
 
+// ---- 탭 4개 (오늘·학생·일정·질문) + 그 아래 딸린 화면들
+export const TOP_TABS = [
+  { key: "home", label: "오늘", ic: "home", dot: "todayDot" },
+  { key: "students", label: "학생", ic: "users" },
+  { key: "schedule", label: "일정", ic: "calendar", dot: "scDot" },
+  { key: "questions", label: "질문", ic: "note" }
+];
+// 탭에 없는 화면은 어느 탭에 딸린 것으로 볼지 + 위에 뜨는 되돌아가기 줄
+const SUB = {
+  bank: { parent: "questions", title: "" },
+  meetings: { parent: "students", title: "대면 기록 전체", back: "students", backLabel: "학생" },
+  review: { parent: "home", title: "연습 리뷰", back: "home", backLabel: "오늘" },
+  admin: { parent: null, title: "앱 관리", back: "home", backLabel: "오늘" }
+};
+export function mountTabs() {
+  const bar = $("#tabs");
+  if (!bar) return;
+  bar.innerHTML = TOP_TABS.map((t, i) => `<button type="button" class="${i ? "" : "active"}" data-tab="${t.key}">
+    ${icon(t.ic, 22)}<span>${t.label}</span>${t.dot ? `<span class="tb-dot" id="${t.dot}"></span>` : ""}</button>`).join("");
+  bar.hidden = false;
+  $$("#tabs button, #qSub button").forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
+}
+export function setDot(sel, n) { const el = $(sel); if (el) el.textContent = n ? String(n) : ""; }
+
 export function switchTab(tab) {
-  $$(".tabs:not(.sub) > button").forEach((x) => x.classList.toggle("active", x.dataset.tab === tab));
+  const sub = SUB[tab];
+  const top = sub ? sub.parent : tab;
+  $$("#tabs button").forEach((x) => x.classList.toggle("active", x.dataset.tab === top));
   $$("[data-panel]").forEach((p) => p.hidden = p.dataset.panel !== tab);
+  const qs = $("#qSub");
+  if (qs) {
+    qs.hidden = !(tab === "questions" || tab === "bank");
+    $$("#qSub button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  }
+  const bar = $("#subBar");
+  if (bar) {
+    bar.hidden = !(sub && sub.title);
+    if (sub && sub.title) {
+      bar.innerHTML = `<button type="button" class="btn-sm btn-back" id="subBack">${icon("back", 18)} ${esc(sub.backLabel)}</button><h2 style="margin:0">${esc(sub.title)}</h2>`;
+      $("#subBack", bar).onclick = () => switchTab(sub.back);
+    }
+  }
   try { sessionStorage.setItem("teacherTab", tab); } catch (_) {}
-  if (window.innerWidth <= 720) window.scrollTo({ top: 0, behavior: "instant" });
+  window.scrollTo({ top: 0, behavior: "instant" });
 }
 
 export const readForm = (root) => Object.fromEntries($$("input[name],select[name],textarea[name]", root)

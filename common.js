@@ -29,7 +29,7 @@ try { USE_EMU = localStorage.getItem("useEmulator") === "1"; } catch (_) {}
 export const CONFIG_MISSING = !firebaseConfig.apiKey || /^YOUR_/.test(firebaseConfig.apiKey) || /^YOUR_/.test(firebaseConfig.projectId || "");
 if (CONFIG_MISSING) {
   const show = () => document.body.insertAdjacentHTML("afterbegin",
-    `<div style="position:fixed;top:0;left:0;right:0;z-index:999;background:#d33a3a;color:#fff;padding:12px 16px;font-weight:600;line-height:1.5">
+    `<div style="position:fixed;top:0;left:0;right:0;z-index:999;background:#c2453c;color:#fff;padding:12px 16px;font-weight:600;line-height:1.5">
       firebase-config.js 에 Firebase 설정값이 아직 없습니다 (apiKey: "YOUR_API_KEY"). GitHub에서 firebase-config.js 를 열어 Firebase 콘솔의 firebaseConfig 값으로 바꿔 주세요.</div>`);
   document.body ? show() : addEventListener("DOMContentLoaded", show);
 }
@@ -263,15 +263,84 @@ export function openPasswordModal(ctx, forced = false) {
 }
 const forcePasswordChange = (ctx) => openPasswordModal(ctx, true);
 
-// ---- 상단 바 계정 메뉴
-export function mountAccountMenu(ctx, el) {
+// ---- 선 아이콘 한 세트 (굵기 1.6 · 이모지 대신 씀)
+export const ICONS = {
+  home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20h13V9.5"/><path d="M9.5 20v-5.5h5V20"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/>',
+  chat: '<path d="M21 12a8 8 0 0 1-8 8H7l-4 3 1.2-4.2A8 8 0 1 1 21 12Z"/><path d="M8.5 11.5h7M8.5 14.5h4"/>',
+  user: '<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c1.3-3.6 4-5.4 7.5-5.4s6.2 1.8 7.5 5.4"/>',
+  users: '<circle cx="9" cy="8" r="3.3"/><path d="M2.5 20c1.2-3.4 3.6-5 6.5-5s5.3 1.6 6.5 5"/><path d="M16 5.2a3.3 3.3 0 0 1 0 5.6M17.5 15.2c2 .6 3.3 2 4 4.8"/>',
+  sheet: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  lock: '<rect x="4.5" y="10" width="15" height="10.5" rx="3"/><path d="M8.5 10V7.5a3.5 3.5 0 1 1 7 0V10"/>',
+  phone: '<rect x="6.5" y="2.5" width="11" height="19" rx="3"/><path d="M10.5 18.5h3"/>',
+  logout: '<path d="M14 4.5H6.5v15H14"/><path d="M11 12h9"/><path d="m16.5 8.5 3.5 3.5-3.5 3.5"/>',
+  chevron: '<path d="m9 5 7 7-7 7"/>',
+  back: '<path d="m15 5-7 7 7 7"/>',
+  gear: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M21.2 12h-2.4M5.2 12H2.8M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7M18.5 18.5l-1.7-1.7M7.2 7.2 5.5 5.5"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/>',
+  note: '<path d="M5 4.5A1.5 1.5 0 0 1 6.5 3h8L19 7.5V20a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 20Z"/><path d="M14 3v5h5M8.5 13h7M8.5 16.5h4"/>',
+  list: '<path d="M4 6.5h1M4 12h1M4 17.5h1M9 6.5h11M9 12h11M9 17.5h11"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>'
+};
+export function icon(name, size = 20) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ""}</svg>`;
+}
+
+// ---- 상단 바 계정 메뉴 (이름 두 글자 동그라미 → 아래에서 올라오는 메뉴)
+export function initials(name) {
+  const s = String(name || "").trim().replace(/\s+/g, "");
+  if (!s) return "나";
+  if (/^[가-힣]+$/.test(s)) return s.length <= 2 ? s : s.length === 3 ? s.slice(1) : s.slice(2, 4);
+  return s.slice(0, 2).toUpperCase();
+}
+/** opts.subtitle: 이름 아래 한 줄 · opts.items: [{icon,label,desc,href,onClick,info,danger}] (비밀번호·로그아웃 앞에 붙음) */
+export function mountAccountMenu(ctx, el, opts = {}) {
   const name = ctx.profile?.name || ctx.user.email;
-  el.innerHTML = `<span class="muted">${esc(name)}${ctx.isAdmin ? ' <span class="badge badge-red">관리자</span>' : ""}</span>
-    <button class="btn-sm" id="acctPw">비밀번호</button><button class="btn-sm" id="acctOut">로그아웃</button>`;
-  el.querySelector("#acctOut").onclick = () => logout();
-  const pwBtn = el.querySelector("#acctPw");
-  if (ctx.account.bootstrap) pwBtn.hidden = true; // 관리자 이메일 계정은 Firebase 콘솔에서 관리
-  pwBtn.onclick = () => openPasswordModal(ctx);
+  el.classList.add("acct");
+  el.innerHTML = `<span class="acct-name lg-only">${esc(name)}</span>${ctx.isAdmin ? ' <span class="badge badge-red lg-only">관리자</span>' : ""}
+    <button type="button" class="avatar" id="acctBtn" aria-label="내 정보 열기">${esc(initials(name))}</button>`;
+  el.querySelector("#acctBtn").onclick = () => openAccountSheet(ctx, opts);
+}
+export function openAccountSheet(ctx, opts = {}) {
+  const name = ctx.profile?.name || ctx.user.email;
+  const items = [...(opts.items || []).filter(Boolean)];
+  if (!ctx.account?.bootstrap) items.push({ icon: "lock", label: "비밀번호 바꾸기", onClick: () => openPasswordModal(ctx) });
+  items.push({ icon: "logout", label: "로그아웃", danger: true, onClick: () => logout() });
+
+  const row = (it, i) => {
+    const body = `<span class="sheet-ic ${it.danger ? "danger" : ""}">${icon(it.icon || "user", 19)}</span>
+      <span class="sheet-tx"><b ${it.danger ? 'style="color:var(--danger)"' : ""}>${esc(it.label)}</b>${it.desc ? `<small>${esc(it.desc)}</small>` : ""}</span>
+      ${it.info || it.danger ? "" : `<span class="sheet-ch">${icon("chevron", 18)}</span>`}`;
+    const idAttr = it.id ? ` id="${esc(it.id)}"` : "";
+    if (it.info) return `<div class="sheet-row info"${idAttr}>${body}</div>`;
+    if (it.href) return `<a class="sheet-row" href="${esc(it.href)}" target="_blank" rel="noopener" data-i="${i}"${idAttr}>${body}</a>`;
+    return `<button type="button" class="sheet-row" data-i="${i}"${idAttr}>${body}</button>`;
+  };
+  document.body.insertAdjacentHTML("beforeend", `
+    <div class="sheet-bg" id="acctSheet">
+      <div class="sheet" role="dialog" aria-label="내 정보">
+        <div class="sheet-grip"></div>
+        <div class="sheet-head">
+          <span class="avatar avatar-lg">${esc(initials(name))}</span>
+          <span class="sheet-who"><b>${esc(name)}</b><small>${esc(opts.subtitle || ctx.account?.loginId || ctx.profile?.studentNo || "")}${ctx.isAdmin ? " · 관리자" : ""}</small></span>
+        </div>
+        <div class="sheet-list">${items.map(row).join("")}</div>
+      </div>
+    </div>`);
+  const bg = document.getElementById("acctSheet");
+  const close = () => { bg.classList.remove("on"); setTimeout(() => bg.remove(), 180); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  bg.onclick = (e) => { if (e.target === bg) close(); };
+  bg.querySelectorAll(".sheet-row[data-i]").forEach((b) => b.addEventListener("click", () => {
+    const it = items[Number(b.dataset.i)];
+    if (!it.href) { close(); it.onClick?.(); } else close();
+  }));
+  requestAnimationFrame(() => bg.classList.add("on"));
+  return close;
 }
 
 // ================= 읽기 줄이기: 변경 표시 + 브라우저 캐시 =================

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#18308d">
+<meta name="theme-color" content="#4a6fa8">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -18,7 +18,7 @@
 <style>
   .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
   .toolbar select, .toolbar input:not([type=checkbox]) { width: auto; min-width: 110px; }
-  .q-item.sel { border-color: var(--accent); background: #f6f8ff; }
+  .q-item.sel { border-color: var(--accent); background: var(--accent-faint); }
   .q-item .q-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
   .check-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
   .check-list label, .check-grid label { display: flex; gap: 8px; align-items: center; font-weight: 500; margin: 0; padding: 5px 0; }
@@ -27,16 +27,16 @@
   .check-list input, .check-grid input, .inline-check input { width: auto; }
   .check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 0 10px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
   .inline-check { display: inline-flex; gap: 6px; align-items: center; font-weight: 500; margin: 0; }
-  .ans { background: #fafbfc; border-radius: 8px; padding: 10px 12px; margin: 6px 0; white-space: pre-wrap; }
+  .ans { background: #faf8f7; border-radius: 8px; padding: 10px 12px; margin: 6px 0; white-space: pre-wrap; }
   .steps { counter-reset: s; }
   .step { position: relative; padding-left: 36px; margin-bottom: 18px; }
   .step::before { counter-increment: s; content: counter(s); position: absolute; left: 0; top: 0; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; font-size: .8rem; font-weight: 700; display: grid; place-items: center; }
-  .pw { font-family: ui-monospace, Menlo, monospace; background: #f1f3f7; padding: 1px 6px; border-radius: 4px; }
-  .chip { display: inline-block; font-size: .72rem; padding: 1px 6px; border-radius: 6px; background: #eef0f4; color: var(--ink-3); margin-right: 3px; white-space: nowrap; }
-  .chip-on { background: #e3f5ec; color: #177a4d; font-weight: 700; }
+  .pw { font-family: ui-monospace, Menlo, monospace; background: var(--chip); padding: 1px 6px; border-radius: 4px; }
+  .chip { display: inline-block; font-size: .72rem; padding: 1px 6px; border-radius: 6px; background: var(--chip); color: var(--ink-3); margin-right: 3px; white-space: nowrap; }
+  .chip-on { background: var(--ok-bg); color: var(--ok); font-weight: 700; }
   .kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; font-size: .92rem; }
   .kv dt { color: var(--ink-3); } .kv dd { margin: 0; }
-  .section-title { display: flex; align-items: center; gap: 8px; margin: 22px 0 8px; }
+  .section-title { display: flex; align-items: center; gap: 4px 8px; margin: 22px 0 8px; flex-wrap: wrap; }
   .section-title h3 { margin: 0; }
   .stat-card .stat { font-size: 1.8rem; }
   td.nowrap, th.nowrap { white-space: nowrap; }
@@ -77,7 +77,7 @@
     if (lock) lock.classList.remove("loading");   // 로그인 화면은 일단 쓸 수 있게
     var sub = document.getElementById("submit"); if (sub) sub.disabled = false;
     var d = document.createElement("div");
-    d.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:9999;background:#d33a3a;color:#fff;padding:10px 14px;font-size:.92rem;line-height:1.5";
+    d.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:9999;background:#c2453c;color:#fff;padding:10px 14px;font-size:.92rem;line-height:1.5";
     d.innerHTML = '화면을 제대로 불러오지 못했어요. <b>새로고침</b>해 보고, 그래도 같으면 <a href="index.html?reset=1" style="color:#fff">여기를 눌러 초기화</a>하세요.<br><span style="opacity:.85;font-size:.85rem"></span>';
     var text = String(msg || "");
     if (/gstatic|googleapis|firebase/i.test(text) || blockedFirebase) {
@@ -99,8 +99,8 @@
     if (document.getElementById("newVersionBar")) return;
     var d = document.createElement("div");
     d.id = "newVersionBar";
-    d.style.cssText = "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;background:#1b1f27;color:#fff;padding:10px 12px 10px 16px;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.25);display:flex;gap:10px;align-items:center;font-size:.92rem;max-width:92vw";
-    d.innerHTML = '<span>새 버전이 올라왔어요. 저장할 내용이 있으면 먼저 저장하세요.</span><button type="button" style="background:#fff;color:#1b1f27;border:none;border-radius:8px;padding:6px 12px;font-weight:700;cursor:pointer;white-space:nowrap">새로고침</button>';
+    d.style.cssText = "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;background:#24262a;color:#fff;padding:10px 12px 10px 16px;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.25);display:flex;gap:10px;align-items:center;font-size:.92rem;max-width:92vw";
+    d.innerHTML = '<span>새 버전이 올라왔어요. 저장할 내용이 있으면 먼저 저장하세요.</span><button type="button" style="background:#fff;color:#24262a;border:none;border-radius:8px;padding:6px 12px;font-weight:700;cursor:pointer;white-space:nowrap">새로고침</button>';
     d.querySelector("button").onclick = function () { location.reload(); };
     document.body.appendChild(d);
   }
@@ -164,17 +164,14 @@
   <div class="row" id="acct"></div>
 </div></header>
 
+<nav class="tabbar" id="tabs" hidden></nav>
+
 <main class="wrap">
   <div id="pwaTip"></div>
-  <div class="tabs">
-    <button class="active" data-tab="home">대시보드</button>
-    <button data-tab="schedule">일정<span id="scDot"></span></button>
-    <button data-tab="students">학생</button>
-    <button data-tab="meetings">대면 기록</button>
-    <button data-tab="questions">예상질문</button>
+  <div class="sub-head" id="subBar" hidden></div>
+  <div class="tabs sub" id="qSub" hidden>
+    <button class="active" data-tab="questions">학생별 예상질문</button>
     <button data-tab="bank">질문은행</button>
-    <button data-tab="review">연습 리뷰<span id="pendingDot"></span></button>
-    <button data-tab="admin" id="adminTab" hidden>관리</button>
   </div>
   <section data-panel="home"></section>
   <section data-panel="schedule" hidden></section>
@@ -192,9 +189,9 @@
 </div></div>
 
 <script type="app-module">
-import { requireRole, mountAccountMenu, $, $$ } from "./common.js";
-import { registerSW, mountInstallTip } from "./pwa.js";
-import { S, loadAll, switchTab, closeModal, watchSubmissions } from "./t-core.js";
+import { requireRole, mountAccountMenu, $, $$, icon } from "./common.js";
+import { registerSW, mountInstallTip, showInstallTipAgain, isStandalone } from "./pwa.js";
+import { S, loadAll, switchTab, closeModal, watchSubmissions, mountTabs } from "./t-core.js";
 import * as home from "./t-home.js";
 import * as schedule from "./t-schedule.js";
 import * as students from "./t-students.js";
@@ -206,10 +203,20 @@ import * as admin from "./t-admin.js";
 
 registerSW();
 S.ctx = await requireRole("staff");
-mountAccountMenu(S.ctx, $("#acct"));
 mountInstallTip($("#pwaTip"));
 $("#mClose").onclick = closeModal;
-$$(".tabs:not(.sub) > button").forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
+mountTabs();
+document.body.classList.add("has-tabbar");
+
+mountAccountMenu(S.ctx, $("#acct"), {
+  subtitle: S.ctx.account?.loginId || S.ctx.user.email,
+  items: [
+    { icon: "note", label: "대면 기록 전체", desc: "지금까지 쓴 모의면접 기록", id: "goMeetings", onClick: () => switchTab("meetings") },
+    { icon: "check", label: "연습 리뷰", desc: "학생이 제출한 말하기 연습", id: "goReviewMenu", onClick: () => switchTab("review") },
+    S.ctx.isAdmin ? { icon: "gear", label: "앱 관리", desc: "시트 연동 · 계정 · 일정 설정 · 백업", id: "goAdmin", onClick: () => switchTab("admin") } : null,
+    isStandalone() ? null : { icon: "phone", label: "홈 화면에 앱으로 추가", onClick: () => { switchTab("home"); showInstallTipAgain($("#pwaTip")); } }
+  ]
+});
 
 const panel = (n) => $(`[data-panel="${n}"]`);
 home.init(panel("home"));
@@ -219,7 +226,7 @@ meetings.init(panel("meetings"));
 questions.init(panel("questions"));
 bank.init(panel("bank"));
 review.init(panel("review"));
-if (S.ctx.isAdmin) { $("#adminTab").hidden = false; admin.init(panel("admin")); }
+if (S.ctx.isAdmin) admin.init(panel("admin"));
 
 let last = null;
 try { last = sessionStorage.getItem("teacherTab"); } catch (_) {}

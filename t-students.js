@@ -1,6 +1,6 @@
 import {
   db, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, $, $$, esc, toast, showError, fmtDate, fmtDay, ddayBadge,
-  TRACKS, SPECIALS, STAGES, nextInterview, serverTimestamp
+  TRACKS, SPECIALS, STAGES, nextInterview, serverTimestamp, icon, dday
 } from "./common.js";
 import { S, register, rerender, myName, myRoles, stageChips, nextBadge, openModal, closeModal, switchTab, readForm, opt, attachInterviews, loadAllSessions, RECENT_DAYS } from "./t-core.js";
 import { requestSync } from "./sync.js";
@@ -12,20 +12,34 @@ let root;
 export function init(el) {
   root = el;
   root.innerHTML = `
-    <div class="toolbar">
-      <select id="fCls"><option value="">전체 반</option></select>
-      <select id="fTrack">${opt(TRACKS, "", "전체 트랙")}</select>
-      <select id="fSpecial"><option value="">특별 트랙 전체</option><option value="has">제시문/MMI 있음</option></select>
-      <label class="inline-check"><input type="checkbox" id="fMine"> 내 담당만</label>
-      <input id="fSearch" placeholder="이름·학번">
-      <select id="fSort"><option value="dday">다음 면접 순</option><option value="no">학번 순</option></select>
-      <div class="spacer"></div><span class="muted" id="fCount"></span>
+    <div class="search-box"><span>${icon("search", 18)}</span>
+      <input id="fSearch" type="search" placeholder="이름 또는 학번" aria-label="이름 또는 학번"></div>
+    <div class="chips" id="fChips">
+      <button type="button" data-f="mine" class="on">내 담당</button>
+      <button type="button" data-f="all">전체</button>
+      <button type="button" data-f="soon">면접 임박</button>
+      <button type="button" data-f="norec">기록 없음</button>
     </div>
-    <div class="card table-wrap"><table class="rows-sm">
-      <thead><tr><th>학번</th><th>이름</th><th>트랙</th><th class="nowrap">다음 면접</th><th>1차 담임</th><th>2차 교과</th><th>3차 위원</th><th>진행</th><th>연습</th><th>시트</th></tr></thead>
-      <tbody id="stBody"></tbody></table></div>`;
-  ["#fCls", "#fTrack", "#fSpecial", "#fMine", "#fSort"].forEach((s) => $(s, root).onchange = render);
+    <details class="more-filter"><summary class="muted">반 · 트랙으로 더 좁히기</summary>
+      <div class="toolbar" style="margin-top:8px">
+        <select id="fCls"><option value="">전체 반</option></select>
+        <select id="fTrack">${opt(TRACKS, "", "전체 트랙")}</select>
+        <select id="fSpecial"><option value="">특별 트랙 전체</option><option value="has">제시문/MMI 있음</option></select>
+        <select id="fSort"><option value="dday">다음 면접 순</option><option value="no">학번 순</option></select>
+      </div>
+    </details>
+    <div class="sec-head" style="margin-top:14px"><h2>학생</h2><span class="n" id="fCount"></span>
+      <div class="spacer"></div><button class="btn-sm" data-tab="meetings" id="goMeetList">대면 기록 전체</button></div>
+    <div class="list-card" id="stBody"></div>
+    <label hidden><input type="checkbox" id="fMine"></label>`;
+  ["#fCls", "#fTrack", "#fSpecial", "#fSort"].forEach((s) => $(s, root).onchange = render);
   $("#fSearch", root).oninput = render;
+  $("#goMeetList", root).onclick = () => switchTab("meetings");
+  $$("#fChips button", root).forEach((b) => b.onclick = () => {
+    $$("#fChips button", root).forEach((x) => x.classList.toggle("on", x === b));
+    $("#fMine", root).checked = b.dataset.f === "mine";   // 옛 동작(내 담당만)과 맞춤
+    render();
+  });
   register("students", render);
 }
 
@@ -33,35 +47,50 @@ function render() {
   const cls = [...new Set(S.students.map((s) => s.cls).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko", { numeric: true }));
   const cur = $("#fCls", root).value;
   $("#fCls", root).innerHTML = opt(cls, cur, "전체 반");
+  const chip = $("#fChips button.on", root)?.dataset.f || "mine";
   const f = {
     cls: $("#fCls", root).value, track: $("#fTrack", root).value, sp: $("#fSpecial", root).value,
-    mine: $("#fMine", root).checked, kw: $("#fSearch", root).value.trim(), sort: $("#fSort", root).value
+    kw: $("#fSearch", root).value.trim(), sort: $("#fSort", root).value
   };
+  const me = myName();
+  const noRec = (s) => !S.meetings.some((m) => m.studentNo === s.studentNo && !m.planned);
   let list = S.students.filter((s) =>
     (!f.cls || s.cls === f.cls) && (!f.track || s.track === f.track)
     && (!f.sp || (s.special && s.special !== "없음"))
-    && (!f.mine || myRoles(s).length) && (!f.kw || `${s.name}${s.studentNo}`.includes(f.kw)));
-  if (f.sort === "dday") list = [...list].sort((a, b) => (nextInterview(a) || 9e15) - (nextInterview(b) || 9e15));
+    && (chip !== "mine" || !me || myRoles(s, me).length)
+    && (chip !== "soon" || (nextInterview(s) && dday(nextInterview(s)) <= 14))
+    && (chip !== "norec" || noRec(s))
+    && (!f.kw || `${s.name}${s.studentNo}`.includes(f.kw)));
+  if (f.sort !== "no") list = [...list].sort((a, b) => (nextInterview(a) || 9e15) - (nextInterview(b) || 9e15));
   $("#fCount", root).textContent = `${list.length}명`;
   if (!list.length) {
-    $("#stBody", root).innerHTML = `<tr><td colspan="10" class="empty">${S.students.length ? "조건에 맞는 학생이 없습니다." : "등록된 학생이 없습니다. 관리 탭에서 운영 원본을 가져오세요."}</td></tr>`;
+    $("#stBody", root).innerHTML = `<div class="empty">${S.students.length ? "조건에 맞는 학생이 없습니다." : "등록된 학생이 없습니다. 오른쪽 위 메뉴 → 앱 관리에서 운영 원본을 가져오세요."}</div>`;
     return;
   }
-  const me = myName();
-  const hl = (n) => n ? (n === me ? `<b style="color:var(--accent)">${esc(n)}</b>` : esc(n)) : '<span class="muted">-</span>';
   $("#stBody", root).innerHTML = list.map((s) => {
-    const a = s.assign || {};
-    const practice = S.sessions.filter((x) => x.studentNo === s.studentNo && x.status === "submitted").length;
-    return `<tr class="clickable" data-no="${s.studentNo}">
-      <td class="lg-only">${esc(s.studentNo)}</td>
-      <td class="nowrap head" data-l="-"><b>${esc(s.name)}</b> <span class="sm-only muted">${esc(s.studentNo)}</span> <span class="sm-only">${nextBadge(s)}</span></td>
-      <td class="pack" data-l="트랙">${esc(s.track || "")}${s.special && s.special !== "없음" ? ` <span class="badge badge-violet">${esc(s.special)}</span>` : ""}</td>
-      <td class="nowrap lg-only">${nextBadge(s)}</td>
-      <td class="nowrap pack" data-l="1차">${hl(a.s1)}</td><td class="nowrap pack" data-l="2차">${hl(a.s2)}</td><td class="nowrap pack" data-l="3차">${hl(a.s3a)}${a.s3b ? " · " + hl(a.s3b) : ""}</td>
-      <td class="nowrap" data-l="진행">${stageChips(s)}</td><td class="pack" data-l="연습">${practice || "-"}</td>
-      <td class="pack" data-l="시트">${s.sheetUrl ? `<a href="${esc(s.sheetUrl)}" target="_blank" rel="noopener" data-stop>열기</a>` : "-"}</td></tr>`;
+    const d = nextInterview(s);
+    const n = d != null ? dday(d) : null;
+    const roles = myRoles(s, me);
+    return `<button type="button" class="list-row" data-no="${esc(s.studentNo)}">
+      <span class="r-tx">
+        <b>${esc(s.name)}</b> <span class="muted" style="display:inline">${esc(s.studentNo)}</span>
+        ${n != null ? `<span class="badge badge-${n <= 7 ? "red" : n <= 21 ? "orange" : "blue"}" style="margin-left:4px">${n === 0 ? "D-DAY" : "D-" + n}</span>` : ""}
+        <span class="muted">${esc(s.track || "트랙 미정")}${s.special && s.special !== "없음" ? " · " + esc(s.special) : ""}${roles.length ? " · 내 역할 " + roles.join("·") : ""}</span>
+      </span>
+      <span class="r-stage">${stagePills(s)}</span>
+    </button>`;
   }).join("");
-  $$("tr[data-no]", root).forEach((tr) => tr.onclick = (e) => { if (!e.target.closest("[data-stop]")) openStudent(tr.dataset.no); });
+  $$("[data-no]", root).forEach((el) => el.onclick = () => openStudent(el.dataset.no));
+}
+
+// 1·2·3차 진행 알약: 기록 있음=초록, 일정만 잡힘=주황, 아직=회색
+function stagePills(s) {
+  const done = new Set(S.meetings.filter((m) => m.studentNo === s.studentNo && !m.planned).map((m) => Number(m.stage)));
+  const planned = new Set(S.meetings.filter((m) => m.studentNo === s.studentNo && m.planned).map((m) => Number(m.stage)));
+  return [1, 2, 3].map((k) => {
+    const cls = done.has(k) ? "ok" : planned.has(k) ? "warn" : "";
+    return `<span class="pill ${cls}">${k}차</span>`;
+  }).join("");
 }
 
 export async function openStudent(no) {
@@ -71,16 +100,28 @@ export async function openStudent(no) {
   const meets = S.meetings.filter((m) => m.studentNo === no).sort((x, y) => (x.date || "").localeCompare(y.date || ""));
   const sess = S.sessions.filter((x) => x.studentNo === no);
   const d = nextInterview(s);
+  const bk = (S.bookings || []).filter((b) => b.studentNo === no && (b.status === "requested" || b.status === "confirmed"))
+    .sort((x, y) => (x.date + x.start).localeCompare(y.date + y.start));
   const body = openModal(`${s.studentNo} ${s.name}`, `
     <div class="row" style="margin-bottom:12px">
       ${d ? ddayBadge(d) + ` <span class="muted">다음 면접 ${fmtDay(d)}</span>` : ""}
       <span class="badge">${esc(s.track || "트랙 미정")}</span>
-      ${s.special && s.special !== "없음" ? `<span class="badge badge-violet">${esc(s.special)}</span>` : ""}
+      ${s.special && s.special !== "없음" ? `<span class="badge">${esc(s.special)}</span>` : ""}
       ${s.priority ? `<span class="badge ${s.priority === "긴급" ? "badge-red" : "badge-gray"}">${esc(s.priority)}</span>` : ""}
       <div class="spacer"></div>
       ${s.sheetUrl ? `<a class="btn btn-sm" href="${esc(s.sheetUrl)}" target="_blank" rel="noopener">준비 시트 열기</a>` : '<span class="muted">준비 시트 링크 없음</span>'}
-      <button class="btn-sm btn-primary" id="addMeet">대면 기록 추가</button>
+      <button class="btn-sm" id="addMeet">대면 기록 추가</button>
     </div>
+    <div class="row" style="margin-bottom:14px">${stagePills(s)}
+      <span class="muted">초록 = 기록 있음 · 주황 = 일정만 잡힘</span></div>
+
+    ${bk.length ? `<div class="section-title"><h3>잡힌 일정</h3><span class="muted">내가 들어가는 일정만</span></div>
+    <div class="list-card" style="margin-bottom:14px">${bk.map((b) => `<div class="list-row" style="cursor:default">
+      <span class="r-day"><b>${esc(fmtDay(b.date).replace(/\(.\)$/, ""))}</b><span>${esc(S.blockLabel(b.block) || "")}</span></span>
+      <span class="r-tx"><b>${b.stage}차</b> ${esc((b.teachers || []).join("·"))}
+        <span class="muted">${esc(b.room || "장소 미정")} · ${esc(b.start)}–${esc(b.end)}</span></span>
+      <span class="badge badge-${b.status === "confirmed" ? "green" : "orange"}" style="flex:none">${b.status === "confirmed" ? "확정" : "요청 중"}</span>
+    </div>`).join("")}</div>` : ""}
 
     <div class="grid grid-2">
       <div class="card" style="box-shadow:none">
@@ -139,9 +180,12 @@ export async function openStudent(no) {
         <datalist id="staffNames">${S.staff.map((t) => `<option value="${esc(t.name)}">`).join("")}</datalist>
         <button class="btn-primary btn-sm">저장</button>
       </form>
-    </details>`, true);
+    </details>
+
+    <div class="modal-foot"><button class="btn-primary" id="writeMeet">면접 기록 쓰기</button></div>`, true);
 
   $("#addMeet", body).onclick = () => openMeetingForm({ studentNo: no });
+  $("#writeMeet", body).onclick = () => openMeetingForm({ studentNo: no });
   $("#sessAll", body)?.addEventListener("click", async (e) => { e.preventDefault(); try { await loadAllSessions(); openStudent(no); } catch (err) { showError(err, "연습 기록 불러오기"); } });
   $("#toQ", body).onclick = () => { closeModal(); switchTab("questions"); selectStudentForQuestions(no); };
   $$("[data-sid]", body).forEach((el) => el.onclick = () => openReview(el.dataset.sid));

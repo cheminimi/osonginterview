@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#18308d">
+<meta name="theme-color" content="#4a6fa8">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -16,11 +16,7 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" media="print" onload="this.media='all'">
 <link rel="stylesheet" href="style.css">
 <style>
-  .hero { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: center; }
-  .dday { text-align: center; min-width: 110px; }
-  .dday .n { font-size: 2.2rem; font-weight: 800; line-height: 1.1; color: var(--accent); }
-  .dday.urgent .n { color: var(--danger); }
-  .univ { font-size: .9rem; padding: 4px 0; border-bottom: 1px dashed var(--line); display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+  .univ { font-size: .9rem; padding: 6px 0; border-bottom: 1px solid var(--line-3); display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
   .univ:last-child { border-bottom: none; }
   .mode { cursor: pointer; transition: transform .1s, border-color .1s; display: flex; flex-direction: column; gap: 6px; position: relative; }
   .mode:hover { border-color: var(--accent); transform: translateY(-1px); }
@@ -29,14 +25,10 @@
   .mode .title { font-weight: 700; font-size: 1.05rem; }
   .mode .rec { position: absolute; top: 12px; right: 12px; }
   .clickable-card { cursor: pointer; } .clickable-card:hover { border-color: var(--accent); }
-  .fb-box { background: #f7f9ff; border: 1px solid #dfe6fb; border-radius: 10px; padding: 12px 14px; margin-top: 8px; }
-  .ans { background: #fafbfc; border-radius: 8px; padding: 10px 12px; margin-top: 6px; white-space: pre-wrap; }
+  .fb-box { background: var(--accent-faint); border: 1px solid var(--accent-line); border-radius: 10px; padding: 12px 14px; margin-top: 8px; }
+  .ans { background: #faf8f7; border-radius: 8px; padding: 10px 12px; margin-top: 6px; white-space: pre-wrap; }
   .kv dd { white-space: pre-wrap; }
   @media (max-width: 720px) {
-    /* D-day와 학생 정보를 한눈에 (세로로 길어지지 않게) */
-    .hero { grid-template-columns: auto 1fr; gap: 12px; align-items: start; }
-    .dday { min-width: 84px; text-align: left; }
-    .dday .n { font-size: 1.9rem; }
     .mode .title { font-size: 1rem; }
     .mode { gap: 4px; }
   }
@@ -77,7 +69,7 @@
     if (lock) lock.classList.remove("loading");   // 로그인 화면은 일단 쓸 수 있게
     var sub = document.getElementById("submit"); if (sub) sub.disabled = false;
     var d = document.createElement("div");
-    d.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:9999;background:#d33a3a;color:#fff;padding:10px 14px;font-size:.92rem;line-height:1.5";
+    d.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:9999;background:#c2453c;color:#fff;padding:10px 14px;font-size:.92rem;line-height:1.5";
     d.innerHTML = '화면을 제대로 불러오지 못했어요. <b>새로고침</b>해 보고, 그래도 같으면 <a href="index.html?reset=1" style="color:#fff">여기를 눌러 초기화</a>하세요.<br><span style="opacity:.85;font-size:.85rem"></span>';
     var text = String(msg || "");
     if (/gstatic|googleapis|firebase/i.test(text) || blockedFirebase) {
@@ -99,8 +91,8 @@
     if (document.getElementById("newVersionBar")) return;
     var d = document.createElement("div");
     d.id = "newVersionBar";
-    d.style.cssText = "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;background:#1b1f27;color:#fff;padding:10px 12px 10px 16px;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.25);display:flex;gap:10px;align-items:center;font-size:.92rem;max-width:92vw";
-    d.innerHTML = '<span>새 버전이 올라왔어요. 저장할 내용이 있으면 먼저 저장하세요.</span><button type="button" style="background:#fff;color:#1b1f27;border:none;border-radius:8px;padding:6px 12px;font-weight:700;cursor:pointer;white-space:nowrap">새로고침</button>';
+    d.style.cssText = "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;background:#24262a;color:#fff;padding:10px 12px 10px 16px;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.25);display:flex;gap:10px;align-items:center;font-size:.92rem;max-width:92vw";
+    d.innerHTML = '<span>새 버전이 올라왔어요. 저장할 내용이 있으면 먼저 저장하세요.</span><button type="button" style="background:#fff;color:#24262a;border:none;border-radius:8px;padding:6px 12px;font-weight:700;cursor:pointer;white-space:nowrap">새로고침</button>';
     d.querySelector("button").onclick = function () { location.reload(); };
     document.body.appendChild(d);
   }
@@ -164,39 +156,53 @@
   <div class="row" id="acct"></div>
 </div></header>
 
+<nav class="tabbar" id="tabs" hidden></nav>
+
 <main class="wrap" id="main" hidden>
-  <div id="pwaTip"></div>
-  <section class="card hero">
-    <div class="dday" id="dday"></div>
-    <div>
-      <div class="row" style="margin-bottom:6px"><b id="pName"></b><span class="badge" id="pTrack"></span><span class="badge badge-violet" id="pSpecial" hidden></span>
-        <div class="spacer"></div><a class="btn btn-sm btn-primary" id="sheetBtn" target="_blank" rel="noopener" hidden>내 준비 시트 열기</a></div>
-      <div id="univs"></div>
+  <section data-panel="home">
+    <div id="pwaTip"></div>
+    <div class="me-row">
+      <div style="flex:1;min-width:0">
+        <div class="me-name" id="pName"></div>
+        <div class="me-sub" id="pSub"></div>
+      </div>
+    </div>
+    <div id="ddayCard"></div>
+
+    <div class="sec-head"><h2>오늘 할 일</h2><span class="n" id="todoN"></span></div>
+    <div id="todo"></div>
+
+    <div class="sec-head"><h2>잡힌 일정</h2><div class="spacer"></div>
+      <button class="btn-sm" id="goSched">일정 전체 보기</button></div>
+    <div id="homeSched"></div>
+
+    <div class="sec-head"><h2>지원 대학</h2><span class="n" id="univN"></span></div>
+    <div class="list-card" style="padding:4px 16px"><div id="univs"></div></div>
+  </section>
+
+  <section data-panel="practice" hidden>
+    <div id="pracHome">
+      <p class="muted" style="margin:0 0 10px">혼자 말로 답해 보고, 답변을 선생님께 보낼 수 있어요.</p>
+      <div class="grid grid-4" id="modes"></div>
+      <div class="list-card" style="margin-top:14px" id="pracLinks"></div>
+    </div>
+    <div id="pracMine" hidden>
+      <div class="sub-head"><button class="btn-sm btn-back" data-back="1"></button><h2 style="margin:0">내 예상질문</h2></div>
+      <div class="row" style="margin-bottom:10px">
+        <span class="muted">실전 연습 전에 꼬리질문을 먼저 보면 연습 효과가 떨어져요.</span>
+        <div class="spacer"></div>
+        <label class="row" style="margin:0;font-weight:500"><input type="checkbox" id="showIntent" style="width:auto"> 꼬리질문 보기</label>
+      </div>
+      <div id="mine"></div>
+    </div>
+    <div id="pracHist" hidden>
+      <div class="sub-head"><button class="btn-sm btn-back" data-back="1"></button><h2 style="margin:0">지난 연습 기록</h2></div>
+      <div id="history"></div>
     </div>
   </section>
 
-  <div class="tabs" style="margin-top:18px">
-    <button class="active" data-tab="practice">말하기 연습</button>
-    <button data-tab="schedule">모의면접 일정<span id="scDot"></span></button>
-    <button data-tab="feedback">선생님 피드백<span id="fbDot"></span></button>
-    <button data-tab="history">연습 기록</button>
-    <button data-tab="mine">내 예상질문</button>
-  </div>
-  <section data-panel="practice">
-    <p class="muted" style="margin:0 0 10px">혼자 말로 답해 보고, 답변을 선생님께 보낼 수 있어요.</p>
-    <div class="grid grid-4" id="modes"></div>
-  </section>
   <section data-panel="schedule" hidden><div id="schedule"></div></section>
   <section data-panel="feedback" hidden><div id="feedback"></div></section>
-  <section data-panel="history" hidden><div id="history"></div></section>
-  <section data-panel="mine" hidden>
-    <div class="row" style="margin-bottom:10px">
-      <span class="muted">실전 연습 전에 꼬리질문을 먼저 보면 연습 효과가 떨어져요.</span>
-      <div class="spacer"></div>
-      <label class="row" style="margin:0;font-weight:500"><input type="checkbox" id="showIntent" style="width:auto"> 꼬리질문 보기</label>
-    </div>
-    <div id="mine"></div>
-  </section>
 </main>
 
 <div class="modal-bg" id="modal" hidden><div class="modal">
@@ -207,14 +213,13 @@
 <script type="app-module">
 import {
   db, requireRole, mountAccountMenu, collection, getDocs, query, where, onSnapshot, esc, $, $$, toast, showError, loadInterviewsFor, cachedCollection,
-  CRITERIA, STAGES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes
+  CRITERIA, STAGES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes, icon, isoDay
 } from "./common.js";
-import { mountSchedule } from "./schedule.js";
-import { registerSW, mountInstallTip } from "./pwa.js";
+import { mountSchedule, BOOK_STAGES, stageTeachers, ACTIVE, STATUS } from "./schedule.js";
+import { registerSW, mountInstallTip, showInstallTipAgain, isStandalone } from "./pwa.js";
 
 const ctx = await requireRole("student");
 const { user, profile: me } = ctx;
-mountAccountMenu(ctx, $("#acct"));
 
 let personal = [], bank = [], sessions = [], meetings = [];
 try {
@@ -229,21 +234,38 @@ try {
   personal = rows(pq); bank = qb;
 } catch (e) { showError(e, "데이터 불러오기"); }
 $("#main").hidden = false;
+$("#tabs").hidden = false;
 
-// ---- 상단: D-day · 지원 대학 · 준비 시트
+// ---- 계정 메뉴 (오른쪽 위 동그라미)
+const teacherLine = BOOK_STAGES.map((sg) => { const t = stageTeachers(me, sg.key); return t.length ? `${sg.short} ${t.join("·")}` : ""; }).filter(Boolean).join(", ");
+mountAccountMenu(ctx, $("#acct"), {
+  subtitle: `${me.studentNo}${me.track ? " · " + me.track : ""}`,
+  items: [
+    teacherLine ? { icon: "user", label: "내 담당 선생님", desc: teacherLine, info: true } : null,
+    me.sheetUrl ? { icon: "sheet", label: "내 준비 시트 열기", href: me.sheetUrl } : null,
+    isStandalone() ? null : { icon: "phone", label: "홈 화면에 앱으로 추가", onClick: () => { switchTab("home"); showInstallTipAgain($("#pwaTip")); } }
+  ]
+});
+
+// ---- 홈: 이름 · D-day · 지원 대학
+$("#pName").textContent = me.name || "";
+$("#pSub").textContent = `${me.studentNo}${me.track ? " · " + me.track : ""}${me.special && me.special !== "없음" ? " · " + me.special : ""}`;
 const next = nextInterview(me);
 const n = next ? dday(next) : null;
-$("#dday").className = `dday ${n != null && n <= 7 ? "urgent" : ""}`;
-$("#dday").innerHTML = next ? `<div class="muted">다음 면접</div><div class="n">${n === 0 ? "D-DAY" : "D-" + n}</div><div class="muted">${fmtDay(next)}</div>` : `<div class="muted">면접일<br>미등록</div>`;
-$("#pName").textContent = `${me.studentNo} ${me.name}`;
-$("#pTrack").textContent = me.track || "트랙 미정";
-if (me.special && me.special !== "없음") { $("#pSpecial").hidden = false; $("#pSpecial").textContent = me.special; }
-if (me.sheetUrl) { $("#sheetBtn").hidden = false; $("#sheetBtn").href = me.sheetUrl; }
-const today = new Date(); today.setHours(0, 0, 0, 0);
+const nextU = (me.universities || []).find((u) => u.date && next && isoDay(u.date) === isoDay(next))
+  || (me.universities || []).filter((u) => dday(u.date) != null && dday(u.date) >= 0).sort((a, b) => String(a.date).localeCompare(String(b.date)))[0];
+$("#ddayCard").innerHTML = next
+  ? `<div class="dday-card ${n != null && n <= 7 ? "urgent" : ""}">
+      <div class="d-box"><div class="d-lab">다음 면접</div><div class="d-n">${n === 0 ? "D-DAY" : "D-" + n}</div></div>
+      <div class="d-body"><b>${nextU ? esc(nextU.univ) + " " + esc(nextU.dept || "") : "대학 면접"}</b>
+        <span class="muted">${fmtDay(next)}${nextU?.admission ? " · " + esc(nextU.admission) : ""}</span></div>
+    </div>`
+  : `<div class="dday-card"><div class="d-body" style="border:none;padding:0"><b>면접일이 등록되지 않았어요</b><span class="muted">선생님께 지원 대학·면접일 등록을 부탁하세요.</span></div></div>`;
+$("#univN").textContent = (me.universities || []).length ? `${me.universities.length}곳` : "";
 $("#univs").innerHTML = (me.universities || []).length ? me.universities.map((u) => {
   const d = dday(u.date);
   return `<div class="univ" style="${d != null && d < 0 ? "opacity:.5" : ""}"><b>${u.date ? fmtDay(u.date) : "-"}</b> ${esc(u.univ)} <span>${esc(u.dept)}</span> <span class="muted">${esc(u.admission)} · ${esc(u.format)}</span></div>`;
-}).join("") : '<div class="muted">지원 대학 정보가 없습니다.</div>';
+}).join("") : '<div class="muted" style="padding:12px 0">지원 대학 정보가 없습니다.</div>';
 
 // ---- 연습 모드
 const relevant = (q) => !q.majors?.length || (me.universities || []).some((u) => q.majors.some((m) => (u.dept || "").includes(m)));
@@ -264,29 +286,135 @@ $("#modes").innerHTML = modes.map((m) => `
   </div>`).join("");
 $$(".mode").forEach((el) => el.onclick = () => location.href = `interview.html?mode=${el.dataset.mode}`);
 
-// ---- 모의면접 일정 (달력: 다른 학생 일정도 보여서 같은 선생님·같은 장소 겹침을 피할 수 있음)
-mountSchedule($("#schedule"), {
-  role: "student", student: me,
-  onBadge: (n) => { $("#scDot").innerHTML = n ? ` <span class="badge badge-red">${n}</span>` : ""; }
-});
+// 연습 탭 아래 줄: 내 예상질문 · 지난 연습 기록 (같은 탭 안 하위 화면)
+function renderPracLinks() {
+  $("#pracLinks").innerHTML = [
+    { sub: "mine", ic: "note", t: "내 예상질문", d: personal.length ? `선생님이 올린 질문 ${personal.length}개` : "아직 올라온 질문이 없어요" },
+    { sub: "hist", ic: "list", t: "지난 연습 기록", d: sessions.length ? `연습 ${sessions.length}회` : "아직 연습 기록이 없어요" }
+  ].map((x) => `<button type="button" class="list-row" data-sub="${x.sub}">
+      <span class="r-ic">${icon(x.ic, 20)}</span>
+      <span class="r-tx"><b>${x.t}</b><span class="muted">${x.d}</span></span>
+      <span class="r-end">${icon("chevron", 18)}</span></button>`).join("");
+  $$("#pracLinks [data-sub]").forEach((b) => b.onclick = () => showPracSub(b.dataset.sub));
+}
+function showPracSub(name) {
+  $("#pracHome").hidden = !!name;
+  $("#pracMine").hidden = name !== "mine";
+  $("#pracHist").hidden = name !== "hist";
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
+$$("[data-back]").forEach((b) => { b.innerHTML = `${icon("back", 18)} 연습`; b.onclick = () => showPracSub(""); });
+renderPracLinks();
 
-// ---- 탭
+// ---- 모의면접 일정 (달력: 다른 학생 일정도 보여서 같은 선생님·같은 장소 겹침을 피할 수 있음)
+let bookings = [], blockLabelOf = () => "", homeReady = false;
+const sched = mountSchedule($("#schedule"), {
+  role: "student", student: me,
+  onBadge: (n) => setDot("#scDot", n),
+  onData: (d) => { bookings = d.bookings || []; blockLabelOf = d.blockLabel; renderHome(); }
+});
+$("#goSched").onclick = () => switchTab("schedule");
+
+// ---- 탭 (좁은 화면은 아래 고정 탭바)
 registerSW();
 mountInstallTip($("#pwaTip"));
+document.body.classList.add("has-tabbar");
 
-$$(".tabs button").forEach((b) => b.onclick = () => {
-  $$(".tabs button").forEach((x) => x.classList.toggle("active", x === b));
-  $$("[data-panel]").forEach((p) => p.hidden = p.dataset.panel !== b.dataset.tab);
+const TABS = [
+  { key: "home", label: "홈", ic: "home" },
+  { key: "practice", label: "연습", ic: "mic" },
+  { key: "schedule", label: "일정", ic: "calendar", dot: "scDot" },
+  { key: "feedback", label: "피드백", ic: "chat", dot: "fbDot" }
+];
+$("#tabs").innerHTML = TABS.map((t, i) => `<button type="button" class="${i ? "" : "active"}" data-tab="${t.key}">
+  ${icon(t.ic, 22)}<span>${t.label}</span>${t.dot ? `<span class="tb-dot" id="${t.dot}"></span>` : ""}</button>`).join("");
+function setDot(sel, n) { const el = $(sel); if (el) el.textContent = n ? String(n) : ""; }
+function switchTab(key) {
+  $$("#tabs button").forEach((x) => x.classList.toggle("active", x.dataset.tab === key));
+  $$("[data-panel]").forEach((p) => p.hidden = p.dataset.panel !== key);
+  if (key === "practice") showPracSub("");
+  if (key === "feedback") markFeedbackSeen();
   window.scrollTo({ top: 0, behavior: "instant" });
-});
+}
+$$("#tabs button").forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
+
+// ---- 홈: 오늘 할 일 · 잡힌 일정
+const SEEN_KEY = `seenFb:${me.studentNo}`;
+const readSeen = () => { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || "[]")); } catch (e) { return new Set(); } };
+let seenFb = readSeen();
+const feedbackIds = () => [...meetings.map((m) => "m" + m.id), ...sessions.filter((s) => s.reviewedAt).map((s) => "s" + s.id)];
+const unseenFb = () => feedbackIds().filter((k) => !seenFb.has(k));
+function markFeedbackSeen() {
+  const all = feedbackIds();
+  if (!all.length || !unseenFb().length) return;
+  seenFb = new Set(all);
+  try { localStorage.setItem(SEEN_KEY, JSON.stringify([...seenFb])); } catch (e) {}
+  renderHome(); renderFeedback();
+}
+
+function renderHome() {
+  if (!homeReady) return;   // 아래 준비가 끝나기 전에 일정 달력이 먼저 그려질 수 있음
+  const today = isoDay();
+  const todos = [];
+
+  // 1) 아직 신청하지 않은 차수
+  BOOK_STAGES.forEach((sg) => {
+    const ts = stageTeachers(me, sg.key);
+    if (!ts.length) return;
+    if (bookings.some((b) => b.stage === sg.key && ACTIVE(b.status))) return;
+    const nm = /면접$/.test(sg.label) ? sg.label : `${sg.label} 면접`;
+    todos.push({ ic: "calendar", t: `${nm}을 신청하지 않았어요`, d: `${ts.join("·")} 선생님`,
+      cta: "시간 신청하기", go: () => { switchTab("schedule"); sched.focusStage(sg.key); } });
+  });
+  // 2) 새로 온 피드백
+  const nf = unseenFb().length;
+  if (nf) todos.push({ ic: "chat", t: `새 피드백 ${nf}개`, d: "선생님이 남긴 피드백을 아직 보지 않았어요", cta: "보기", go: () => switchTab("feedback") });
+  // 3) 아직 해 보지 않은 연습
+  const donePersonal = sessions.some((s) => s.mode === "personal");
+  if (personal.length && !donePersonal) todos.push({ ic: "mic", t: `내 생기부 질문 ${personal.length}개 준비됨`, d: "아직 연습하지 않았어요", cta: "연습", go: () => location.href = "interview.html?mode=personal" });
+  else if (!sessions.length) todos.push({ ic: "mic", t: "말하기 연습을 아직 해 보지 않았어요", d: "혼자 말로 답해 보고 선생님께 보낼 수 있어요", cta: "연습", go: () => switchTab("practice") });
+
+  $("#todoN").textContent = todos.length ? String(todos.length) : "";
+  if (!todos.length) {
+    $("#todo").innerHTML = `<div class="list-card"><div class="empty"><b style="display:block;color:var(--ink);font-size:1rem">지금 할 일은 없어요</b>
+      <span style="display:block;margin-top:4px">면접 일정도 연습도 모두 챙겼어요. 아래 일정만 확인하세요.</span></div></div>`;
+  } else {
+    const [first, ...rest] = todos;
+    $("#todo").innerHTML = `
+      <div class="todo-main">
+        <span class="t-ic">${icon(first.ic, 20)}</span>
+        <div style="flex:1;min-width:0"><b>${esc(first.t)}</b><span class="muted">${esc(first.d)}</span>
+          <button type="button" class="btn-primary" data-todo="0">${esc(first.cta)}</button></div>
+      </div>
+      ${rest.length ? `<div class="list-card">${rest.map((x, i) => `
+        <div class="list-row" style="cursor:default">
+          <span class="r-ic">${icon(x.ic, 20)}</span>
+          <span class="r-tx"><b>${esc(x.t)}</b><span class="muted">${esc(x.d)}</span></span>
+          <button type="button" class="btn-sm" data-todo="${i + 1}">${esc(x.cta)}</button>
+        </div>`).join("")}</div>` : ""}`;
+    $$("#todo [data-todo]").forEach((b) => b.onclick = () => todos[Number(b.dataset.todo)].go());
+  }
+
+  // 잡힌 일정
+  const up = bookings.filter((b) => ACTIVE(b.status) && b.date >= today).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start)).slice(0, 5);
+  $("#homeSched").innerHTML = up.length ? `<div class="list-card">${up.map((b) => {
+    const d = new Date(b.date.replace(/-/g, "/"));
+    const [lab, cls] = STATUS[b.status] || ["", "gray"];
+    return `<button type="button" class="list-row" data-go="1">
+      <span class="r-day"><b>${d.getMonth() + 1}/${d.getDate()}</b><span>${"일월화수목금토"[d.getDay()]} ${esc(blockLabelOf(b.block) || "")}</span></span>
+      <span class="r-tx"><b>${b.stage}차</b> ${esc((b.teachers || []).join("·"))}
+        <span class="muted">${esc(b.room || "장소 미정")} · ${esc(b.start)}–${esc(b.end)}</span></span>
+      <span class="badge badge-${cls}" style="flex:none">${esc(lab)}</span></button>`;
+  }).join("")}</div>` : `<div class="list-card"><div class="empty">잡힌 면접 일정이 없어요.</div></div>`;
+  $$("#homeSched [data-go]").forEach((el) => el.onclick = () => switchTab("schedule"));
+}
 
 // ---- 선생님 피드백 (대면 모의면접 + 말하기 연습 피드백을 한곳에)
 const stageLabel = (k) => STAGES.find((s) => s.key === Number(k))?.label || "";
 const tsSec = (t) => t?.seconds || (typeof t === "number" ? t / 1000 : 0);
 function renderFeedback() {
   const reviewed = sessions.filter((s) => s.reviewedAt);
-  const n = meetings.length + reviewed.length;
-  $("#fbDot").innerHTML = n ? ` <span class="badge badge-blue">${n}</span>` : "";
+  setDot("#fbDot", unseenFb().length);   // 아직 안 본 피드백만 숫자로
   const cards = [
     ...meetings.map((m) => ({ at: (toDateSafe(m.date)?.getTime() || 0) / 1000, html: `
       <div class="card">
@@ -336,22 +464,23 @@ function renderHistory() {
 }
 renderHistory();
 renderFeedback();
+homeReady = true; renderHome();
 
 // ---- 새로고침 없이 피드백 반영 (선생님이 공개하면 바로 뜸)
 {
   let firstS = true, firstM = true;
-  const notify = () => toast("선생님 피드백이 도착했어요. '선생님 피드백' 탭을 확인하세요.", "ok", 6000);
+  const notify = () => toast("선생님 피드백이 도착했어요. 아래 '피드백' 탭을 확인하세요.", "ok", 6000);
   onSnapshot(query(collection(db, "sessions"), where("studentUid", "==", user.uid)), (snap) => {
     const before = new Set(sessions.filter((x) => x.reviewedAt).map((x) => x.id));
     sessions = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.startedAt?.seconds || 0) - (a.startedAt?.seconds || 0));
     if (!firstS && sessions.some((x) => x.reviewedAt && !before.has(x.id))) notify();
-    firstS = false; renderHistory(); renderFeedback();
+    firstS = false; renderHistory(); renderFeedback(); renderPracLinks(); renderHome();
   }, (e) => console.warn("연습 피드백 실시간", e));
   onSnapshot(query(collection(db, "meetings"), where("studentUid", "==", user.uid), where("shared", "==", true)), (snap) => {
     const before = new Set(meetings.map((x) => x.id));
     meetings = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
     if (!firstM && meetings.some((x) => !before.has(x.id))) notify();
-    firstM = false; renderFeedback();
+    firstM = false; renderFeedback(); renderHome();
   }, (e) => console.warn("대면 피드백 실시간", e));
 }
 

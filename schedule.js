@@ -46,10 +46,10 @@ export const BOOK_STAGES = [
   { key: 2, label: "2차 교과", short: "2차", min: 30 },
   { key: 3, label: "3차 모의면접", short: "3차", min: 30 }
 ];
-const STATUS = {
+export const STATUS = {
   requested: ["요청 중", "orange"], confirmed: ["확정", "green"], cancelled: ["취소", "gray"], rejected: ["거절", "red"]
 };
-const ACTIVE = (s) => s === "requested" || s === "confirmed";
+export const ACTIVE = (s) => s === "requested" || s === "confirmed";
 const WEEK = "일월화수목금토";
 
 export function scheduleConfigOf(c = {}) {
@@ -269,6 +269,8 @@ export function mountSchedule(root, opts) {
     renderMine();
     renderGrid();
     opts.onBadge?.(needMine().length);
+    // 다른 화면(학생 홈 등)에서 쓸 수 있게 현재 일정 상태를 넘겨준다
+    opts.onData?.({ bookings: st.bookings, cfg: st.cfg, blockLabel, timeText, needMine: needMine() });
   }
   // 쓸 수 있는 시간이 정해진 교실 안내
   function renderRoomNote() {
@@ -726,5 +728,13 @@ export function mountSchedule(root, opts) {
   }
 
   refresh();
-  return { refresh, render, openForm, stop: () => { cfgStop?.(); cfgStop = null; } };
+  // 학생 홈에서 '시간 신청하기'를 누르면 해당 차수 기준으로 달력을 맞춰 준다
+  function focusStage(key) {
+    st.shadeStage = Number(key) || 1;
+    const sel = $("#scShade", root); if (sel) sel.value = String(st.shadeStage);
+    render();
+    root.scrollIntoView({ behavior: "smooth", block: "start" });
+    toast("달력에서 흰 칸의 ＋ 를 눌러 신청하세요.");
+  }
+  return { refresh, render, openForm, focusStage, stop: () => { cfgStop?.(); cfgStop = null; } };
 }

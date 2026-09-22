@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#18308d">
+<meta name="theme-color" content="#4a6fa8">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -79,7 +79,7 @@
     if (lock) lock.classList.remove("loading");   // 로그인 화면은 일단 쓸 수 있게
     var sub = document.getElementById("submit"); if (sub) sub.disabled = false;
     var d = document.createElement("div");
-    d.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:9999;background:#d33a3a;color:#fff;padding:10px 14px;font-size:.92rem;line-height:1.5";
+    d.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:9999;background:#c2453c;color:#fff;padding:10px 14px;font-size:.92rem;line-height:1.5";
     d.innerHTML = '화면을 제대로 불러오지 못했어요. <b>새로고침</b>해 보고, 그래도 같으면 <a href="index.html?reset=1" style="color:#fff">여기를 눌러 초기화</a>하세요.<br><span style="opacity:.85;font-size:.85rem"></span>';
     var text = String(msg || "");
     if (/gstatic|googleapis|firebase/i.test(text) || blockedFirebase) {
@@ -101,8 +101,8 @@
     if (document.getElementById("newVersionBar")) return;
     var d = document.createElement("div");
     d.id = "newVersionBar";
-    d.style.cssText = "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;background:#1b1f27;color:#fff;padding:10px 12px 10px 16px;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.25);display:flex;gap:10px;align-items:center;font-size:.92rem;max-width:92vw";
-    d.innerHTML = '<span>새 버전이 올라왔어요. 저장할 내용이 있으면 먼저 저장하세요.</span><button type="button" style="background:#fff;color:#1b1f27;border:none;border-radius:8px;padding:6px 12px;font-weight:700;cursor:pointer;white-space:nowrap">새로고침</button>';
+    d.style.cssText = "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;background:#24262a;color:#fff;padding:10px 12px 10px 16px;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.25);display:flex;gap:10px;align-items:center;font-size:.92rem;max-width:92vw";
+    d.innerHTML = '<span>새 버전이 올라왔어요. 저장할 내용이 있으면 먼저 저장하세요.</span><button type="button" style="background:#fff;color:#24262a;border:none;border-radius:8px;padding:6px 12px;font-weight:700;cursor:pointer;white-space:nowrap">새로고침</button>';
     d.querySelector("button").onclick = function () { location.reload(); };
     document.body.appendChild(d);
   }
@@ -292,7 +292,7 @@ function startTimer(total, el, onTick) {
   const t0 = performance.now();
   const R = 42, C = 2 * Math.PI * R;
   el.innerHTML = `<svg width="96" height="96"><circle cx="48" cy="48" r="${R}" fill="none" stroke="#e2e5ec" stroke-width="7"/>
-    <circle class="bar" cx="48" cy="48" r="${R}" fill="none" stroke="#1f4fd6" stroke-width="7" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="0"/></svg><div class="num"></div>`;
+    <circle class="bar" cx="48" cy="48" r="${R}" fill="none" stroke="#41639b" stroke-width="7" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="0"/></svg><div class="num"></div>`;
   const bar = el.querySelector(".bar"), num = el.querySelector(".num");
   let beeped = false;
   const tick = () => {
@@ -302,7 +302,7 @@ function startTimer(total, el, onTick) {
     bar.style.strokeDashoffset = String(C * Math.min(1, used / total));
     el.classList.toggle("warn", left <= 10 && left > 0);
     el.classList.toggle("over", left <= 0);
-    bar.setAttribute("stroke", left <= 0 ? "#d33a3a" : left <= 10 ? "#c77a0a" : "#1f4fd6");
+    bar.setAttribute("stroke", left <= 0 ? "#c2453c" : left <= 10 ? "#95590a" : "#41639b");
     if (left <= 0 && !beeped) { beeped = true; beep(); }
     onTick?.(used);
   };

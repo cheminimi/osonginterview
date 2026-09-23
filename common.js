@@ -333,7 +333,9 @@ export const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   pin: '<path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11Z"/><circle cx="12" cy="10" r="2.6"/>',
   pen: '<path d="M4 20h4L19 9l-4-4L4 16Z"/><path d="m14.5 5.5 4 4"/>',
-  star: '<path d="m12 3.6 2.7 5.5 6.1.9-4.4 4.3 1 6-5.4-2.8-5.4 2.8 1-6L3.2 10l6.1-.9Z"/>'
+  star: '<path d="m12 3.6 2.7 5.5 6.1.9-4.4 4.3 1 6-5.4-2.8-5.4 2.8 1-6L3.2 10l6.1-.9Z"/>',
+  sparkle: '<path d="m12 3.2 1.8 3.9 3.9 1.8-3.9 1.8L12 14.6l-1.8-3.9-3.9-1.8 3.9-1.8Z"/><path d="m18.3 14.6.9 2 2 .9-2 .9-.9 2-.9-2-2-.9 2-.9Z"/>',
+  external: '<path d="M14 4h6v6M20 4l-8 8"/><path d="M18 14v5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 19V8a1.5 1.5 0 0 1 1.5-1.5H10"/>'
 };
 export function icon(name, size = 20) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ""}</svg>`;

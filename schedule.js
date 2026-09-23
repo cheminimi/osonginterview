@@ -59,7 +59,9 @@ export function scheduleConfigOf(c = {}) {
   return {
     blocks: Array.isArray(c.blocks) && c.blocks.length ? c.blocks : DEFAULT_BLOCKS,
     rooms: normalizeRooms(Array.isArray(c.rooms) ? c.rooms : DEFAULT_ROOMS),
-    syncUrl: c.syncUrl || ""
+    syncUrl: c.syncUrl || "",
+    // 연습 탭에서 새 창으로 여는 바깥 링크. 비어 있으면 앱에 적힌 기본 주소를 쓴다.
+    aiUrl: typeof c.aiUrl === "string" ? c.aiUrl.trim() : ""
   };
 }
 export async function loadScheduleConfig() {

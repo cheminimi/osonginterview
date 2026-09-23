@@ -298,15 +298,36 @@ $("#modes").innerHTML = modes.map((m) => `
   </div>`).join("");
 $$(".mode").forEach((el) => el.onclick = () => location.href = `interview.html?mode=${el.dataset.mode}`);
 
-// 연습 탭 아래 줄: 내 예상질문 · 지난 연습 기록 (같은 탭 안 하위 화면)
+// 연습 탭 아래 줄: 내 예상질문 · 지난 연습 기록 (같은 탭 안 하위 화면) + AI 연습 (앱 밖)
+// 바깥 주소는 관리자가 config/schedule 의 aiUrl 로 바꿀 수 있다. 비어 있으면 아래 기본값.
+// aiUrl 을 "off" 로 적어 두면 줄이 사라진다 (사이트가 죽었을 때 배포 없이 끌 수 있게).
+const AI_URL_DEFAULT = "https://aico-six.vercel.app/";
+let aiUrl = AI_URL_DEFAULT;
+function safeHttp(u, fb) {
+  try { const x = new URL(String(u)); return (x.protocol === "https:" || x.protocol === "http:") ? x.href : fb; }
+  catch (_) { return fb; }
+}
+function applyAiUrl(v) {
+  const next = !v ? AI_URL_DEFAULT : (v === "off" ? "" : safeHttp(v, AI_URL_DEFAULT));
+  if (next === aiUrl) return;
+  aiUrl = next;
+  renderPracLinks();
+}
 function renderPracLinks() {
-  $("#pracLinks").innerHTML = [
+  const rows = [
     { sub: "mine", ic: "note", t: "내 예상질문", d: personal.length ? `선생님이 올린 질문 ${personal.length}개` : "아직 올라온 질문이 없어요" },
     { sub: "hist", ic: "list", t: "지난 연습 기록", d: sessions.length ? `연습 ${sessions.length}회` : "아직 연습 기록이 없어요" }
   ].map((x) => `<button type="button" class="list-row" data-sub="${x.sub}">
       <span class="r-ic">${icon(x.ic, 20)}</span>
       <span class="r-tx"><b>${x.t}</b><span class="muted">${x.d}</span></span>
-      <span class="r-end">${icon("chevron", 18)}</span></button>`).join("");
+      <span class="r-end">${icon("chevron", 18)}</span></button>`);
+  // rel="noopener noreferrer" 는 꼭 둔다 — 없으면 열린 쪽에서 이 탭 주소를 바꿀 수 있다
+  if (aiUrl) rows.push(`<a class="list-row out" href="${esc(aiUrl)}" target="_blank" rel="noopener noreferrer">
+      <span class="r-ic">${icon("sparkle", 20)}</span>
+      <span class="r-tx"><b>AI와 연습해보기<span class="badge badge-blue tag-out">새 창</span></b>
+        <span class="muted">선배 면접 후기로 AI 모의면접 만들기</span></span>
+      <span class="r-end">${icon("external", 18)}</span></a>`);
+  $("#pracLinks").innerHTML = rows.join("");
   $$("#pracLinks [data-sub]").forEach((b) => b.onclick = () => showPracSub(b.dataset.sub));
 }
 function showPracSub(name) {
@@ -323,7 +344,7 @@ let bookings = [], blockLabelOf = () => "", homeReady = false;
 const sched = mountSchedule($("#schedule"), {
   role: "student", student: me,
   onBadge: (n) => setDot("#scDot", n),
-  onData: (d) => { bookings = d.bookings || []; blockLabelOf = d.blockLabel; renderHome(); },
+  onData: (d) => { bookings = d.bookings || []; blockLabelOf = d.blockLabel; applyAiUrl(d.cfg?.aiUrl); renderHome(); },
   onBooked: () => askPushOnce()
 });
 

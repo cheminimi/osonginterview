@@ -604,6 +604,9 @@ button.r-tx:hover { background: none; border: none; }
 .list-row .r-day b { font-weight: 700; font-size: .95rem; letter-spacing: -0.02em; }
 .list-row .r-day span { display: block; font-size: .78rem; color: var(--ink-2); }
 .list-row .r-end { flex: none; color: #8a817d; display: grid; place-items: center; }
+/* 앱 밖으로 나가는 줄 — '새 창' 알약과 화살표로 여기서 나간다는 걸 보여 준다 */
+.list-row .tag-out { margin-left: 6px; font-size: .68rem; padding: 1px 6px; vertical-align: 1px; }
+a.list-row.out .r-end { color: var(--accent); }
 .list-card .empty { padding: 22px 10px; }
 .sub-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .sub-head .btn-back { padding: 6px 10px 6px 6px; }

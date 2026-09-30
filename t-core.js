@@ -1,7 +1,7 @@
 // 교사 화면 공통 상태·도우미
 import {
   db, collection, getDocs, query, where, onSnapshot, $, $$, esc, toast, showError, STAGES, toDate, nextInterview, ddayBadge, fmtDay,
-  cachedCollection, getMetaVersions, icon
+  cachedCollection, getMetaVersions, icon, railHead, railFoot, tabButton, wireRailMe, setHead
 } from "./common.js";
 
 export const S = {
@@ -147,17 +147,43 @@ const SUB = {
 export function mountTabs() {
   const bar = $("#tabs");
   if (!bar) return;
-  bar.innerHTML = TOP_TABS.map((t, i) => `<button type="button" class="${i ? "" : "active"}" data-tab="${t.key}">
-    ${icon(t.ic, 22)}<span>${t.label}</span>${t.dot ? `<span class="tb-dot" id="${t.dot}"></span>` : ""}</button>`).join("");
+  const nm = S.ctx?.profile?.name || myName() || (S.ctx?.isAdmin ? "관리자" : "선생님");
+  bar.innerHTML = railHead(nm) + TOP_TABS.map((t, i) => tabButton(t, !i)).join("") + railFoot;
   bar.hidden = false;
-  $$("#tabs button, #qSub button").forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
+  wireRailMe();
+  $$("#tabs button[data-tab], #qSub button").forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
+  applyHead("home");
+}
+// ---- 머리줄: 탭마다 제목. '오늘'은 t-home 이 S.homeHead 로 채운다 (이름·날짜·승인 요청 수)
+const HEADS = {
+  students: () => ["학생", window.matchMedia("(min-width: 1000px)").matches ? "이름을 누르면 오른쪽에 바로 열려요." : "이름을 누르면 자세히 보여요."],
+  schedule: () => ["일정", "학생들과 모의 면접 일정을 잡아주세요."],
+  questions: () => ["질문", "학생별 예상질문을 넣고, 질문은행을 관리해요."],
+  bank: () => ["질문", "학생별 예상질문을 넣고, 질문은행을 관리해요."]
+};
+S.curTab = "home";
+export function askPill() {
+  const n = (S.needMine || []).length;
+  return n ? `<button type="button" class="pill-dday one" id="askPill" title="승인 요청 보기"><i></i><span class="lg">승인 요청 <b>${n}건</b></span><span class="sm-only">승인 <b>${n}</b></span></button>` : "";
+}
+export function applyHead(tab = S.curTab) {
+  const sub = SUB[tab];
+  let h;
+  if (tab === "home" && S.homeHead) h = S.homeHead();
+  else if (HEADS[tab]) h = HEADS[tab]();
+  else if (sub?.title) h = [sub.title, ""];
+  else h = ["", ""];
+  setHead(h[0], h[1], tab === "questions" || tab === "bank" ? "" : askPill());
+  const p = document.getElementById("askPill");
+  if (p) p.onclick = () => switchTab("schedule");
 }
 export function setDot(sel, n) { const el = $(sel); if (el) el.textContent = n ? String(n) : ""; }
 
 export function switchTab(tab) {
   const sub = SUB[tab];
   const top = sub ? sub.parent : tab;
-  $$("#tabs button").forEach((x) => x.classList.toggle("active", x.dataset.tab === top));
+  S.curTab = tab;
+  $$("#tabs button[data-tab]").forEach((x) => x.classList.toggle("active", x.dataset.tab === top));
   $$("[data-panel]").forEach((p) => p.hidden = p.dataset.panel !== tab);
   const qs = $("#qSub");
   if (qs) {
@@ -168,10 +194,12 @@ export function switchTab(tab) {
   if (bar) {
     bar.hidden = !(sub && sub.title);
     if (sub && sub.title) {
-      bar.innerHTML = `<button type="button" class="btn-sm btn-back" id="subBack">${icon("back", 18)} ${esc(sub.backLabel)}</button><h2 style="margin:0">${esc(sub.title)}</h2>`;
+      bar.innerHTML = `<button type="button" class="btn-sm btn-back" id="subBack">${icon("back", 18)} ${esc(sub.backLabel)}</button>`;
       $("#subBack", bar).onclick = () => switchTab(sub.back);
     }
   }
+  applyHead(tab);
+  if (tab === "students") { try { S.renderers.students?.(); } catch (e) { showError(e, "학생 목록"); } }
   try { sessionStorage.setItem("teacherTab", tab); } catch (_) {}
   window.scrollTo({ top: 0, behavior: "instant" });
 }

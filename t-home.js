@@ -7,11 +7,11 @@
 //
 // 한 번에 한 쪽만 DOM에 들어가므로 id 가 겹치지 않는다.
 // 너비가 바뀌면 matchMedia 로 한 번만 다시 그린다(리스너는 모듈당 1개, 구독은 건드리지 않음).
-import { $, $$, esc, icon, isoDay, fmtDay, fmtDate, dday, nextInterview, toDate } from "./common.js";
-import { S, register, rerender, myName, myRoles, switchTab, setDot, opt } from "./t-core.js";
+import { $, $$, esc, icon, isoDay, fmtDay, fmtDate, dday, nextInterview, toDate, initials } from "./common.js";
+import { S, register, rerender, myName, myRoles, switchTab, setDot, opt, applyHead } from "./t-core.js";
 import { openStudent } from "./t-students.js";
 import { openMeetingForm, recordWrittenFor } from "./t-meetings.js";
-import { openBookingRecord, gotoSchedule } from "./t-schedule.js";
+import { openBookingRecord, gotoSchedule, quickBooking } from "./t-schedule.js";
 import { BOOK_STAGES, stageTeachers, ACTIVE, DONE } from "./schedule.js";
 
 const WIDE = window.matchMedia("(min-width: 721px)");
@@ -23,6 +23,8 @@ let root = null;
 let wasWide = WIDE.matches;
 let listening = false;
 let filter = "all";   // 컴퓨터 화면 표 필터: all | soon | fb | norec | nosched
+let progStage = 1;    // '담당 학생 진행' 카드에서 보는 차수
+let askIdx = 0;       // 승인 요청 카드에서 보고 있는 순서
 
 export function init(el) {
   root = el;
@@ -70,7 +72,11 @@ function collect() {
       if (!(S.bookings || []).some((b) => b.studentNo === s.studentNo && b.stage === sg.key && ACTIVE(b.status))) missing.push({ s, sg });
     }
   }
-  return { me, today, now, mine, scope, mineToday, noRecord, pending, need, missing };
+  // 오늘 면접 전체 (완료한 것도 '기록 완료'로 보여 준다)
+  const todayAll = (S.bookings || [])
+    .filter((b) => b.date === today && ACTIVE(b.status) && (!me || (b.teachers || []).includes(me)))
+    .sort((a, b) => a.start.localeCompare(b.start));
+  return { me, today, now, mine, scope, mineToday, todayAll, noRecord, pending, need, missing };
 }
 
 const noticeHtml = (me) => !S.ctx.profile ? `<div class="notice row">
@@ -82,6 +88,12 @@ function render() {
   if (!root) return;
   const d = collect();
   setDot("#todayDot", WIDE.matches ? d.need.length + d.noRecord.length : d.need.length + d.pending.length);
+  S.homeHead = () => {
+    const line = `${d.now.getMonth() + 1}월 ${d.now.getDate()}일 ${WEEK[d.now.getDay()]}요일${d.mine.length ? ` · 담당 학생 ${d.mine.length}명` : ""}`;
+    const who = d.me ? d.me + " 선생님" : S.ctx.isAdmin ? "관리자님" : "선생님";
+    return [WIDE.matches ? `${who}, 오늘도 힘내세요!` : who, line];
+  };
+  if (S.curTab === "home") applyHead("home");
   // 한 번에 한 쪽만 들어간다 → id 중복 없음. innerHTML 교체라 옛 핸들러도 함께 사라진다.
   root.innerHTML = `<div id="homeBody">${WIDE.matches ? wideHtml(d) : narrowHtml(d)}</div>`;
   bindCommon(d);
@@ -102,103 +114,171 @@ function bindCommon() {
   });
   $$("[data-no]", root).forEach((b) => b.onclick = () => openStudent(b.dataset.no));
   $$("[data-meet]", root).forEach((b) => b.onclick = () => openMeetingForm({ id: b.dataset.meet }));
+  // 승인 요청 카드: 수락 · 거절(확인 창) · 시간 변경 + 넘겨 보기
+  $$("[data-qa]", root).forEach((b) => b.onclick = async () => {
+    $$("[data-qa]", root).forEach((x) => x.disabled = true);
+    try { await quickBooking(b.dataset.id, b.dataset.qa); } finally { $$("[data-qa]", root).forEach((x) => x.disabled = false); }
+  });
+  $$("[data-ask]", root).forEach((b) => b.onclick = () => { askIdx += Number(b.dataset.ask); render(); });
+  const tog = $("#soonTog", root);
+  if (tog) tog.onclick = () => { const l = $("#soonList", root), open = l.hidden; l.hidden = !open; tog.setAttribute("aria-expanded", String(open)); };
+}
+
+// ---- 조각
+const hm = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+const recorded = (b) => DONE(b) || S.meetings.some((m) => m.id === "bk_" + b.id && !m.planned);
+// 승인 요청 한 건 (컴퓨터 카드 · 휴대폰 카드 공통)
+function askHtml(need, phone) {
+  if (!need.length) return "";
+  askIdx = Math.max(0, Math.min(askIdx, need.length - 1));
+  const b = need[askIdx];
+  const nm = nameOf(b.studentNo) || b.studentName || "";
+  const by = b.proposedBy === "student" || b.requestedBy === "student" ? "학생이 신청" : "선생님 제안";
+  const when = `<b>${fmtDay(b.date)} ${esc(S.blockLabel(b.block) || "")}</b> ${esc(b.start)} – ${esc(b.end)}`;
+  const btns = `<div class="yn"><button type="button" class="y" data-qa="accept" data-id="${esc(b.id)}">수락</button>
+    <button type="button" class="n" data-qa="reject" data-id="${esc(b.id)}">거절</button>
+    <button type="button" class="c" data-qa="change" data-id="${esc(b.id)}">시간 변경</button></div>`;
+  const box = phone
+    ? `<div class="fbbox"><div class="who2">${esc(nm)}<small>${esc(b.studentNo)} · ${b.stage}차 면접</small></div>
+        <div class="when">${when} · ${esc(b.room || "장소 미정")} · ${by}</div>${b.memo ? `<div class="when">“${esc(b.memo)}”</div>` : ""}${btns}</div>`
+    : `<div class="fbbox"><span class="tag">${icon("clock", 13)}${esc(nm)} ${esc(b.studentNo)} · ${b.stage}차</span>
+        <p>${when}<br>${esc(b.room || "장소 미정")} · ${by}${b.memo ? `<br>“${esc(b.memo)}”` : ""}</p>${btns}</div>`;
+  return `${box}<div class="pager"><b>${askIdx + 1}<small>/${need.length}</small></b><div class="sp"></div>
+    <button type="button" data-ask="-1" aria-label="이전 요청" ${askIdx ? "" : "disabled"}>${icon("back", 15)}</button>
+    <button type="button" data-ask="1" aria-label="다음 요청" ${askIdx < need.length - 1 ? "" : "disabled"}>${icon("chevron", 15)}</button></div>`;
 }
 
 // ================= 컴퓨터 화면 (721px 이상) =================
-function wideHtml({ me, now, mine, mineToday, noRecord, pending, need }) {
+function wideHtml({ me, now, mine, scope, todayAll, noRecord, pending, need, missing }) {
+  const nowHm = hm(now);
+  const left = todayAll.filter((b) => !recorded(b) && b.status === "confirmed");
+  const next = left.find((b) => b.end >= nowHm);
+  let sub = "오늘 잡힌 면접이 없어요.";
+  if (todayAll.length) {
+    if (!next) sub = left.length ? "끝난 면접의 기록을 써 주세요." : "오늘 면접을 모두 마쳤어요. 수고하셨어요!";
+    else if (next.start <= nowHm) sub = "지금 면접 시간이에요.";
+    else {
+      const [h, m] = next.start.split(":").map(Number);
+      const mins = h * 60 + m - (now.getHours() * 60 + now.getMinutes());
+      sub = `다음 면접까지 ${mins >= 60 ? `${Math.floor(mins / 60)}시간 ${mins % 60 ? (mins % 60) + "분" : ""}`.trim() : mins + "분"} 남았어요.`;
+    }
+  }
+  // 담당 학생 진행 (차수별 점)
+  const tsOf = (s, k) => stageTeachers(s, k);
+  const inStage = scope.filter((s) => { const t = tsOf(s, progStage); return t.length && (!me || t.includes(me)); });
+  const stateOf = (s) => {
+    if (S.meetings.some((m) => m.studentNo === s.studentNo && Number(m.stage) === progStage && !m.planned)) return "f";
+    const bk = (S.bookings || []).filter((b) => b.studentNo === s.studentNo && b.stage === progStage && ACTIVE(b.status));
+    if (bk.some((b) => DONE(b))) return "f";
+    return bk.length ? "t" : "";
+  };
+  const states = inStage.map(stateOf).sort((a, b) => (b === "f") - (a === "f") || (b === "t") - (a === "t"));
+  const doneN = states.filter((x) => x === "f").length;
+  const pct = inStage.length ? doneN / inStage.length : 0;
+  // 작성할 기록: 최근 2주 내 면접 중 기록한 비율
+  const since = isoDay(new Date(Date.now() - 14 * 86400000)), today = isoDay();
+  const recent = S.meetings.filter((m) => (!me || (m.teachers || []).includes(me)) && (m.date || "") >= since && (m.date || "") <= today);
+  const ticks = recent.map((m) => !(m.planned && !recordWrittenFor(m)))
+    .sort((a, b) => b - a);
+  // 이번 주 면접 (월~금)
+  const mon = new Date(now); mon.setHours(0, 0, 0, 0); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));
+  const wkDays = Array.from({ length: 5 }, (_, i) => { const x = new Date(mon); x.setDate(mon.getDate() + i); return isoDay(x); });
+  const wkBk = (S.bookings || []).filter((b) => wkDays.includes(b.date) && ACTIVE(b.status) && (!me || (b.teachers || []).includes(me)));
+  const per = wkDays.map((d) => wkBk.filter((b) => b.date === d).length);
+  const maxPer = Math.max(1, ...per);
+  // 완료 = 확정된 면접 중 '면접 완료' 또는 기록을 쓴 것. 날짜가 지났다는 것만으로는 완료로 세지 않는다
+  const conf = wkBk.filter((b) => b.status === "confirmed");
+  const wkDone = conf.filter((b) => recorded(b)).length;
+  const wkLeft = conf.filter((b) => !recorded(b) && b.date >= today).length;
+  const wkLate = conf.filter((b) => !recorded(b) && b.date < today).length;   // 지났는데 완료·기록 안 한 것
+  const wkWait = wkBk.filter((b) => b.status === "requested").length;          // 수락 대기
+  const f2 = (d) => { const x = toDate(d); return `${x.getMonth() + 1}/${x.getDate()}`; };
+
   return `
     ${noticeHtml(me)}
-    <div class="greet-date">${now.getMonth() + 1}월 ${now.getDate()}일 ${WEEK[now.getDay()]}요일${mine.length ? ` · 담당 ${mine.length}명` : ""}</div>
-    <div class="greet-h">${esc(me ? me + " 선생님" : S.ctx.isAdmin ? "관리자님" : "선생님")}, 오늘도 힘내세요!</div>
-    <div class="greet-s" style="margin-bottom:20px">오늘의 면접 일정을 확인하고 피드백을 작성해주세요.</div>
-
-    <div class="sum" id="sumCards">
-      <button type="button" data-go="schedule">
-        <span class="ic">${icon("calendar", 22)}</span>
-        <span class="tx"><span class="lab">오늘 면접</span><span class="n">${mineToday.length}건</span></span>
-      </button>
-      <button type="button" data-scroll="fbCard">
-        <span class="ic faint">${icon("note", 22)}</span>
-        <span class="tx"><span class="lab">작성할 피드백</span><span class="n">${noRecord.length}건</span></span>
-      </button>
-      <button type="button" data-go="schedule">
-        <span class="ic warn">${icon("clock", 22)}</span>
-        <span class="tx"><span class="lab">일정 승인 대기</span><span class="n">${need.length}건</span></span>
-      </button>
-    </div>
-
-    <div class="cols">
-      <div>
-        <div class="head-row"><h3>오늘의 면접 일정</h3>
-          <button type="button" class="go" data-go="schedule">전체 일정 →</button></div>
-        <section class="card sched-card">${mineToday.length ? mineToday.map((b, i) => {
+    <div class="t-row1">
+      <section class="t-hero">
+        <h2>오늘 면접 ${todayAll.filter((b) => b.status === "confirmed").length}건</h2>
+        <p class="sub">${sub}</p>
+        <div class="slots">${todayAll.length ? todayAll.map((b) => {
           const s = S.students.find((x) => x.studentNo === b.studentNo);
-          const done = S.meetings.some((m) => m.id === "bk_" + b.id && !m.planned);
           const others = (b.teachers || []).filter((t) => t !== me);
-          const nowHm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-          const isNext = i === mineToday.findIndex((x) => x.end >= nowHm);
-          return `<div class="srow ${isNext ? "now" : ""}">
-            <div class="stime">${isNext ? '<span class="tag">다음 면접</span>' : ""}
-              <b>${esc(b.start)} – ${esc(b.end)}</b><span>${esc(S.blockLabel(b.block) || "")}</span></div>
-            <button type="button" class="sbody" data-no="${esc(b.studentNo)}">
-              <b>${esc(s?.name || b.studentName || "")}</b> <span class="muted" style="display:inline">${esc(b.studentNo)}</span>
-              <span>${b.stage}차 · ${esc(s?.track || "")}${others.length ? " · " + esc(others.join("·")) + " 선생님과" : ""}</span>
-            </button>
-            <div class="sroom">${icon("pin", 16)}${esc(b.room || "장소 미정")}</div>
-            <button type="button" class="${done ? "btn-sm" : "btn-primary"}" data-rec="${esc(b.id)}">${done ? "기록 보기" : "기록 쓰기"}</button>
-          </div>`;
-        }).join("") : `<div class="empty">오늘 잡힌 면접이 없어요.</div>`}</section>
-      </div>
+          const done = recorded(b), isNext = b === next;
+          const meta = `${esc(b.room || "장소 미정")}${others.length ? " · " + esc(others.join("·")) + " 선생님과" : ""}`;
+          const end = b.status !== "confirmed" ? `<span class="wait">요청 중</span>`
+            : done ? `<button type="button" class="ok" data-rec="${esc(b.id)}">기록 보기</button>`
+            : isNext ? `<button type="button" class="cta sm" data-rec="${esc(b.id)}">기록 쓰기<span>${icon("arrow", 15)}</span></button>`
+            : b.end < nowHm ? `<button type="button" class="wait w2" data-rec="${esc(b.id)}">기록 쓰기</button>`
+            : `<span class="wait">예정</span>`;
+          return `<div class="slot ${done ? "past" : ""} ${isNext ? "next" : ""}">
+            <div class="st">${isNext ? "<em>다음 면접</em>" : ""}<b>${esc(S.blockLabel(b.block) || b.start)}</b>${esc(b.start)}</div>
+            <button type="button" class="sb" data-no="${esc(b.studentNo)}"><b>${esc(s?.name || b.studentName || "")}</b> ${esc(b.studentNo)} · ${b.stage}차 <span>${meta}</span></button>
+            ${end}</div>`;
+        }).join("") : '<div class="slot-none">오늘은 쉬어 가는 날이에요. 이번 주 일정은 아래에서 볼 수 있어요.</div>'}</div>
+      </section>
 
-      <div>
-        <section class="card" id="fbCard">
-          <div class="head-row"><h3>작성할 피드백</h3>
-            ${noRecord.length ? `<span class="badge badge-blue">${noRecord.length}</span>` : ""}</div>
-          ${noRecord.length ? noRecord.slice(0, 5).map((m) => `<div class="frow">
-            <span class="tx"><b>${esc(nameOf(m.studentNo) || m.name || "")}</b>
-              <small>${dayOnly(m.date)} · ${m.stage}차 면접</small></span>
-            <button type="button" class="go" data-meet="${esc(m.id)}">기록 쓰기 →</button>
-          </div>`).join("") : `<p class="muted" style="margin:14px 0 4px">밀린 기록이 없어요.</p>`}
-          <div class="card-foot">
-            <span style="font-size:.9rem;color:var(--ink-2)">검토를 기다리는 연습</span>
-            <span class="badge badge-orange" id="pendingDot">${pending.length || ""}</span>
-            <button type="button" class="go" data-go="review">연습 리뷰 →</button>
-          </div>
-        </section>
-
-        ${need.length ? `<section class="ask">
-          <div class="head-row"><h3>일정 승인 요청</h3><span class="badge badge-orange">${need.length}건</span></div>
-          ${need.slice(0, 2).map((b) => `<div class="line"><b>${esc(nameOf(b.studentNo) || b.studentName || "")}</b> · ${b.stage}차 면접
-            <small>${fmtDay(b.date)} ${esc(b.start)} – ${esc(b.end)} · ${esc(b.room || "장소 미정")}</small></div>`).join("")}
-          ${need.length > 2 ? `<div class="line muted">외 ${need.length - 2}건</div>` : ""}
-          <button type="button" class="btn-primary" id="goNeed">요청 확인</button>
-        </section>` : ""}
-      </div>
+      <section class="t-prog">
+        <h3>담당 학생 진행</h3>
+        <div class="s">한 칸이 학생 한 명.<br>채운 칸은 이 차수를 마친 학생.</div>
+        <div class="dots" aria-label="${inStage.length}명 중 ${doneN}명 마침">${states.slice(0, 36).map((x) => `<i class="${x}"></i>`).join("")}${states.length > 36 ? `<span class="more">+${states.length - 36}</span>` : ""}</div>
+        ${inStage.length ? `<div class="good">${pct >= .7 ? "순조로워요" : pct >= .3 ? "진행 중이에요" : "이제 시작이에요"} ${icon("check", 14)}</div>` : '<div class="good">이 차수 담당 학생이 없어요</div>'}
+        <div class="seg3">${BOOK_STAGES.map((sg) => `<button type="button" class="${sg.key === progStage ? "on" : ""}" data-prog="${sg.key}">${sg.short}</button>`).join("")}</div>
+        <div class="bignum"><b>${doneN}</b><small>/ ${inStage.length}명</small></div>
+      </section>
     </div>
 
-    <section class="card" style="margin-top:16px">
-      <div class="head-row"><h3>담당 학생 준비 현황</h3><span class="n" id="rowCount"></span>
-        <button type="button" class="go" data-go="students">학생 전체 →</button></div>
-      <div class="tbl-bar">
-        <div class="search-box"><span>${icon("search", 17)}</span>
-          <input type="search" id="hSearch" placeholder="이름 · 학번 검색" aria-label="이름 또는 학번"></div>
-        <div class="spacer"></div>
-        <div class="chips" id="hChips">
-          <button type="button" data-f="all">전체</button>
-          <button type="button" data-f="soon">면접 임박</button>
-          <button type="button" data-f="fb">피드백 대기</button>
-          <button type="button" data-f="norec">기록 없음</button>
-          <button type="button" data-f="nosched">일정 없음</button>
+    <div class="t-row2">
+      <section class="h-card fb ask-w">
+        ${need.length ? `<div class="avs">${need.slice(0, 3).map((b, i) => `<span style="background:${["#5583cc", "#a8b746", "#7a8fb8"][i]}">${esc(initials(nameOf(b.studentNo) || b.studentName || ""))}</span>`).join("")}</div>
+          <h3>일정 승인 요청이<br>${need.length}건 있어요</h3>${askHtml(need, false)}`
+        : `<div class="ch2"><span class="ic">${icon("clock", 19)}</span><h3>일정 승인 요청</h3></div><p class="none">새 요청이 없어요.<br>학생이 신청하면 여기에 바로 떠요.</p>
+          <button type="button" class="link" data-go="schedule">일정 보기 →</button>`}
+      </section>
+
+      <section class="h-card" id="fbCard">
+        <div class="ch2"><span class="ic">${icon("pen", 19)}</span><h3>작성할 기록</h3></div>
+        <div class="sub2"><span>최근 2주 면접 ${recent.length}건</span><span>기록한 비율</span></div>
+        <div class="big">${noRecord.length}<small>건 남음</small></div>
+        ${noRecord.length ? `<div class="nrows">${noRecord.slice(0, 3).map((m) => `<button type="button" class="nrow" data-meet="${esc(m.id)}">
+            <b>${esc(nameOf(m.studentNo) || m.name || "")}</b><small>${dayOnly(m.date)} · ${m.stage}차</small><span>기록 쓰기 →</span></button>`).join("")}
+            ${noRecord.length > 3 ? `<button type="button" class="nrow more" data-go="meetings">외 ${noRecord.length - 3}건 →</button>` : ""}</div>`
+        : ticks.length ? `<div class="scale"><span>0</span><span>${ticks.length}건</span></div>
+          <div class="ticks" aria-hidden="true">${ticks.slice(0, 30).map((x) => `<i class="${x ? "" : "o"}"></i>`).join("")}</div>` : '<div class="ticks empty" aria-hidden="true"></div>'}
+        <div class="trio">
+          <button type="button" class="${noRecord.length ? "warn" : ""}" data-go="meetings"><b>${noRecord.length}</b><small>기록 안 쓴 면접</small></button>
+          <button type="button" class="${pending.length ? "warn" : ""}" data-go="review"><b id="pendingDot">${pending.length}</b><small>검토 대기 연습</small></button>
+          <button type="button" data-go="schedule"><b>${missing.length}</b><small>일정 없는 차수</small></button>
         </div>
+      </section>
+
+      <section class="h-card">
+        <div class="ch2"><span class="ic">${icon("calendar", 19)}</span><h3>이번 주 면접</h3></div>
+        <div class="sub2"><span>내가 맡은 모의면접</span><span>${f2(wkDays[0])} – ${f2(wkDays[4])}</span></div>
+        <div class="wkb" aria-hidden="true">${wkDays.map((d, i) => `<div class="${d === today ? "on" : d > today ? "later" : ""}"><i style="height:${Math.max(8, per[i] / maxPer * 100)}%"></i>${"월화수목금"[i]}</div>`).join("")}</div>
+        <div class="nx"><div class="d">${wkBk.length}<small>건</small></div><div class="sp"></div>
+          <div class="m"><span>완료 ${wkDone} · 남음 ${wkLeft}</span>${wkLate || wkWait ? `<span>${wkLate ? `<span class="late">기록 필요 ${wkLate}</span>` : ""}${wkLate && wkWait ? " · " : ""}${wkWait ? `수락 대기 ${wkWait}` : ""}</span>` : ""}<button type="button" class="link" data-go="schedule">전체 일정 →</button></div></div>
+      </section>
+    </div>
+
+    <section class="h-card tbl">
+      <div class="ch2"><h3>담당 학생 준비 현황</h3><span class="n" id="rowCount"></span><div class="sp"></div>
+        <div class="search-box"><span>${icon("search", 16)}</span>
+          <input type="search" id="hSearch" placeholder="이름 · 학번 검색" aria-label="이름 또는 학번"></div></div>
+      <div class="chips" id="hChips">
+        <button type="button" data-f="all">전체</button>
+        <button type="button" data-f="soon">면접 임박</button>
+        <button type="button" data-f="fb">피드백 대기</button>
+        <button type="button" data-f="norec">기록 없음</button>
+        <button type="button" data-f="nosched">일정 없음</button>
       </div>
-      <div class="table-wrap"><table class="plain rows-sm">
-        <thead><tr><th>학생</th><th>면접 유형</th><th>최근 활동</th><th>지도 상태</th><th>바로가기</th></tr></thead>
-        <tbody id="hBody"></tbody></table></div>
+      <div class="trows" id="hBody"></div>
+      <div class="legend"><span><i class="f"></i>마침</span><span><i class="b"></i>확정</span><span><i class="r"></i>요청 중</span><span><i></i>아직 없음</span>
+        <button type="button" class="link" data-go="students">학생 전체 →</button></div>
     </section>`;
 }
 
 function bindWide({ scope }) {
-  $$("[data-scroll]", root).forEach((b) => b.onclick = () => $("#" + b.dataset.scroll, root)?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  $$("[data-prog]", root).forEach((b) => b.onclick = () => { progStage = Number(b.dataset.prog); render(); });
   $("#hSearch", root).oninput = () => renderRows(scope);
   $$("#hChips button", root).forEach((b) => {
     b.classList.toggle("on", b.dataset.f === filter);
@@ -230,12 +310,20 @@ function renderRows(scope) {
   $("#rowCount", root).textContent = `${list.length}명`;
 
   if (!list.length) {
-    $("#hBody", root).innerHTML = `<tr><td colspan="5" class="empty" data-l="-">${scope.length ? "조건에 맞는 학생이 없습니다." : "담당 학생이 없습니다."}</td></tr>`;
+    $("#hBody", root).innerHTML = `<div class="empty">${scope.length ? "조건에 맞는 학생이 없습니다." : "담당 학생이 없습니다."}</div>`;
     return;
   }
-  $("#hBody", root).innerHTML = list.slice(0, 12).map((s) => {
+  const dot = (s, k) => {
+    if (S.meetings.some((m) => m.studentNo === s.studentNo && Number(m.stage) === k && !m.planned)) return "f";
+    const bk = (S.bookings || []).filter((b) => b.studentNo === s.studentNo && b.stage === k && ACTIVE(b.status));
+    if (bk.some((b) => DONE(b))) return "f";
+    if (bk.some((b) => b.status === "confirmed")) return "b";
+    return bk.length ? "r" : "";
+  };
+  $("#hBody", root).innerHTML = `<div class="tr th"><span>학생</span><span>지원 대학</span><span>최근 활동</span><span>1 · 2 · 3차</span><span></span></div>` + list.slice(0, 12).map((s) => {
     const iv = nextInterview(s);
     const n = iv ? dday(iv) : null;
+    const u = iv ? (s.universities || []).find((x) => x.date && isoDay(x.date) === isoDay(iv)) : null;
     const lastSess = S.sessions.filter((x) => x.studentNo === s.studentNo && x.status === "submitted")
       .sort((a, b) => (b.submittedAt?.seconds || 0) - (a.submittedAt?.seconds || 0))[0];
     const lastMeet = S.meetings.filter((m) => m.studentNo === s.studentNo && !m.planned)
@@ -245,17 +333,14 @@ function renderRows(scope) {
     const act = !sTime && !mTime ? '<span class="muted">아직 없음</span>'
       : sTime >= mTime ? `${fmtDate(lastSess.submittedAt)} 연습 제출`
       : `${dayOnly(lastMeet.date)} ${lastMeet.stage}차 기록`;
-    const [lab, cls, go, label] = waitingFb(s) ? ["피드백 대기", "orange", "fb", "피드백 쓰기 →"]
-      : noSched(s) ? ["일정 없음", "gray", "sched", "일정 잡기 →"]
-      : n != null && n <= 14 ? ["면접 임박", "red", "open", "학생 보기 →"]
-      : noRec(s) ? ["기록 없음", "gray", "open", "학생 보기 →"]
-      : ["확인 완료", "green", "open", "학생 보기 →"];
-    return `<tr><td class="nowrap head" data-l="-"><b>${esc(s.name)}</b> <span class="muted">${esc(s.studentNo)}</span>
-        ${n != null ? `<span class="badge badge-${n <= 7 ? "red" : n <= 21 ? "orange" : "blue"}">${n === 0 ? "D-DAY" : "D-" + n}</span>` : ""}</td>
-      <td class="pack" data-l="유형">${esc(s.track || "-")}</td>
-      <td class="nowrap pack" data-l="최근">${act}</td>
-      <td data-l="-"><span class="badge badge-${cls}">${lab}</span></td>
-      <td data-l="-"><button type="button" class="go" data-row="${esc(s.studentNo)}" data-act="${go}">${label}</button></td></tr>`;
+    const [go, label] = waitingFb(s) ? ["fb", "피드백 쓰기 →"]
+      : noSched(s) ? ["sched", "일정 잡기 →"]
+      : ["open", "학생 보기 →"];
+    return `<div class="tr"><span><b>${esc(s.name)}</b> ${esc(s.studentNo)}</span>
+      <span>${u ? esc(`${u.univ || ""} ${u.dept || ""}`.trim()) : esc(s.track || "-")}${n != null ? ` <em class="${n <= 7 ? "hot" : ""}">${n === 0 ? "D-DAY" : "D-" + n}</em>` : ""}</span>
+      <span>${act}</span>
+      <span class="st3">${[1, 2, 3].map((k) => `<i class="${dot(s, k)}" title="${k}차"></i>`).join("")}</span>
+      <button type="button" class="go" data-row="${esc(s.studentNo)}" data-act="${go}">${label}</button></div>`;
   }).join("");
   $$("#hBody [data-row]", root).forEach((b) => b.onclick = () => {
     if (b.dataset.act === "sched") return gotoSchedule();
@@ -268,87 +353,81 @@ function renderRows(scope) {
   });
 }
 
-// ================= 휴대폰 화면 (720px 이하) — 예전 구성 =================
-function narrowHtml({ me, now, mine, mineToday, noRecord, pending, need, missing }) {
+// ================= 휴대폰 화면 (720px 이하) =================
+function narrowHtml({ me, now, todayAll, noRecord, pending, need, missing }) {
   const missBy = BOOK_STAGES.map((sg) => `${sg.short} ${missing.filter((x) => x.sg.key === sg.key).length}`).join(", ");
-  const line2 = `${now.getMonth() + 1}월 ${now.getDate()}일 ${WEEK[now.getDay()]}요일${mine.length ? ` · 담당 ${mine.length}명` : ""}`;
+  const soon = soonList();
   return `
     ${noticeHtml(me)}
 
-    <div class="me-row"><div style="flex:1;min-width:0">
-      <div class="me-name">${esc(me ? me + " 선생님" : S.ctx.isAdmin ? "관리자" : "선생님")}</div>
-      <div class="me-sub">${esc(line2)}${me ? "" : " · " + esc(S.ctx.account?.loginId || S.ctx.user.email)}</div>
-    </div></div>
+    ${need.length ? `<section class="p-card ask-card">
+      <h3><span class="hi2">${icon("clock", 17)}</span>일정 승인 요청 <em>${need.length}건</em></h3>
+      ${askHtml(need, true)}</section>` : ""}
 
-    ${need.length ? `<div class="todo-main">
-      <span class="t-ic">${icon("clock", 20)}</span>
-      <div style="flex:1;min-width:0">
-        <b>수락을 기다리는 요청 ${need.length}건</b>
-        <span class="muted">${need.slice(0, 3).map((b) => `${esc(nameOf(b.studentNo) || b.studentName || "")} ${b.stage}차 · ${fmtDay(b.date)} ${esc(S.blockLabel(b.block) || "")}`).join("<br>")}${need.length > 3 ? `<br>외 ${need.length - 3}건` : ""}</span>
-        <button type="button" class="btn-primary" id="goNeed">일정에서 처리하기</button>
-      </div>
-    </div>` : ""}
+    <section class="tday">
+      <h2>${icon("calendar", 19)}오늘 면접 ${todayAll.length ? `<span>${todayAll.filter((b) => b.status === "confirmed").length}</span>` : ""}</h2>
+      <div id="todayList">${todayAll.length ? todayAll.map((b) => {
+        const s = S.students.find((x) => x.studentNo === b.studentNo);
+        const done = recorded(b);
+        const others = (b.teachers || []).filter((t) => t !== me);
+        return `<div class="trow2">
+          <div class="dd"><b>${esc(S.blockLabel(b.block) || "")}</b><span>${esc(b.start)}</span></div>
+          <button type="button" class="tx" data-no="${esc(b.studentNo)}"><b>${esc(s?.name || b.studentName || "")}</b><span class="no">${esc(b.studentNo)} · ${b.stage}차</span>
+            <small>${esc(b.room || "장소 미정")} · ${esc(b.start)}–${esc(b.end)}${others.length ? " · " + esc(others.join("·")) + " 선생님과" : ""}</small></button>
+          ${b.status !== "confirmed" ? '<span class="rec view">요청 중</span>' : `<button type="button" class="rec ${done ? "view" : "go"}" data-rec="${esc(b.id)}">${done ? "기록 보기" : "기록"}</button>`}</div>`;
+      }).join("") : '<div class="trow2 none">오늘 잡힌 면접이 없어요.</div>'}</div>
+    </section>
 
-    <div class="sec-head"><h2>오늘 면접</h2><span class="n">${mineToday.length || ""}</span></div>
-    <div class="list-card" id="todayList">${mineToday.length ? mineToday.map((b) => {
-      const s = S.students.find((x) => x.studentNo === b.studentNo);
-      const done = S.meetings.some((m) => m.id === "bk_" + b.id && !m.planned);
-      const others = (b.teachers || []).filter((t) => t !== me);
-      return `<div class="list-row" style="cursor:default">
-        <span class="r-day"><b>${esc(S.blockLabel(b.block) || "")}</b><span>${esc(b.start)}</span></span>
-        <button type="button" class="r-tx" data-no="${esc(b.studentNo)}">
-          <b>${esc(s?.name || b.studentName || "")}</b> <span class="muted" style="display:inline">${esc(b.studentNo)}</span> · ${b.stage}차
-          <span class="muted">${esc(b.room || "장소 미정")} · ${esc(b.start)}–${esc(b.end)}${others.length ? " · " + esc(others.join("·")) + " 선생님과" : ""}</span>
-        </button>
-        <button type="button" class="btn-sm ${done ? "" : "btn-primary"}" data-rec="${esc(b.id)}">${done ? "기록 보기" : "기록"}</button>
-      </div>`;
-    }).join("") : `<div class="empty">오늘 잡힌 면접이 없어요.</div>`}</div>
-
-    <div class="sec-head"><h2>할 일</h2></div>
-    <div class="list-card" id="todoCard">
-      ${todoRow("note", noRecord.length, "danger", "기록을 쓰지 않은 면접",
-        noRecord.length ? noRecord.slice(0, 3).map((m) => `${fmtDay(m.date)} ${esc(nameOf(m.studentNo) || m.name || "")}`).join(" · ") : "모두 썼어요",
+    <section class="p-card todo-t" id="todoCard">
+      <h3>할 일</h3>
+      ${todoRow("note", noRecord.length, "r", "기록을 쓰지 않은 면접",
+        noRecord.length ? noRecord.slice(0, 3).map((m) => `${dayOnly(m.date)} ${esc(nameOf(m.studentNo) || m.name || "")}`).join(" · ") : "모두 썼어요",
         "쓰기", "meetings")}
-      ${todoRow("mic", pending.length, "warn", "검토를 기다리는 연습 답변",
+      ${todoRow("mic", pending.length, "w", "검토를 기다리는 연습 답변",
         pending.length ? "한 줄 피드백만 써도 학생에게 바로 보여요" : "밀린 검토가 없어요",
         "보기", "review", "pendingDot")}
-      ${todoRow("calendar", missing.length, "ink", "일정을 아직 안 잡은 차수",
-        missing.length ? missBy : "모두 잡혔어요",
-        "잡기", "schedule")}
-    </div>
+      ${todoRow("calendar", missing.length, "b", "일정을 아직 안 잡은 차수",
+        missing.length ? missBy : "모두 잡혔어요", "잡기", "schedule")}
+    </section>
 
-    <div class="sec-head"><h2>다가오는 면접</h2></div>
-    <div class="list-card">${soonHtml()}</div>`;
+    <section class="p-card soon">
+      <button type="button" class="tog" id="soonTog" aria-expanded="false" aria-controls="soonList">
+        <b>다가오는 면접</b><small>${soon.length}명</small><span class="sp"></span>
+        ${soon.length ? `<em>가장 가까운 ${soon[0].n === 0 ? "D-DAY" : "D-" + soon[0].n}</em>` : ""}${icon("down", 18)}</button>
+      <div class="list" id="soonList" hidden>${soonHtml(soon)}</div>
+    </section>`;
 }
 
 function bindNarrow() { /* 휴대폰 화면의 클릭은 모두 bindCommon 이 처리한다 */ }
 
 function todoRow(ic, n, tone, title, desc, cta, go, id = "") {
-  const color = n === 0 ? "var(--ink-3)" : tone === "danger" ? "var(--danger)" : tone === "warn" ? "var(--warn)" : "var(--ink)";
-  return `<div class="list-row" style="cursor:default">
-    <span class="r-ic" style="color:${color}">${icon(ic, 20)}</span>
-    <span class="r-num" style="color:${color}"${id ? ` id="${id}"` : ""}>${n}</span>
-    <span class="r-tx"><b>${esc(title)}</b><span class="muted">${desc}</span></span>
-    <button type="button" class="btn-sm" data-go="${go}" data-tab="${go}">${esc(cta)}</button>
+  return `<div class="row3">
+    <span class="ic3 ${n ? tone : ""}">${icon(ic, 18)}</span>
+    <span class="n ${n ? tone : ""}"${id ? ` id="${id}"` : ""}>${n}</span>
+    <span class="tt"><b>${esc(title)}</b><small>${desc}</small></span>
+    <button type="button" class="btn2" data-go="${go}" data-tab="${go}">${esc(cta)}</button>
   </div>`;
 }
 
-function soonHtml() {
-  const list = S.students
+function soonList() {
+  return S.students
     .map((s) => ({ s, d: nextInterview(s) }))
     .filter((x) => x.d && dday(x.d) <= 14)
+    .map((x) => ({ ...x, n: dday(x.d) }))
     .sort((a, b) => a.d - b.d)
     .slice(0, 12);
+}
+function soonHtml(list) {
   if (!list.length) return '<div class="empty">2주 안에 면접 보는 학생이 없어요.</div>';
   const me = myName();
   return list.map(({ s, d }) => {
     const n = dday(d);
     const u = (s.universities || []).find((x) => x.date && fmtDay(x.date) === fmtDay(d));
     const roles = myRoles(s, me);
-    return `<button type="button" class="list-row" data-no="${esc(s.studentNo)}">
-      <span class="r-day"><b>${n === 0 ? "D-DAY" : "D-" + n}</b><span>${dayOnly(d)}</span></span>
-      <span class="r-tx"><b>${esc(s.name)}</b> <span class="muted" style="display:inline">${esc(s.studentNo)}</span>
-        <span class="muted">${esc(u ? `${u.univ} ${u.dept || ""}` : s.track || "")}${roles.length ? " · 내 역할 " + roles.join("·") : ""}</span></span>
-      <span class="r-end">${icon("chevron", 18)}</span></button>`;
+    return `<button type="button" class="srow3 ${n <= 7 ? "hot" : ""}" data-no="${esc(s.studentNo)}">
+      <span class="dd"><b>${n === 0 ? "D-DAY" : "D-" + n}</b><span>${dayOnly(d)}</span></span>
+      <span class="tx"><b>${esc(s.name)}</b><span class="no">${esc(s.studentNo)}</span>
+        <small>${esc(u ? `${u.univ} ${u.dept || ""}` : s.track || "")}${roles.length ? " · 내 역할 " + roles.join("·") : ""}</small></span>
+      ${icon("chevron", 14)}</button>`;
   }).join("");
 }

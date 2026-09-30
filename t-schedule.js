@@ -1,5 +1,5 @@
 // 교사 화면 · 일정 탭
-import { S, register, rerender, myName, setDot, switchTab } from "./t-core.js";
+import { S, register, rerender, myName, setDot, switchTab, applyHead } from "./t-core.js";
 import { mountSchedule } from "./schedule.js";
 import { openMeetingForm } from "./t-meetings.js";
 import { $ } from "./common.js";
@@ -16,6 +16,9 @@ export function gotoSchedule() {
   switchTab("schedule");
   sched?.render();
 }
+/** 오늘 화면 승인 카드: accept | reject | change */
+export function quickBooking(id, action) { return sched?.quick(id, action); }
+export function openBookingDetail(id) { return sched?.openDetail(id); }
 export function openBookingForm(opts) {
   switchTab("schedule");
   sched?.openForm(opts);
@@ -33,6 +36,7 @@ export function init(el) {
       S.blockLabel = d.blockLabel;
       S.needMine = d.needMine || [];
       rerender("home");
+      applyHead();
     },
     openMeeting: (b) => openBookingRecord(b)
   });

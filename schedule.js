@@ -2,7 +2,7 @@
 // 학생 화면과 교사 화면이 같이 쓴다.
 import {
   db, collection, doc, getDoc, getDocs, setDoc, query, where, runTransaction, onSnapshot,
-  $, $$, esc, toast, showError, isoDay, toDate, fmtDay, fmtDate, nextInterview, defaultMeetingType, cachedCollection
+  $, $$, esc, toast, showError, isoDay, toDate, fmtDay, fmtDate, nextInterview, defaultMeetingType, cachedCollection, icon, confirmBox
 } from "./common.js";
 import { pingScheduleSync } from "./sync.js";
 
@@ -184,20 +184,24 @@ export function mountSchedule(root, opts) {
           <button class="btn-sm" id="scNext">▶</button>
           <button class="btn-sm" id="scToday">오늘</button>
         </div>
-        <div class="row">
-          <div class="seg-mini"><button data-view="week">주</button><button data-view="day">일</button></div>
+        <div class="row sc-view">
           <label class="inline-check"><input type="checkbox" id="scWeekend"> 주말</label>
-          ${isStudent ? `<select id="scShade" title="회색 칸 = 선생님 불가 시간">${BOOK_STAGES.map((s) => `<option value="${s.key}">${s.short} 선생님 기준</option>`).join("")}</select>` : `
+          <div class="seg-mini"><button data-view="week">주</button><button data-view="day">일</button></div>
+        </div>
+        <div class="row sc-filt">
+          ${isStudent ? `<select id="scShade" title="빗금 칸 = 이 차수 선생님이 안 되는 시간">${BOOK_STAGES.map((s) => `<option value="${s.key}">${s.short} 선생님 기준</option>`).join("")}</select>` : `
           <select id="scTeacher"><option value="">모든 선생님</option></select>
           <select id="scRoom"><option value="">모든 장소</option></select>
-          <label class="inline-check"><input type="checkbox" id="scMineOnly"> 내 일정만</label>`}
-          ${isStudent ? "" : `<button class="btn-sm" id="scAvail">${isAdmin ? "선생님 불가 시간" : "내 불가 시간"}</button>`}
+          <label class="inline-check"><input type="checkbox" id="scMineOnly"> <span class="lg-only">내 일정만</span><span class="sm-only">나의 일정</span></label>`}
+          ${isStudent ? "" : `<button class="btn-sm" id="scAvail">${icon("clock", 15)} 불가 시간 설정</button>`}
         </div>
       </div>
-      <div class="sc-legend"><span class="sc-chip s1">1차</span><span class="sc-chip s2">2차</span><span class="sc-chip s3">3차</span>
-        <span class="sc-chip s1 req">점선 = 요청 중</span><span class="sc-legend-busy">회색 칸 = ${isStudent ? "선생님 불가" : "내 불가 시간"}</span>
-        <span class="muted">같은 교실·같은 시간은 겹칠 수 없어요 · <b>＋</b> 를 누르면 ${isStudent ? "신청" : "일정 잡기"}</span></div>
-      <div id="scRoomNote" class="muted" style="padding:0 12px 8px"></div>
+      <div class="sc-legend">
+        <div class="l1"><span class="sc-chip s1">1차</span><span class="sc-chip s2">2차</span><span class="sc-chip s3">3차</span>
+          <span class="sc-chip s1 req">점선 = 요청 중</span><span class="sc-legend-busy">빗금 칸 = ${isStudent ? "선생님 불가" : "불가 시간"}</span></div>
+        <div class="l2">같은 교실·같은 시간은 겹칠 수 없어요 · <b>＋</b> 를 누르면 ${isStudent ? "신청" : "일정 잡기"}</div>
+        <details id="scRoomBox" hidden><summary>🏫 교실 사용 제한</summary><div id="scRoomNote"></div></details>
+      </div>
       <div id="scGrid" class="sc-grid-wrap"></div>
     </div>`;
 
@@ -282,17 +286,18 @@ export function mountSchedule(root, opts) {
     const el = $("#scRoomNote", root);
     if (!el) return;
     const lim = st.cfg.rooms.map((r) => ({ r, t: roomLimitText(r, st.cfg.blocks) })).filter((x) => x.t);
-    el.innerHTML = lim.length
-      ? `🏫 교실 사용 제한 · ${lim.map(({ r, t }) => `<b>${esc(r.name)}</b> ${esc(r.note || t)}`).join(" / ")}`
-      : "";
+    el.innerHTML = lim.map(({ r, t }) => `<b>${esc(r.name)}</b> ${esc(r.note || t)}`).join(" / ");
+    const box = $("#scRoomBox", root);
+    if (box) box.hidden = !lim.length;
   }
   function fillFilters() {
     if (isStudent) return;
     const tSel = $("#scTeacher", root), rSel = $("#scRoom", root);
     const tNames = staffNames();
-    tSel.innerHTML = `<option value="">모든 선생님</option>` + tNames.map((n) => `<option ${n === st.fTeacher ? "selected" : ""}>${esc(n)}</option>`).join("");
+    const narrow = window.matchMedia("(max-width: 720px)").matches;
+    tSel.innerHTML = `<option value="">${narrow ? "선생님" : "모든 선생님"}</option>` + tNames.map((n) => `<option ${n === st.fTeacher ? "selected" : ""}>${esc(n)}</option>`).join("");
     const rooms = [...new Set([...roomNames(st.cfg.rooms), ...Object.values(st.days).flatMap((it) => Object.values(it).map((x) => x.room)).filter(Boolean)])];
-    rSel.innerHTML = `<option value="">모든 장소</option>` + rooms.map((n) => `<option ${n === st.fRoom ? "selected" : ""}>${esc(n)}</option>`).join("");
+    rSel.innerHTML = `<option value="">${narrow ? "장소" : "모든 장소"}</option>` + rooms.map((n) => `<option ${n === st.fRoom ? "selected" : ""}>${esc(n)}</option>`).join("");
   }
   const needMine = () => st.bookings.filter((b) => b.status === "requested" && (b.need || []).includes(me) && !(b.approvedBy || []).includes(me));
   const statusBadge = (s) => `<span class="badge badge-${STATUS[s]?.[1] || "gray"}">${STATUS[s]?.[0] || s}</span>`;
@@ -303,11 +308,11 @@ export function mountSchedule(root, opts) {
 
   function bookingLine(b, { withStudent = !isStudent } = {}) {
     const s = studentByNo(b.studentNo);
-    return `<div class="q-item sc-item" data-bid="${b.id}">
-      <div class="row"><span class="sc-chip s${b.stage}">${b.stage}차</span>
+    return `<div class="q-item sc-item" data-bid="${b.id}" role="button" tabindex="0">
+      <div class="b1"><span class="sc-chip s${b.stage}">${b.stage}차</span>
         ${withStudent ? `<b>${esc(s?.name || b.studentName)}</b> <span class="muted">${esc(b.studentNo)}</span>` : `<b>${esc((b.teachers || []).join("·"))} 선생님</b>`}
-        <span>${timeText(b)}</span><span class="muted">${esc(b.room || "장소 미정")}</span>
-        <div class="spacer"></div>${badgeOf(b)}</div>
+        <span class="spacer"></span>${badgeOf(b)}</div>
+      <div class="b2">${timeText(b)} · ${esc(b.room || "장소 미정")}</div>
       ${b.status === "requested" ? `<div class="q-meta">수락 대기: ${esc(waiting(b))}${b.memo ? ` · “${esc(b.memo)}”` : ""}</div>` : b.memo ? `<div class="q-meta">“${esc(b.memo)}”</div>` : ""}
     </div>`;
   }
@@ -321,15 +326,18 @@ export function mountSchedule(root, opts) {
         const ts = stageTeachers(me0, sg.key);
         const list = st.bookings.filter((b) => b.stage === sg.key && ACTIVE(b.status)).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
         const cur = list[0];
-        let body;
-        if (!ts.length) body = `<div class="muted">배정된 선생님이 없어요</div>`;
-        else if (!cur) body = `<div class="muted">아직 신청하지 않았어요</div><button class="btn-sm btn-primary" data-new="${sg.key}">달력에서 신청</button>`;
-        else body = `<div><b>${timeText(cur)}</b></div><div class="muted">${esc(cur.room || "장소 미정")}</div>
-          <div class="row" style="margin-top:4px">${badgeOf(cur)}${cur.status === "requested" ? `<span class="muted">대기: ${esc(waiting(cur))}</span>` : ""}
-          ${needMine().some((x) => x.id === cur.id) ? '<span class="badge badge-red">내 응답 필요</span>' : ""}</div>
-          <button class="btn-sm" data-bid="${cur.id}">자세히</button>`;
-        return `<div class="card sc-stage"><div class="row"><span class="sc-chip s${sg.key}">${sg.short}</span><b>${sg.label}</b></div>
-          <div class="muted" style="margin:2px 0 6px">${ts.length ? esc(ts.join(", ")) + " 선생님" : ""}</div>${body}</div>`;
+        let body, tone = "", tag = "";
+        if (!ts.length) { body = `<div class="st-when muted">배정된 선생님이 없어요</div>`; tag = "배정 없음"; }
+        else if (!cur) { body = `<div class="st-when muted">아직 신청하지 않았어요</div><div class="st-foot"><button class="btn-sm btn-primary" data-new="${sg.key}">달력에서 신청 ${icon("arrow", 14)}</button></div>`; tag = "신청 전"; }
+        else {
+          tone = DONE(cur) ? "done" : "now";
+          tag = DONE(cur) ? "완료" : cur.status === "confirmed" ? "확정" : "요청 중";
+          body = `<div class="st-when"><b>${timeText(cur)}</b></div><div class="st-room">${esc(cur.room || "장소 미정")}${cur.status === "requested" ? ` · 대기: ${esc(waiting(cur))}` : ""}</div>
+          ${needMine().some((x) => x.id === cur.id) ? '<div><span class="badge badge-red">내 응답 필요</span></div>' : ""}
+          <div class="st-foot"><button class="btn-sm" data-bid="${cur.id}">자세히</button></div>`;
+        }
+        return `<div class="card sc-stage ${tone}"><div class="st-h"><span class="st-num">${tone === "done" ? icon("check", 15) : sg.key}</span><b>${sg.label}</b><span class="spacer"></span><span class="st-tag">${tag}</span></div>
+          <div class="st-who">${ts.length ? esc(ts.join(" · ")) + " 선생님" : ""}</div>${body}</div>`;
       }).join("")}</div>`;
     } else {
       const pend = needMine().sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
@@ -347,7 +355,7 @@ export function mountSchedule(root, opts) {
         if (!st.bookings.some((b) => b.studentNo === s.studentNo && b.stage === sg.key && ACTIVE(b.status))) missing.push({ s, sg });
       }
       box.innerHTML = `<div class="grid grid-2" style="align-items:start;margin-bottom:14px">
-        <div class="card"><div class="row"><h3 style="margin:0">처리할 요청</h3>${pend.length ? `<span class="dot-new">${pend.length}</span>` : ""}</div>
+        <div class="card sc-pend"><div class="row"><span class="h-ic">${icon("clock", 17)}</span><h3 style="margin:0">처리할 요청</h3>${pend.length ? `<span class="dot-new">${pend.length}</span>` : ""}</div>
           <div style="margin-top:8px">${pend.length ? pend.map((b) => bookingLine(b)).join("") : '<div class="muted">새 요청이 없습니다.</div>'}</div></div>
         <div class="card"><h3 style="margin:0 0 8px">다가오는 확정 일정</h3>
           ${mineUp.length ? mineUp.map((b) => bookingLine(b)).join("") : '<div class="muted">확정된 일정이 없습니다.</div>'}
@@ -359,7 +367,11 @@ export function mountSchedule(root, opts) {
               <button class="btn-sm" data-newfor="${esc(s.studentNo)}" data-stage="${sg.key}">일정 잡기</button></div>`).join("") || '<div class="muted">모두 신청됨</div>'}</div>
           </details></div></div>`;
     }
-    $$("[data-bid]", box).forEach((el) => el.onclick = () => openDetail(el.dataset.bid));
+    $$("[data-bid]", box).forEach((el) => {
+      el.onclick = () => openDetail(el.dataset.bid);
+      // 줄(div)은 키보드로도 열 수 있게
+      if (el.tagName !== "BUTTON") el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetail(el.dataset.bid); } };
+    });
     $$("[data-new]", box).forEach((el) => el.onclick = () => {
       st.shadeStage = Number(el.dataset.new); if ($("#scShade", root)) $("#scShade", root).value = el.dataset.new;
       render(); $("#scGrid", root).scrollIntoView({ behavior: "smooth", block: "start" });
@@ -448,7 +460,7 @@ export function mountSchedule(root, opts) {
       <div class="grid grid-2" style="gap:0 14px">
         ${isStudent ? "" : `<div class="field"><label>학생 *</label><select name="studentNo" ${canPickStudent ? "" : "disabled"}>
           <option value="">— 학생 선택 —</option>${stuList.map((s) => `<option value="${esc(s.studentNo)}" ${s.studentNo === sNo ? "selected" : ""}>${esc(s.studentNo)} ${esc(s.name)}</option>`).join("")}</select></div>`}
-        <div class="field"><label>차수 *</label><select name="stage" ${b0 ? "disabled" : ""}></select></div>
+        <div class="field"><label>차수 *</label><select name="stage" ${b0 ? "disabled" : ""}></select><div id="bkStageHint" class="sc-stage-hint" hidden></div></div>
         <div class="field"><label>날짜 *</label><input type="date" name="date" value="${esc(b0?.date || date || isoDay())}" required></div>
         <div class="field"><label>칸 (교시) *</label><select name="block">${st.cfg.blocks.map((x) => `<option value="${x.key}" ${x.key === (b0?.block || block) ? "selected" : ""}>${esc(x.label)} (${x.start}–${x.end})</option>`).join("")}</select></div>
       </div>
@@ -466,17 +478,37 @@ export function mountSchedule(root, opts) {
     let chosen = null;
 
     const curStudent = () => isStudent ? opts.student : studentByNo(isStudent ? "" : (f("studentNo")?.value || sNo));
+    // 학생 신청: 고른 날짜·칸에 선생님이 '불가'로 표시한 차수는 '이 시간 불가'로 흐리게 하고 고를 수 없게 한다.
+    // (저장 규칙은 그대로 — 표시만 미리 보여 준다) 원래 고른 차수가 안 되면 되는 차수를 자동으로 골라 둔다.
+    let stageWant = b0?.stage || stage || 1;
     function fillStages() {
       const s = curStudent();
       const sel = f("stage");
-      const want = b0?.stage || Number(sel.value) || stage || 1;
+      const want = b0?.stage || stageWant;
+      const d = f("date")?.value, bk = f("block")?.value;
+      const busyStage = (k) => isStudent && !b0 && s && d && bk ? busyFor(stageTeachers(s, k), d, bk).length > 0 : false;
       sel.innerHTML = BOOK_STAGES.map((sg) => {
         const ts = s ? stageTeachers(s, sg.key) : [];
-        const allowed = ts.length && (isStudent || isAdmin || ts.includes(me));
-        return `<option value="${sg.key}" ${allowed ? "" : "disabled"} ${sg.key === want ? "selected" : ""}>${sg.label}${ts.length ? ` · ${ts.join(", ")}` : " (배정 없음)"}</option>`;
+        const off = ts.length && busyStage(sg.key);
+        const allowed = ts.length && !off && (isStudent || isAdmin || ts.includes(me));
+        return `<option value="${sg.key}" ${allowed ? "" : "disabled"} ${sg.key === want ? "selected" : ""}>${sg.label}${ts.length ? ` · ${ts.join(", ")}` : " (배정 없음)"}${off ? " (이 시간 불가)" : ""}</option>`;
       }).join("");
-      if (sel.selectedOptions[0]?.disabled) { const ok = [...sel.options].find((o) => !o.disabled); if (ok) sel.value = ok.value; }
+      let moved = null;
+      if (sel.selectedOptions[0]?.disabled) {
+        const ok = [...sel.options].find((o) => !o.disabled);
+        if (ok) { sel.value = ok.value; if (ts0(want) && busyStage(want)) moved = Number(ok.value); }
+      }
+      const hint = $("#bkStageHint", body);
+      if (hint) {
+        const hasAny = BOOK_STAGES.some((sg) => (s ? stageTeachers(s, sg.key) : []).length);
+        const allOff = isStudent && !b0 && hasAny && BOOK_STAGES.every((sg) => !(s ? stageTeachers(s, sg.key) : []).length || busyStage(sg.key));
+        hint.hidden = !(moved || allOff);
+        hint.className = "sc-stage-hint" + (allOff ? " off" : "");
+        hint.innerHTML = allOff ? "이 시간은 모든 차수 선생님이 안 돼요. 달력에서 다른 칸을 골라 주세요."
+          : moved ? `${want}차 선생님이 이 시간에 안 돼서, 되는 <b>${moved}차</b>를 골라 두었어요.` : "";
+      }
     }
+    const ts0 = (k) => { const s = curStudent(); return s ? stageTeachers(s, k).length : 0; };
     function fillRooms() {
       const sel = f("room");
       const cur = b0?.room || "";
@@ -542,7 +574,8 @@ export function mountSchedule(root, opts) {
 
     if (f("studentNo")) f("studentNo").onchange = () => { sNo = f("studentNo").value; fillStages(); check(); };
     fillStages(); fillRooms();
-    ["stage", "date", "block"].forEach((n) => f(n).onchange = () => { chosen = null; check(); });
+    f("stage").onchange = () => { stageWant = Number(f("stage").value) || stageWant; chosen = null; fillStages(); check(); };
+    ["date", "block"].forEach((n) => f(n).onchange = () => { chosen = null; fillStages(); check(); });
     f("roomOther").oninput = () => check();
     if (f("force")) f("force").onchange = check;
     check();
@@ -684,8 +717,15 @@ export function mountSchedule(root, opts) {
       const done = (b.need || []).every((n) => approvedBy.includes(n));
       run({ approvedBy, status: done ? "confirmed" : "requested" }, done ? "확정" : "수락", done ? "확정되었습니다." : "수락했습니다. 다른 분의 수락을 기다립니다.");
     });
-    $("#bdReject", body)?.addEventListener("click", () => { if (confirm("이 요청을 거절할까요? 시간이 비워집니다.")) run({ status: "rejected" }, "거절", "거절했습니다."); });
-    $("#bdCancel", body)?.addEventListener("click", () => { if (confirm("이 일정을 취소할까요? 시간이 비워지고 상대에게도 취소로 보입니다.")) run({ status: "cancelled" }, "취소", "취소했습니다."); });
+    const what = `<b>${esc(s?.name || b.studentName || "")} ${esc(b.studentNo)} · ${b.stage}차</b><br>${esc(timeText(b))} · ${esc(b.room || "장소 미정")}`;
+    $("#bdReject", body)?.addEventListener("click", async () => {
+      if (await confirmBox({ title: "이 요청을 거절할까요?", what, note: "거절하면 그 시간이 다시 비워집니다. 되돌리려면 학생이 다시 신청해야 해요.", yes: "거절하기" }))
+        run({ status: "rejected" }, "거절", "거절했습니다.");
+    });
+    $("#bdCancel", body)?.addEventListener("click", async () => {
+      if (await confirmBox({ title: "이 일정을 취소할까요?", what, note: "시간이 비워지고 상대에게도 취소로 보입니다.", yes: "일정 취소" }))
+        run({ status: "cancelled" }, "취소", "취소했습니다.");
+    });
     $("#bdForce", body)?.addEventListener("click", () => run({ approvedBy: b.need || [], status: "confirmed" }, "관리자 확정", "확정했습니다.", { force: true }));
     $("#bdDone", body)?.addEventListener("click", () => run({ done: true }, "완료", "완료 처리했습니다. 다가오는 일정에서 빠집니다."));
     $("#bdUndone", body)?.addEventListener("click", () => run({ done: false }, "완료 취소", "완료를 취소했습니다."));
@@ -702,19 +742,43 @@ export function mountSchedule(root, opts) {
     }
   }
 
+  // 오늘 화면의 승인 카드에서 바로: 수락 · 거절(확인 창) · 시간 변경
+  async function quick(id, action) {
+    let b = st.bookings.find((x) => x.id === id);
+    try { const s = await getDoc(doc(db, "bookings", id)); if (s.exists()) b = { id, ...s.data() }; } catch (e) { if (!b) return showError(e, "일정 열기"); }
+    if (!b || b.status !== "requested") { toast("이미 처리된 요청이에요.", "error"); return refresh(); }
+    if (action === "change") return openForm({ booking: b });
+    const s = studentByNo(b.studentNo);
+    try {
+      if (action === "accept") {
+        if (!(b.need || []).includes(me)) return toast("이 요청은 내가 수락할 차례가 아니에요.", "error");
+        const approvedBy = [...new Set([...(b.approvedBy || []), me])];
+        const done = (b.need || []).every((n) => approvedBy.includes(n));
+        await commit(b.id, { approvedBy, status: done ? "confirmed" : "requested", memo: "", updatedBy: me }, done ? "확정" : "수락", { expectMs: b.updatedAtMs });
+        toast(done ? "확정되었습니다." : "수락했습니다. 다른 분의 수락을 기다립니다.");
+      } else if (action === "reject") {
+        const what = `<b>${esc(s?.name || b.studentName || "")} ${esc(b.studentNo)} · ${b.stage}차</b><br>${esc(timeText(b))} · ${esc(b.room || "장소 미정")}`;
+        if (!await confirmBox({ title: "이 요청을 거절할까요?", what, note: "거절하면 그 시간이 다시 비워집니다. 되돌리려면 학생이 다시 신청해야 해요.", yes: "거절하기" })) return;
+        await commit(b.id, { status: "rejected", memo: "", updatedBy: me }, "거절", { expectMs: b.updatedAtMs });
+        toast("거절했습니다.");
+      }
+      await refresh();
+    } catch (err) { if (err.conflict) toast(err.message, "error", 7000); else showError(err, "요청 처리"); }
+  }
+
   // 교사 불가 시간 (요일별 수업 교시 + 날짜별 예외)
   async function openAvailability() {
     const staff = opts.getStaff?.() || [];
     let target = isAdmin ? (staff.find((t) => t.name === me) || staff[0]) : staff.find((t) => t.id === opts.staffId) || { id: opts.staffId, name: me };
     if (!target?.id) return toast("교사 명단이 없습니다.", "error");
-    const body = modal(isAdmin ? "선생님 불가 시간" : "내 불가 시간", `<div id="avBox"></div>`);
+    const body = modal(isAdmin ? "선생님 불가 시간 설정" : "불가 시간 설정", `<div id="avBox"></div>`);
     const draw = async () => {
       let av = { weekly: {}, dates: {} };
       try { const s = await getDoc(doc(db, "availability", target.id)); if (s.exists()) av = { weekly: {}, dates: {}, ...s.data() }; } catch (e) { showError(e, "불가 시간 불러오기"); }
       const days = [1, 2, 3, 4, 5];
       $("#avBox", body).innerHTML = `
         ${isAdmin ? `<div class="field"><label>선생님</label><select id="avWho">${staff.map((t) => `<option value="${esc(t.id)}" ${t.id === target.id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select></div>` : ""}
-        <p class="muted" style="margin-top:0">체크한 칸은 학생 달력에 회색으로 보이고, 학생이 그 시간에 신청할 수 없습니다. (선생님 본인이 제안하는 건 가능)</p>
+        <p class="muted" style="margin-top:0">수업·회의처럼 모의면접을 할 수 없는 시간을 체크하세요. 체크한 칸은 학생 달력에 빗금으로 보이고, 학생이 그 시간에 신청할 수 없습니다. (선생님 본인이 제안하는 건 가능)</p>
         <h3>매주 반복 (수업 시간 등)</h3>
         <div class="table-wrap"><table class="av-grid"><thead><tr><th></th>${days.map((d) => `<th>${WEEK[d]}</th>`).join("")}</tr></thead><tbody>
           ${st.cfg.blocks.map((blk) => `<tr><th class="nowrap">${esc(blk.label)}</th>${days.map((d) => `<td><input type="checkbox" data-w="${d}" value="${blk.key}" ${(av.weekly[d] || []).includes(blk.key) ? "checked" : ""}></td>`).join("")}</tr>`).join("")}
@@ -761,5 +825,5 @@ export function mountSchedule(root, opts) {
     root.scrollIntoView({ behavior: "smooth", block: "start" });
     toast("달력에서 흰 칸의 ＋ 를 눌러 신청하세요.");
   }
-  return { refresh, render, openForm, focusStage, stop: () => { cfgStop?.(); cfgStop = null; } };
+  return { refresh, render, openForm, openDetail, quick, focusStage, stop: () => { cfgStop?.(); cfgStop = null; } };
 }

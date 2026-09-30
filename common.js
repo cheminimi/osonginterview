@@ -335,7 +335,15 @@ export const ICONS = {
   pen: '<path d="M4 20h4L19 9l-4-4L4 16Z"/><path d="m14.5 5.5 4 4"/>',
   star: '<path d="m12 3.6 2.7 5.5 6.1.9-4.4 4.3 1 6-5.4-2.8-5.4 2.8 1-6L3.2 10l6.1-.9Z"/>',
   sparkle: '<path d="m12 3.2 1.8 3.9 3.9 1.8-3.9 1.8L12 14.6l-1.8-3.9-3.9-1.8 3.9-1.8Z"/><path d="m18.3 14.6.9 2 2 .9-2 .9-.9 2-.9-2-2-.9 2-.9Z"/>',
-  external: '<path d="M14 4h6v6M20 4l-8 8"/><path d="M18 14v5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 19V8a1.5 1.5 0 0 1 1.5-1.5H10"/>'
+  external: '<path d="M14 4h6v6M20 4l-8 8"/><path d="M18 14v5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 19V8a1.5 1.5 0 0 1 1.5-1.5H10"/>',
+  arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
+  x: '<path d="M6 6l12 12M18 6 6 18"/>',
+  book: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5Z"/><path d="M4 20.5A2.5 2.5 0 0 1 6.5 18H20v3H6.5"/>',
+  heart: '<path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.5 4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10Z"/>',
+  history: '<path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.5"/><path d="M4 4v4.5h4.5M12 8v4l3 2"/>',
+  trend: '<path d="M4 18 9 12l4 3 7-8"/><path d="M15 7h5v5"/>',
+  alert: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5.5M12 16.5h.01"/>'
 };
 export function icon(name, size = 20) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ""}</svg>`;
@@ -355,6 +363,43 @@ export function mountAccountMenu(ctx, el, opts = {}) {
   el.innerHTML = `<span class="acct-name lg-only">${esc(name)}</span>${ctx.isAdmin ? ' <span class="badge badge-red lg-only">관리자</span>' : ""}
     <button type="button" class="avatar" id="acctBtn" aria-label="내 정보 열기">${esc(initials(name))}</button>`;
   el.querySelector("#acctBtn").onclick = () => openAccountSheet(ctx, opts);
+}
+// ---- 새 디자인 틀: 왼쪽 레일(컴퓨터) 머리·꼬리, 탭 단추, 머리줄
+export function railHead(name) {
+  return `<button type="button" class="me-btn" id="railMe" aria-label="내 정보 열기"><span class="avatar">${esc(initials(name))}</span><small>${esc(name)}</small></button>`;
+}
+export const railFoot = `<div class="rspace"></div><div class="school"><img src="osong-logo.png" alt="오송고등학교" width="46" height="46"><small>제작_김형민</small></div>`;
+export function tabButton(t, active) {
+  return `<button type="button" class="${active ? "active" : ""}" data-tab="${t.key}"><span class="ic">${icon(t.ic, 22)}</span><span>${t.label}</span>${t.dot ? `<span class="tb-dot" id="${t.dot}"></span>` : ""}</button>`;
+}
+/** 레일의 이름 동그라미 → 머리줄의 계정 단추와 같은 메뉴 */
+export function wireRailMe() {
+  const b = document.getElementById("railMe");
+  if (b) b.onclick = () => document.getElementById("acctBtn")?.click();
+}
+/** 머리줄 글자 바꾸기 (pillHtml 이 undefined 면 알약은 그대로) */
+export function setHead(title, sub = "", pillHtml) {
+  const t = document.getElementById("ahTitle"), s = document.getElementById("ahSub"), p = document.getElementById("ahPill");
+  if (t) t.textContent = title || "";
+  if (s) { s.textContent = sub || ""; s.hidden = !sub; }
+  if (p && pillHtml !== undefined) p.innerHTML = pillHtml || "";
+}
+/** 확인 창 (거절 · 취소처럼 되돌리기 어려운 일). 누르면 true, 닫으면 false */
+export function confirmBox({ title, what = "", note = "", yes = "확인", no = "취소" }) {
+  return new Promise((done) => {
+    document.getElementById("cfmBox")?.remove();
+    document.body.insertAdjacentHTML("beforeend", `<div class="cfm-dim" id="cfmBox"><div class="cfm" role="alertdialog" aria-modal="true" aria-labelledby="cfmT">
+      <div class="ci">${icon("alert", 22)}</div><h4 id="cfmT">${esc(title)}</h4><div class="what">${what}</div>${note ? `<p>${esc(note)}</p>` : ""}
+      <div class="acts"><button type="button" class="no" id="cfmNo">${esc(no)}</button><button type="button" class="yes" id="cfmYes">${esc(yes)}</button></div></div></div>`);
+    const box = document.getElementById("cfmBox");
+    const end = (v) => { box.remove(); document.removeEventListener("keydown", onKey, true); done(v); };
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); end(false); } };
+    document.addEventListener("keydown", onKey, true);
+    box.onclick = (e) => { if (e.target === box) end(false); };
+    box.querySelector("#cfmNo").onclick = () => end(false);
+    box.querySelector("#cfmYes").onclick = () => end(true);
+    box.querySelector("#cfmNo").focus();
+  });
 }
 export function openAccountSheet(ctx, opts = {}) {
   const name = ctx.profile?.name || ctx.user.email;

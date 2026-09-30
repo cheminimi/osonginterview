@@ -28,7 +28,7 @@ function render() {
   const cur = $("#rStudent", root).value;
   $("#rStudent", root).innerHTML = opt(S.students.map((s) => [s.studentNo, `${s.studentNo} ${s.name}`]), cur, "전체 학생");
   const pending = S.sessions.filter((s) => s.status === "submitted" && !s.reviewedAt).length;
-  setDot("#pendingDot", pending);
+  const pd = $("#pendingDot"); if (pd) pd.textContent = String(pending);   // 오늘 화면의 숫자 칸 (0 도 그대로 보인다)
   const st = $("#rStatus", root).value, no = $("#rStudent", root).value, mine = $("#rMine", root).checked;
   $("#rScope", root).innerHTML = S.sessionsScope === "all" ? "" : `<div class="notice row" style="padding:8px 12px"><span>최근 ${RECENT_DAYS}일 안에 제출된 연습만 표시 중이에요.${st === "progress" || st === "" ? " <b>미완료</b> 연습은 불러와야 보여요." : ""}</span><div class="spacer"></div><button class="btn-sm" id="rLoadAll">이전 기록·미완료까지 불러오기</button></div>`;
   $("#rLoadAll", root)?.addEventListener("click", async (e) => { e.target.disabled = true; try { await loadAllSessions(); } catch (err) { showError(err, "연습 기록 불러오기"); e.target.disabled = false; } });

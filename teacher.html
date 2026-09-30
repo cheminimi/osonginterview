@@ -174,22 +174,20 @@
 })();
 </script>
 </head>
-<body>
-<header class="topbar"><div class="inner">
-  <div class="brand">면접 스튜디오<small>선생님</small></div>
-  <div class="spacer"></div>
-  <div class="row" id="acct"></div>
-</div></header>
+<body class="nd">
 
 <nav class="tabbar" id="tabs" hidden></nav>
 
 <main class="wrap">
+  <div class="apphead"><div class="ah-tx"><b id="ahTitle"></b><span id="ahSub"></span></div>
+    <div class="ah-pill" id="ahPill"></div>
+    <div class="tabs sub" id="qSub" hidden>
+      <button class="active" data-tab="questions">학생별 예상질문</button>
+      <button data-tab="bank">질문은행</button>
+    </div>
+    <div class="row" id="acct"></div></div>
   <div id="pwaTip"></div>
   <div class="sub-head" id="subBar" hidden></div>
-  <div class="tabs sub" id="qSub" hidden>
-    <button class="active" data-tab="questions">학생별 예상질문</button>
-    <button data-tab="bank">질문은행</button>
-  </div>
   <section data-panel="home"></section>
   <section data-panel="schedule" hidden></section>
   <section data-panel="students" hidden></section>
@@ -207,7 +205,8 @@
 </div></div>
 
 <script type="app-module">
-import { requireRole, mountAccountMenu, $, $$, icon } from "./common.js";
+import { requireRole, mountAccountMenu, $, $$, icon, toast } from "./common.js";
+import { pushState, pushOn, enablePush, disablePush, refreshPush, onPushOpen } from "./push.js";
 import { registerSW, mountInstallTip, showInstallTipAgain, isStandalone } from "./pwa.js";
 import { S, loadAll, switchTab, closeModal, watchSubmissions, mountTabs } from "./t-core.js";
 import * as home from "./t-home.js";
@@ -227,16 +226,38 @@ $("#mClose").onclick = closeModal;
 mountTabs();
 document.body.classList.add("has-tabbar");
 
-mountAccountMenu(S.ctx, $("#acct"), {
-  subtitle: S.ctx.account?.loginId || S.ctx.user.email,
-  items: [
-    { icon: "note", label: "대면 기록 전체", desc: "지금까지 쓴 모의면접 기록", id: "goMeetings", onClick: () => switchTab("meetings") },
-    { icon: "pen", label: "대학 면접 후기", desc: "학생이 다녀와서 쓴 실제 면접 후기", id: "goReviews", onClick: () => { switchTab("reviews"); reviews.load(); } },
-    { icon: "check", label: "연습 리뷰", desc: "학생이 제출한 말하기 연습", id: "goReviewMenu", onClick: () => switchTab("review") },
-    S.ctx.isAdmin ? { icon: "gear", label: "앱 관리", desc: "시트 연동 · 계정 · 일정 설정 · 백업", id: "goAdmin", onClick: () => switchTab("admin") } : null,
-    isStandalone() ? null : { icon: "phone", label: "홈 화면에 앱으로 추가", onClick: () => { switchTab("home"); showInstallTipAgain($("#pwaTip")); } }
-  ]
-});
+// 이름 메뉴 — 알림 상태가 바뀌면 글씨도 바뀌어야 해서 다시 그릴 수 있게 함수로 둔다
+function mountMenu() {
+  mountAccountMenu(S.ctx, $("#acct"), {
+    subtitle: S.ctx.account?.loginId || S.ctx.user.email,
+    items: [
+      { icon: "note", label: "대면 기록 전체", desc: "지금까지 쓴 모의면접 기록", id: "goMeetings", onClick: () => switchTab("meetings") },
+      { icon: "pen", label: "대학 면접 후기", desc: "학생이 다녀와서 쓴 실제 면접 후기", id: "goReviews", onClick: () => { switchTab("reviews"); reviews.load(); } },
+      { icon: "check", label: "연습 리뷰", desc: "학생이 제출한 말하기 연습", id: "goReviewMenu", onClick: () => switchTab("review") },
+      S.ctx.isAdmin ? { icon: "gear", label: "앱 관리", desc: "시트 연동 · 계정 · 일정 설정 · 백업", id: "goAdmin", onClick: () => switchTab("admin") } : null,
+      S.ctx.account?.role === "admin" && !S.ctx.account?.key ? null : { icon: "chat", label: pushOn() ? "휴대폰 알림 끄기" : "휴대폰 알림 켜기",
+        desc: pushOn() ? "일정 신청 알림을 휴대폰으로 받고 있어요" : "학생이 일정을 신청하면 휴대폰으로 알려드려요",
+        id: "pushToggle", onClick: () => togglePush() },
+      isStandalone() ? null : { icon: "phone", label: "홈 화면에 앱으로 추가", onClick: () => { switchTab("home"); showInstallTipAgain($("#pwaTip")); } }
+    ]
+  });
+}
+async function togglePush() {
+  if (pushOn()) { await disablePush(); mountMenu(); return; }
+  const st = pushState();
+  if (!st.can) {
+    toast(st.why, "error", 10000);
+    if (st.needInstall) { switchTab("home"); showInstallTipAgain($("#pwaTip")); }
+    return;
+  }
+  await enablePush(S.ctx);
+  mountMenu();
+}
+mountMenu();
+// 이미 켜 둔 기기는 조용히 표만 갱신 (권한을 다시 묻지 않음)
+refreshPush(S.ctx).then(mountMenu, mountMenu);
+// 알림을 눌러서 들어오면 일정 탭으로
+onPushOpen(() => switchTab("schedule"));
 
 const panel = (n) => $(`[data-panel="${n}"]`);
 home.init(panel("home"));

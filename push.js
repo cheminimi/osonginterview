@@ -81,7 +81,7 @@ export async function enablePush(ctx, { quiet = false } = {}) {
     });
     setOff(false);
     try { localStorage.setItem("pushToken", token); } catch (_) {}
-    if (!quiet) toast("알림을 켰어요. 일정이 확정되면 휴대폰으로 알려드릴게요.");
+    if (!quiet) toast(ctx.account.role === "student" ? "알림을 켰어요. 일정이 확정되면 휴대폰으로 알려드릴게요." : "알림을 켰어요. 학생이 일정을 신청하면 휴대폰으로 알려드릴게요.");
     return true;
   } catch (e) {
     console.warn("push enable", e);

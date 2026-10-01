@@ -36,6 +36,23 @@
     text-shadow: 0 1px 3px rgba(0,0,0,.5); }
   .self .rec::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #e0493f; }   /* 깜빡이지 않음 — 녹화 중일 때만 보임 */
   .self.recording .rec { display: flex; }
+  /* 시선: 기준 잡기 때 얼굴 테두리, 답변 중 얼굴이 안 잡힐 때 안내 (숫자는 보여 주지 않음) */
+  .self .gz-oval { position: absolute; left: 50%; top: 50%; width: 30%; height: 66%; transform: translate(-50%, -52%); border: 2px dashed #7fe0a8; border-radius: 50%; display: none; }
+  .self .gz-lb { position: absolute; left: 8px; top: 5px; color: #fff; font-size: .72rem; font-weight: 800; text-shadow: 0 1px 3px rgba(0,0,0,.6); display: none; }
+  .self.gz-calib .gz-oval, .self.gz-calib .gz-lb { display: block; }
+  .self.gz-calib .rec { display: none; }
+  .self .gz-hint { position: absolute; inset: auto 0 0 0; padding: 6px 8px; background: rgba(36,38,42,.82); color: #fff; font-size: .78rem; font-weight: 700; text-align: center; line-height: 1.35; display: none; }
+  .self.gz-noface .gz-hint { display: block; }
+  .gzc { display: flex; align-items: baseline; gap: 10px; }
+  .gzc b { font-size: 2.6rem; font-weight: 800; color: var(--accent-fill); font-variant-numeric: tabular-nums; }
+  .gzc span { color: var(--ink-3); }
+  .gz-note { font-size: .9rem; color: var(--ink-2); background: var(--accent-faint); border-radius: 10px; padding: 10px 14px; line-height: 1.6; margin: 0; }
+  .chips-m span.bad { background: var(--danger-bg); color: var(--danger); }
+  .gz-tip { font-size: .8rem; color: var(--warn); margin: 6px 0 0; }
+  .sumline.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .sumline .gz-ok { color: var(--ok); } .sumline .gz-mid { color: var(--warn); } .sumline .gz-bad { color: var(--danger); }
+  .note-i .gz-li { display: block; margin-top: 6px; }
+  #measure { position: fixed; left: 8px; bottom: 8px; z-index: 9000; background: rgba(36,38,42,.78); color: #fff; font: 11px/1.45 ui-monospace, Menlo, Consolas, monospace; padding: 5px 8px; border-radius: 6px; pointer-events: none; white-space: pre; }
 
   .panel { background: #fff; border-left: 1px solid var(--line); padding: 44px 44px 28px; display: flex; flex-direction: column; gap: 18px; overflow-y: auto; min-height: 0; }
   .panel .grow { flex: 1; }
@@ -85,6 +102,7 @@
   .ck li.ok .n::before { content: "✓"; } .ck li.ok .n span { display: none; }
   .ck li.now .n { background: var(--accent-soft); color: var(--accent); }
   .ck li.bad .n { background: var(--warn-bg); color: var(--warn); }
+  .ck li.skip .n::before { content: "–"; } .ck li.skip .n span { display: none; }
   .ck .d { color: var(--ink-3); }
   .meter { height: 10px; border-radius: 5px; background: var(--line-3); overflow: hidden; }
   .meter i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .1s linear; }
@@ -225,6 +243,18 @@
   .chips-m span { border-radius: 999px; padding: 5px 12px; font-size: .85rem; background: var(--chip); color: var(--ink-2); font-variant-numeric: tabular-nums; }
   .chips-m span.good { background: var(--ok-bg); color: var(--ok); }
   .chips-m span.note { background: var(--warn-bg); color: var(--warn); }
+  .kw { margin-top: 10px; }
+  .kw-h { font-size: .8rem; font-weight: 800; color: var(--ink-2); margin-bottom: 6px; }
+  .kw-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .kw-chips span { border-radius: 999px; padding: 4px 11px; font-size: .85rem; font-weight: 700; }
+  .kw-chips span i { font-style: normal; font-weight: 500; opacity: .75; margin-left: 2px; font-variant-numeric: tabular-nums; }
+  .kw-chips .k3 { background: var(--accent-strong); color: #fff; }
+  .kw-chips .k2 { background: #7c97c4; color: #fff; }
+  .kw-chips .k1 { background: var(--accent-soft); color: var(--accent); }
+  .kw-hint { font-size: .8rem; color: var(--ink-3); margin: 6px 0 0; line-height: 1.6; }
+  .kw-q { display: block; }
+  .kw-q .hit { font-weight: 800; color: var(--ink); }
+  .kw-q .miss { color: var(--ink-3); opacity: .7; }
   .dl { margin-top: 10px; }
   .foot-r { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 
@@ -266,7 +296,7 @@
     .pgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .pcard .pimg { aspect-ratio: 16 / 9; }
     .res .pair { grid-template-columns: 1fr; }
-    .sumline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .sumline, .sumline.five { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .pick { padding: 18px 24px; }
   }
   @media (max-height: 800px) {
@@ -427,7 +457,8 @@
 <main id="app">
   <div class="room" id="room">
     <section class="scene" id="scene">
-      <div class="self" id="self" hidden><video id="selfVid" autoplay muted playsinline></video><span class="rec">녹화 중</span></div>
+      <div class="self" id="self" hidden><video id="selfVid" autoplay muted playsinline></video><span class="rec">녹화 중</span>
+        <i class="gz-oval"></i><span class="gz-lb" id="gzLb">● 얼굴을 찾고 있어요</span><span class="gz-hint">얼굴이 화면에 보이게 앉아 주세요</span></div>
     </section>
     <section class="panel" id="side"></section>
   </div>
@@ -449,6 +480,8 @@ const URLQ = new URLSearchParams(location.search);
 // 시험 환경 표시: 시험용 가짜 장치(handoff/testenv/fake/media.js)가 켤 때만 true. 배포본에서는 항상 false
 const TEST = window.__boothTest === true;
 const FAST = TEST ? Math.max(1, Math.min(60, Number(URLQ.get("fast")) || 1)) : 1;   // 시험용: 흐름 시간을 N배 빠르게 (?fast=10)
+// 측정 표시(시선 계산 시간·메모리): 시험 환경이거나 주소에 ?measure=1 일 때만 화면 왼쪽 아래에 작게. 평소 배포 화면에는 없음
+const MEASURE = TEST || URLQ.get("measure") === "1";
 const CONFIG = {
   planMin: [10, 15, 20], planDefault: 15,   // 면접 시간 선택지(분), 대답이 없을 때
   minLeft: 60,          // 남은 시간이 이보다 적으면 새 질문·꼬리질문 없이 마침
@@ -480,12 +513,62 @@ const IV_TYPES = [
 const typeLabel = (k) => IV_TYPES.find((t) => t.k === k)?.label || k;
 const FILLERS = ["음", "어", "아", "그", "저", "약간", "뭔가", "이제", "좀", "막", "그냥", "진짜", "되게", "일단", "그래서", "그리고"];
 const SPEED = { low: 250, high: 330 };      // 분당 글자 수 참고 범위 (띄어쓰기 제외)
+// 시선 — 답변 중 화면 속 면접관을 보고 있었는지 (MediaPipe Face Landmarker, 이 PC 안에서만 계산 · 영상·얼굴 점은 저장하지 않음)
+const GAZE = {
+  dir: "booth-lib/mediapipe/",   // 엔진·모델 파일 (부스 폴더에 직접 둠, @mediapipe/tasks-vision 1.0.1)
+  loadWait: 10,          // 장비 점검 때 도구가 아직 준비 중이면 이만큼(초)까지 기다림 → 안 되면 시선 분석 없이
+  calibSec: 3,           // 시선 기준 잡기 (화면 속 면접관 바라보기)
+  calibMinFace: 0.6,     // 기준 잡는 동안 얼굴이 이 비율 이상 잡혀야 함
+  fps: 5, slowFps: 2,    // 초당 잴 횟수 (느리면 낮춤)
+  slowMs: 80,            // 한 번 계산 평균이 이보다 길면 slowFps 로
+  offMs: 250,            // slowFps 에서도 이보다 길면 시선 분석을 끔 (gazeOff)
+  yawMax: 15, pitchMax: 12,   // 기준 대비 고개 좌우·상하(도) 안이면 '화면 봄'
+  irisMax: 0.12,         // 눈동자 가로 위치(눈 폭 대비)가 기준에서 이만큼 넘게 벗어나면 '다른 곳'
+  awaySec: 2,            // 이보다 오래 계속 다른 곳을 보면 '벗어남 1번'
+  noFaceHint: 3,         // 답변 중 얼굴이 이만큼(초) 계속 안 잡히면 카메라 창에 안내
+  minSamples: 3,         // 이보다 적게 쟀으면 그 답변은 시선 칸 없음
+  ok: 70, mid: 50,       // 결과 색: 70% 이상 초록 · 50~70 주황 · 50 미만 빨강
+  headMoveBig: 8,        // 고개 각도 흔들림(표준편차, 도)이 이보다 크면 '고개를 자주 움직였어요'
+  awayHint: 3            // 벗어남이 이만큼 이상이면 결과에 안내 한 줄
+};
+// 핵심어휘 — 받아쓴 답변에서 많이 쓴 낱말 (형태소 분석기 없이 조사·어미만 뗀다)
+const KW = {
+  max: 8, sessionMax: 10, questionMax: 3,
+  shortWords: 30,                  // 답변이 이만큼(낱말) 안 되면 1번만 나온 낱말도 넣는다
+  strong: 3, mid: 2,               // 칩 진하기: 3번 이상 진하게 · 2번 중간 · 1번 옅게
+  // 조사·서술격 (뒤에서 긴 것부터 하나만, 떼고 2글자 이상 남을 때만)
+  josa: ["이었습니다", "였습니다", "입니다", "이에요", "이었고", "이었던", "에서부터", "적인", "이다", "이라는", "이라고", "에서는", "으로는", "으로도", "으로써",
+    "에게서", "한테서", "이라도", "에서도", "에게는", "라는", "라고", "에게", "한테", "에서", "으로", "까지", "부터", "처럼", "보다", "마다", "만큼", "이나", "이랑",
+    "하고", "께서", "이며", "이고", "에는", "에도", "와는", "과는", "로는", "로도", "은", "는", "이", "가", "을", "를", "의", "에", "도", "와", "과", "로", "만", "랑", "나", "인"],
+  // 하다·되다 꼴 (떼고 줄기가 2글자 이상이면 줄기만, 아니면 낱말을 버림)
+  hada: ["하였습니다", "했었습니다", "되었습니다", "했습니다", "합니다", "됐습니다", "됩니다", "했었는데", "했는데", "하는데", "하면서", "되면서", "하였고", "되었고",
+    "했었고", "했고", "됐고", "했던", "되던", "하던", "해서", "되어서", "돼서", "하고", "하는", "되는", "하게", "되게", "하기", "되기", "하여", "되어", "했다", "됐다",
+    "한다", "된다", "하며", "하면", "되면", "하다고", "하다는", "하다", "되다", "해요", "했어요", "해야", "하려고", "하지", "해", "한", "할", "된", "될", "함"],
+  // 이것으로 끝나면 움직씨로 보고 버림 (받침 ㅆ 이 있는 낱말·'~요'·두 글자 '~은/는/던/게' 도 버림)
+  verbEnd: ["습니다", "었는데", "았는데", "었습니다", "았습니다", "는데", "지만", "면서", "으면", "려고", "어요", "아요", "었고", "았고", "었던", "았던", "었다", "았다", "는다",
+    "로운", "러운", "스러운", "스럽게", "롭게"],
+  adn: ["은", "는", "던", "든", "게", "한"],
+  bound: ["것", "수", "때", "등", "데", "중", "점", "곳", "번", "분", "년", "개", "명", "거", "걸", "게", "줄", "뿐", "만", "적"],   // 의존명사 + 조사(것을·수가)
+  // 뺄 말 (FILLERS 도 함께 뺀다)
+  stop: ["저는", "제가", "저희", "저도", "저의", "우리", "그래서", "그리고", "그런데", "그러나", "하지만", "그러면", "그러므로", "따라서", "또한", "그것", "이것", "저것",
+    "그거", "이거", "때문", "생각", "정말", "많이", "가장", "너무", "아주", "매우", "조금", "다시", "항상", "계속", "먼저", "이후", "다음", "처음", "마지막", "부분",
+    "정도", "경우", "자신", "사람", "이번", "하나", "모든", "여러", "다른", "어떤", "이런", "그런", "저런", "이렇게", "그렇게", "어떻게", "위해", "통해", "대해", "관해",
+    "같은", "같이", "있는", "없는", "알게", "그때", "지금", "오늘", "무엇", "그런지", "있습니다", "없습니다", "입니다", "였습니다", "이었습니다", "것이", "것은", "것을",
+    "것도", "등의", "또는", "혹은", "특히", "바로", "결과", "과정", "내용", "모습", "되고", "싶고", "싶은", "싶다", "싶어서", "싶습니다", "더욱", "모두", "함께", "직접",
+    "스스로", "이라는", "라는", "가지", "하나의", "제일", "되게", "거의", "네", "예", "아니요", "감사합니다"],
+  // 질문 핵심어를 뽑을 때만 더 빼는 말 (답변 낱말에는 영향 없음)
+  qStop: ["인상", "경험", "이유", "방법", "방안", "생각", "자신", "본인", "계획", "의견", "설명", "말씀", "소개", "본인의", "지원", "학생", "무엇", "어떤", "가지",
+    "구체적", "사례", "예시", "느낀", "배운", "점은", "하나", "최근", "가장"]
+};
 const SAY = {
   pick: "오늘 면접관을 골라 주세요. 한 명 또는 두 명을 말하거나 눌러 주세요.",
   greet: (n) => `${n ? n + " 학생, " : ""}반가워요. 면접을 시작할까요?`,
   greetAgain: "면접을 시작할까요? '네' 또는 '아니요'라고 말해 주세요.",
   check: "화면에 얼굴이 보이는지 확인하고, '안녕하세요'라고 말해 보세요.",
   checkAgain: "잘 들리지 않았어요. 한 번 더 '안녕하세요'라고 말해 보세요.",
+  gaze: "마지막으로 화면 속 면접관을 3초 동안 편하게 바라봐 주세요.",
+  gazeAgain: "얼굴이 잘 보이지 않아요. 카메라에 얼굴이 보이게 앉아서 다시 면접관을 바라봐 주세요.",
+  gazeOff: "시선 분석 없이 진행할게요.",
   noStt: "받아쓰기 없이 진행할게요.",
   types: "어떤 면접을 볼까요? 내 생기부, 학생부 공통, 제시문, 기본 인성 중에서 골라 주세요. 여러 개를 골라도 돼요.",
   typesDone: (ls) => `${ls.join(", ")} 순서로 할게요.`,
@@ -784,6 +867,7 @@ if (TEST) {
   window.__iv = () => panel.members.map((m) => ({ id: m.id, voice: m.voice?.voice?.name || null, pitch: m.voice?.pitch, matched: !!m.voice?.matched }));
   window.__booth = { parsePick: (t) => parsePick(t), cmdOf: (t, a, s) => cmdOf(t, a, s), parseMin: (t) => parseMin(t), parseTypes: (t) => parseTypes(t),
     voiceFor: (ids) => { panel.setInterviewers(ids); return window.__iv(); }, left: () => leftSec(),
+    keywordsOf: (t, m) => keywordsOf(t, m), questionKeys: (q, a) => questionKeys(q, a), gaze: () => gaze,
     panel, releaseVideos, blobs: () => [...ivBlobs.values()].filter(Boolean), preload: (ls) => preloadVideos(ls) };
 }
 
@@ -971,18 +1055,36 @@ async function stopRec(rec, keep, it, which) {
 
 // ---------- 저장 — 답한 문항이 생긴 뒤에만 sessions 에 만든다 ----------
 const ITEM_KEYS = ["source", "qid", "type", "text", "passage", "prepSec", "thinkSec", "answerSec", "followUp", "prepMemo", "answer", "usedSec",
-  "followAnswer", "followUsedSec", "m", "followM", "askedBy", "followAskedBy", "thinkUsedSec", "thinkMore", "prepUsedSec"];
+  "followAnswer", "followUsedSec", "m", "followM", "askedBy", "followAskedBy", "thinkUsedSec", "thinkMore", "prepUsedSec", "gaze", "followGaze"];
 function cleanItems() {
   return items.filter((it) => it.answered).map((it) => {
     const o = {};
     for (const k of ITEM_KEYS) if (it[k] !== undefined && it[k] !== false && !(k === "followAskedBy" && !it[k])) o[k] = it[k];
+    for (const k of ["gaze", "followGaze"]) { if (o[k]) o[k] = gazeOut(o[k]); else delete o[k]; }   // 숫자 4개만
+    if (!sttOff) {   // 많이 쓴 낱말 (받아쓰기가 없으면 칸 없음)
+      const k1 = it.answer ? keywordsOf(it.answer) : [], k2 = it.followAnswer ? keywordsOf(it.followAnswer) : [];
+      if (k1.length) o.keywords = k1;
+      if (k2.length) o.followKeywords = k2;
+    }
     return o;
   });
 }
 function sessionBase() {
   const p = ctx.profile;
   return { studentUid: ctx.user.uid, studentName: p.name || "", studentNo: p.studentNo, track: p.track || "",
-    mode: "booth", modeLabel: "면접 부스", types, interviewers, planSec, ...(sttOff ? { sttOff: true } : {}) };
+    mode: "booth", modeLabel: "면접 부스", types, interviewers, planSec, ...(sttOff ? { sttOff: true } : {}), ...sessionKeywords(), ...sessionGaze() };
+}
+function sessionGaze() {   // 답변 전체 평균 응시율·벗어남 합 (시선 분석을 못 했으면 gazeOff)
+  const gs = items.filter((it) => it.answered).flatMap((it) => [it.gaze, it.followGaze]).filter(Boolean);
+  if (gaze.off || !gaze.base) return { gazeOff: true };
+  if (!gs.length) return {};
+  const n = gs.reduce((a, g) => a + g._n, 0), on = gs.reduce((a, g) => a + g._on, 0);
+  return { gaze: { onPct: Math.round(on / n * 100), awayCount: gs.reduce((a, g) => a + g.awayCount, 0) } };
+}
+function sessionKeywords() {
+  if (sttOff) return {};
+  const k = keywordsOf(items.filter((it) => it.answered).flatMap((it) => [it.answer, it.followAnswer]).filter(Boolean), KW.sessionMax);
+  return k.length ? { keywords: k } : {};
 }
 let storeQ = Promise.resolve();
 function saveProgress() {
@@ -1023,7 +1125,198 @@ const ai = {
   },
   report() { return null; }
 };
+// 핵심어휘 — 낱말 하나를 줄기로 (뺄 말·움직씨면 null)
+const hasSsang = (w) => [...w].some((ch) => { const c = ch.charCodeAt(0) - 0xac00; return c >= 0 && c < 11172 && c % 28 === 20; });   // 받침 ㅆ (했·있·바꿨)
+function kwStem(raw) {
+  let w = raw.replace(/[^가-힣a-zA-Z0-9]/g, "");
+  if (w.length < 2 || /^[0-9]/.test(w) || KW.stop.includes(w) || FILLERS.includes(w)) return null;
+  // 하다·되다 꼴 먼저 (설계하는 → 설계), 아니면 조사 (공정함이 → 공정함 → 공정)
+  const hadaCut = (x) => {
+    for (const e of KW.hada) {
+      if (!x.endsWith(e) || x.length <= e.length) continue;
+      const st = x.slice(0, -e.length);
+      if (st.length >= 2) return st;
+      if (e.length >= 2) return null;        // 했고·해서·하는 — 줄기 1글자면 움직씨 (한 글자 끝 '할·해' 는 역할·이해처럼 이름씨일 수 있어 그대로)
+    }
+    return x;
+  };
+  const h = hadaCut(w);
+  if (h === null) return null;
+  if (h !== w) w = h;
+  else {
+    for (const e of KW.josa) {
+      if (!w.endsWith(e)) continue;
+      if (w.length - e.length >= 2) { w = w.slice(0, -e.length); break; }
+      if (w.length - e.length === 1 && KW.bound.includes(w[0])) return null;
+    }
+    w = hadaCut(w); if (w === null) return null;
+  }
+  if (hasSsang(w) || KW.verbEnd.some((e) => w.endsWith(e))) return null;
+  if (w.length >= 3 && w.endsWith("요")) return null;
+  if (w.length === 2 && KW.adn.includes(w[1])) return null;
+  if (w.length < 2 || KW.stop.includes(w) || FILLERS.includes(w)) return null;
+  return w;
+}
+function kwCount(texts) {
+  const cnt = new Map(); let total = 0;
+  for (const t of texts) for (const raw of String(t || "").split(/\s+/)) {
+    if (!raw) continue; total++;
+    const w = kwStem(raw); if (w) cnt.set(w, (cnt.get(w) || 0) + 1);
+  }
+  return { cnt, total };
+}
+// 많이 쓴 낱말 [{w, n}] — 2번 이상(짧은 답변은 1번도), 많은 순 · 먼저 나온 순
+function keywordsOf(texts, max = KW.max) {
+  try {
+    const { cnt, total } = kwCount([].concat(texts));
+    return [...cnt].filter(([, n]) => n >= 2 || total < KW.shortWords).sort((a, b) => b[1] - a[1]).slice(0, max).map(([w, n]) => ({ w, n }));
+  } catch (e) { console.warn("keywords", e); return []; }
+}
+// 질문 핵심어 (표시만, 저장 안 함) + 답변에 나왔는지
+function questionKeys(q, answer) {
+  try {
+    const seen = kwCount([answer]).cnt, out = [];
+    for (const raw of String(q || "").split(/\s+/)) {
+      const w = kwStem(raw);
+      if (w && !KW.qStop.includes(w) && !out.some((o) => o.w === w)) out.push({ w, hit: seen.has(w) });
+      if (out.length >= KW.questionMax) break;
+    }
+    return out;
+  } catch (e) { return []; }
+}
 const topFillers = (f, min = 3) => Object.entries(f || {}).filter(([, n]) => n >= min).sort((a, b) => b[1] - a[1]).slice(0, 3);
+
+// ---------- 시선 — 도구 하나를 페이지가 살아 있는 동안 계속 다시 쓴다 (부스는 학생마다 새로고침) ----------
+// 녹화하는 같은 카메라 영상(#selfVid)을 그대로 읽는다. 카메라를 따로 열지 않음
+const gaze = {
+  lm: null, loading: null, failed: "", delegate: "",
+  base: null,          // 이번 학생의 기준 {yaw, pitch, iris} — 장비 점검 때 잡음
+  off: false,          // 이번 면접에서 시선 분석 끔 (세션 gazeOff)
+  fps: GAZE.fps, slow: false, ms: [], total: 0, lastTs: 0,
+  run: null, timer: null,
+  load() {
+    if (this.loading) return this.loading;
+    if (TEST && window.__noGaze) { this.failed = "시험: 시선 끔"; return this.loading = Promise.resolve(false); }
+    const dir = new URL(GAZE.dir, location.href).href;
+    this.loading = (async () => {
+      if (TEST && window.__gazeFail) throw new Error("시험: 불러오기 실패");
+      const { FilesetResolver, FaceLandmarker } = await import(dir + "vision_bundle.mjs");
+      const files = await FilesetResolver.forVisionTasks(dir.replace(/\/$/, ""));
+      const opt = (delegate) => ({ baseOptions: { modelAssetPath: dir + "face_landmarker.task", delegate }, runningMode: "VIDEO", numFaces: 1,
+        outputFacialTransformationMatrixes: true, outputFaceBlendshapes: false });
+      // 그래픽 카드가 소프트웨어 흉내(SwiftShader·Basic Render Driver 등)면 GPU 방식이 오히려 CPU 를 많이 씀 → 처음부터 CPU 방식
+      const want = TEST && window.__gazeDelegate ? window.__gazeDelegate : softGL() ? "CPU" : "GPU";
+      if (want === "GPU") {
+        try { this.lm = await FaceLandmarker.createFromOptions(files, opt("GPU")); this.delegate = "GPU"; }
+        catch (e) { console.warn("gaze GPU → CPU", e); }
+      }
+      if (!this.lm) { this.lm = await FaceLandmarker.createFromOptions(files, opt("CPU")); this.delegate = "CPU"; }
+      return true;
+    })().catch((e) => { console.warn("gaze load", e); this.failed = String(e?.message || e); return false; });
+    return this.loading;
+  },
+  ready() { return !!this.lm && !this.failed; },
+  // 한 번 재기 → {face:false} 또는 {face:true, yaw, pitch, iris} (얼굴 점 좌표는 여기서 버림)
+  detect() {
+    const v = $("#selfVid");
+    if (!this.lm || !v || v.readyState < 2 || !v.videoWidth) return null;
+    const ts = Math.max(performance.now(), this.lastTs + 1); this.lastTs = ts;
+    const t0 = performance.now();
+    let r;
+    try { r = this.lm.detectForVideo(v, ts); } catch (e) { console.warn("gaze detect", e); return null; }
+    const ms = performance.now() - t0;
+    if (++this.total > 3) { this.ms.push(ms); if (this.ms.length > 20) this.ms.shift(); }   // 처음 몇 번(준비)은 빼고 평균
+    this.tune();
+    const p = r?.faceLandmarks?.[0], m = r?.facialTransformationMatrixes?.[0]?.data;
+    if (!p) return { face: false };
+    const D = 180 / Math.PI;
+    const yaw = m ? Math.atan2(-m[2], Math.hypot(m[6], m[10])) * D : 0, pitch = m ? Math.atan2(m[6], m[10]) * D : 0;
+    const ratio = (iris, a, b) => (p[iris].x - p[a].x) / ((p[b].x - p[a].x) || 1e-6);
+    const iris = p.length > 473 ? (ratio(468, 33, 133) + ratio(473, 362, 263)) / 2 : 0.5;
+    return { face: true, yaw, pitch, iris };
+  },
+  wasmBytes() {   // 측정용: 엔진(wasm) 메모리 크기 — 내부 이름이 줄여져 있어 두 단계까지 찾아봄
+    const seen = new Set(), look = (o, d) => {
+      if (!o || typeof o !== "object" || seen.has(o) || d > 2) return 0; seen.add(o);
+      if (o.HEAPU8?.buffer) return o.HEAPU8.buffer.byteLength;
+      for (const v of Object.values(o)) { const n = look(v, d + 1); if (n) return n; }
+      return 0;
+    };
+    try { return look(this.lm, 0); } catch (_) { return 0; }
+  },
+  avgMs() { return this.ms.length ? this.ms.reduce((a, b) => a + b, 0) / this.ms.length : 0; },
+  tune() {   // 느린 PC → 초당 횟수 낮춤 → 그래도 느리면 끔
+    if (this.ms.length < 10) return;
+    const a = this.avgMs();
+    if (!this.slow && a > GAZE.slowMs) { this.slow = true; this.fps = GAZE.slowFps; this.ms = []; console.warn("gaze slow", a); }
+    else if (this.slow && a > GAZE.offMs) { this.failed = "느린 PC"; this.off = true; this.stop(); console.warn("gaze off (slow)", a); }
+  },
+  isOn(g) {
+    const b = this.base;
+    return g.face && Math.abs(g.yaw - b.yaw) <= GAZE.yawMax && Math.abs(g.pitch - b.pitch) <= GAZE.pitchMax && Math.abs(g.iris - b.iris) <= GAZE.irisMax;
+  },
+  // 답변 시작 ~ 끝. 면접관이 말하는 동안(질문 다시 읽기·안내)은 재지 않는다
+  start() {
+    this.stop();
+    if (this.off || !this.base || !this.ready()) return;
+    this.run = { n: 0, on: 0, noFace: 0, away: 0, awayFrom: null, counted: false, noFaceFrom: null, yaw: [], pitch: [] };
+    const tick = () => {
+      const r = this.run; if (!r) return;
+      if (document.body.dataset.tts !== "1") {
+        const g = this.detect();
+        if (g && this.run) {
+          const t = now(); r.n++;
+          if (!g.face) {
+            r.noFace++; r.noFaceFrom ??= t;   // 얼굴 없음은 따로 셈 (고개를 많이 돌려 잠깐 놓친 것이면 벗어남은 이어짐)
+            if (t - r.noFaceFrom >= GAZE.noFaceHint) $("#self")?.classList.add("gz-noface");
+          } else {
+            r.noFaceFrom = null; $("#self")?.classList.remove("gz-noface");
+            r.yaw.push(g.yaw); r.pitch.push(g.pitch);
+            if (this.isOn(g)) { r.on++; r.awayFrom = null; }
+            else {
+              if (r.awayFrom == null) { r.awayFrom = t; r.counted = false; }
+              if (!r.counted && t - r.awayFrom > GAZE.awaySec) { r.away++; r.counted = true; }
+            }
+          }
+        }
+      }
+      if (this.run) this.timer = setTimeout(tick, Math.max(25, 1000 / this.fps / FAST));
+    };
+    this.timer = setTimeout(tick, 0);
+  },
+  // 끝 → {onPct, awayCount, headMove, noFacePct} 또는 null (_n 은 화면·세션 평균용, 저장 안 함)
+  stop() {
+    clearTimeout(this.timer); this.timer = null;
+    $("#self")?.classList.remove("gz-noface");
+    const r = this.run; this.run = null;
+    if (!r || r.n < GAZE.minSamples || this.off) return null;
+    const sd = (a) => { if (a.length < 2) return 0; const m = a.reduce((x, y) => x + y, 0) / a.length; return Math.sqrt(a.reduce((x, y) => x + (y - m) ** 2, 0) / a.length); };
+    return { onPct: Math.round(r.on / r.n * 100), awayCount: r.away, headMove: Math.round(Math.hypot(sd(r.yaw), sd(r.pitch)) * 10) / 10,
+      noFacePct: Math.round(r.noFace / r.n * 100), _n: r.n, _on: r.on };
+  }
+};
+function softGL() {   // WebGL 이 소프트웨어로 돌면 true
+  try {
+    const gl = document.createElement("canvas").getContext("webgl2") || document.createElement("canvas").getContext("webgl");
+    if (!gl) return true;
+    const ext = gl.getExtension("WEBGL_debug_renderer_info");
+    const r = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
+    gaze.renderer = r;
+    return /swiftshader|llvmpipe|basic render|software|microsoft basic/i.test(r);
+  } catch (_) { return true; }
+}
+const gazeOut = (g) => g && { onPct: g.onPct, awayCount: g.awayCount, headMove: g.headMove, noFacePct: g.noFacePct };
+setTimeout(() => gaze.load(), TEST ? 0 : 1500);   // 로그인 화면에서 미리 불러 둠 (장비 점검 전에 준비)
+if (MEASURE) {   // 측정 표시 (시험 환경·?measure=1 일 때만)
+  const box = document.createElement("div"); box.id = "measure"; document.body.appendChild(box);
+  setInterval(() => {
+    const heap = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : "–";
+    const wasm = gaze.wasmBytes();
+    box.textContent = `시선 ${gaze.lm ? gaze.delegate : gaze.failed ? "꺼짐(" + gaze.failed + ")" : "준비 중"} · ${gaze.avgMs().toFixed(1)}ms · ${gaze.fps}/초 · ${gaze.run ? "재는 중" : "쉼"}
+잰 횟수 ${gaze.total} · JS ${heap}MB${wasm ? ` · 엔진 ${Math.round(wasm / 1048576)}MB` : ""}${gaze.base ? " · 기준 있음" : ""}${gaze.off ? " · 이번 면접 끔" : ""}`;
+  }, 1000);
+}
 
 // =====================================================================
 // 3. 화면 조각
@@ -1149,7 +1442,8 @@ function renderLogin(msg = "") {
       <button class="btn-primary btn-lg" id="lgo">시작하기</button>
     </form>
     <div class="grow"></div>
-    <div class="note-i">${I_SPK}<span>면접관 목소리가 스피커로 나와요. 공용 컴퓨터라 끝나면 자동으로 로그아웃되고 영상은 남지 않아요.</span></div>`, false);
+    <div class="note-i">${I_SPK}<span>면접관 목소리가 스피커로 나와요. 공용 컴퓨터라 끝나면 자동으로 로그아웃되고 영상은 남지 않아요.
+      <span class="gz-li">👁 답변 중 얼굴 방향으로 <b>시선 비율만</b> 계산해요. 얼굴 영상은 저장하거나 보내지 않아요.</span></span></div>`, false);
   $("#lid").focus();
   $("#loginForm").onsubmit = async (e) => {
     e.preventDefault();
@@ -1364,6 +1658,58 @@ async function sample(ms, onTick, onEvent) {
   return "time";
 }
 async function checkPhase() {
+  await checkMedia();
+  await gazeCheck();
+}
+// 장비 점검 마지막 — 화면 속 면접관을 3초 바라보는 동안의 얼굴 방향을 기준으로 잡는다 (렌즈가 아니라 '평소 화면을 볼 때'가 기준)
+async function gazeCheck() {
+  const by = panel.members[0].id;
+  const mark = (st, d) => { const li = $('#ck li[data-s="gaze"]'); if (li) { li.className = st; li.querySelector(".d").textContent = d; } };
+  const self = $("#self"), lb = $("#gzLb");
+  const off = async (why, speak) => {
+    gaze.off = true; gaze.base = null; self?.classList.remove("gz-calib");
+    mark("skip", why);
+    if (speak) { $("#ckMsg").textContent = SAY.gazeOff; await say(SAY.gazeOff, { by, cap: "장비 점검" }); }
+  };
+  gaze.off = false; gaze.base = null;
+  mark("now", "면접관 쪽을 편하게 보세요");
+  if (!gaze.ready()) {
+    if (!gaze.loading) gaze.load();
+    $("#ckMsg").textContent = "시선 도구를 준비하고 있어요…";
+    await Promise.race([gaze.loading, sleepV(GAZE.loadWait)]);
+    if (!gaze.ready()) return off("시선 분석 없이 진행", false);   // 불러오기 실패·늦음 → 조용히 넘어감
+  }
+  const ttl = $("#side .ttl"), msg = $("#ckMsg");
+  if (ttl) ttl.innerHTML = "화면 속 면접관을<br>3초 동안 바라봐 주세요";
+  if (msg) msg.outerHTML = `<div class="gzc" id="gzc"><b id="gzN">${GAZE.calibSec}</b><span>초 남음 · 평소 답변할 때처럼 앉아 주세요</span></div>
+    <p class="gz-note" id="ckMsg">이 방향을 기준으로 답변 중 <b>화면을 본 비율</b>을 계산해요. 얼굴 영상은 저장하거나 보내지 않아요.<br>얼굴이 잡히지 않으면 시선 분석 없이 그대로 진행해요.</p>`;
+  for (const el of [$("#heard"), $(".meter")]) if (el) el.hidden = true;   // 목소리 칸은 접고 기준 잡기만
+  const pl = $("#side .phase-l"); if (pl) pl.textContent = "장비 점검 · 4/4";
+  self?.classList.add("gz-calib");
+  gaze.detect();   // 첫 계산은 준비로 느림 — 기준 잡기 전에 한 번 미리
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    await say(attempt === 1 ? SAY.gaze : SAY.gazeAgain, { by, cap: "장비 점검" }); panel.caption("장비 점검", "listening");
+    const got = [], t0 = now(); let n = 0;
+    const r = await sample(GAZE.calibSec * 1000 / FAST, () => {
+      const g = gaze.detect(); if (!g) return; n++;
+      if (g.face) got.push(g);
+      if (lb) lb.textContent = g.face ? "● 얼굴을 찾았어요" : "● 얼굴을 찾고 있어요";
+      const c = $("#gzN"); if (c) c.textContent = Math.max(1, Math.ceil(GAZE.calibSec - (now() - t0)));
+    }, (e) => e.final && cmdOf(e.text, ["next", "end", "again"], true));
+    if (r === "next") return off("건너뜀 · 시선 분석 없이", false);
+    if (r === "end") { await quitConfirm(by); return off("건너뜀 · 시선 분석 없이", false); }   // "아니요" → 기준 없이 이어서
+    if (r === "again") { attempt--; continue; }
+    if (n && got.length >= Math.max(GAZE.minSamples, n * GAZE.calibMinFace)) {
+      const avg = (k) => got.reduce((a, g) => a + g[k], 0) / got.length;
+      gaze.base = { yaw: avg("yaw"), pitch: avg("pitch"), iris: avg("iris") };
+      self?.classList.remove("gz-calib"); mark("ok", "기준을 잡았어요");
+      await sleepV(0.4); return;
+    }
+    mark("bad", "얼굴이 잡히지 않았어요");
+  }
+  return off("시선 분석 없이 진행", true);
+}
+async function checkMedia() {
   const by = panel.members[0].id, name = ctx.profile.name || "○○○";
   const draw = () => {
     setPhase("check");
@@ -1371,7 +1717,8 @@ async function checkPhase() {
       <ol class="ck" id="ck">
         <li data-s="cam"><span class="n"><span>1</span></span><b>카메라</b><span class="d"></span></li>
         <li data-s="quiet"><span class="n"><span>2</span></span><b>주변 소리</b><span class="d"></span></li>
-        <li data-s="voice"><span class="n"><span>3</span></span><b>목소리</b><span class="d"></span></li></ol>
+        <li data-s="voice"><span class="n"><span>3</span></span><b>목소리</b><span class="d"></span></li>
+        <li data-s="gaze"><span class="n"><span>4</span></span><b>시선 기준 잡기</b><span class="d"></span></li></ol>
       <div class="meter"><i id="lvl"></i></div>
       <div class="heard" id="heard">“안녕하세요, 저는 ${esc(name)}입니다”</div>
       <p class="hint" id="ckMsg">확인되면 저절로 다음으로 넘어가요. 두 번 안 되면 “받아쓰기 없이 진행할게요” 하고 계속해요.</p>`);
@@ -1672,6 +2019,7 @@ async function listenPhase(it, which, by, carry, started) {
   panel.listen();
   const parts = [...carry], frames = [];
   frameSink = (b) => frames.push(b);
+  gaze.start();
   const t0 = now();
   let first = started || parts.length > 0, lastSound = now(), quietFrom = now(), misses = 0, hush = null, seenLoud = lastLoud, out = "done", el = 0;
   const live = (interim = "") => { const p = $("#liveT"); if (p) { p.innerHTML = `<span style="color:inherit">${esc(parts.join(" "))}</span>${interim ? ` <span>${esc(interim)}</span>` : ""}`; p.scrollTop = p.scrollHeight; } };
@@ -1723,6 +2071,7 @@ async function listenPhase(it, which, by, carry, started) {
       }
     }
   } finally { frameSink = null; }
+  const g = gaze.stop();
   if (out !== "done") return out;
   const used = Math.round(el);
   // 마지막 말이 받아쓰기에 들어올 시간을 조금 준다
@@ -1732,8 +2081,8 @@ async function listenPhase(it, which, by, carry, started) {
   const pend = stt.interim.trim(); stt.interim = "";
   if (pend && !isCmd(pend)) parts.push(pend);
   const answer = parts.join(" ").trim(), m = ai.analyze(frames, answer);
-  if (isF) { it.followAnswer = answer; it.followUsedSec = used; it.followM = m; }
-  else { it.answer = answer; it.usedSec = used; it.m = m; }
+  if (isF) { it.followAnswer = answer; it.followUsedSec = used; it.followM = m; if (g) it.followGaze = g; else delete it.followGaze; }
+  else { it.answer = answer; it.usedSec = used; it.m = m; if (g) it.gaze = g; else delete it.gaze; }
   return "done";
 }
 
@@ -1802,7 +2151,8 @@ function vidBlock(it, which) {
   return `<video class="clip" src="${c.url}" controls playsinline preload="metadata"></video>
     <div class="dl"><button type="button" class="btn-sm" data-dl="${items.indexOf(it)}:${which}">이 영상 받기</button></div>`;
 }
-function chips(m, used, limit) {
+const gzCls = (p) => p >= GAZE.ok ? "good" : p >= GAZE.mid ? "note" : "bad";
+function chips(m, used, limit, g) {
   if (!m) return "";
   const c = [`<span class="${used > limit + 30 ? "note" : ""}">답변 ${fmtSec(used)}</span>`];
   if (m.cpm != null) {
@@ -1814,7 +2164,24 @@ function chips(m, used, limit) {
   if (m.firstSec == null) c.push(`<span class="note">목소리가 잡히지 않았어요</span>`);
   else c.push(`<span class="${m.pauses >= 2 ? "note" : "good"}">3초 넘게 멈춤 ${m.pauses}번</span>`);
   topFillers(m.fillers).forEach(([w, n]) => c.push(`<span class="note">“${esc(w)}” ${n}번</span>`));
+  if (g) {
+    c.push(`<span class="${gzCls(g.onPct)} gz">👁 화면 응시 ${g.onPct}% · 다른 곳 ${g.awayCount}번</span>`);
+    if (g.headMove > GAZE.headMoveBig) c.push(`<span class="gz-head">고개를 자주 움직였어요</span>`);
+  }
   return `<div class="chips-m">${c.join("")}</div>`;
+}
+const gzTip = (g) => g && (g.awayCount >= GAZE.awayHint || g.onPct < GAZE.mid) ? `<p class="gz-tip">시선이 자주 벗어났어요. 생각할 때도 면접관 쪽을 보며 말해 보세요.</p>` : "";
+// 많이 쓴 낱말 칩 + 질문 핵심어가 답변에 나왔는지 (받아쓰기가 없거나 낱말이 없으면 칸 없음)
+function kwBlock(q, answer) {
+  if (sttOff || !answer) return "";
+  const ks = keywordsOf(answer);
+  if (!ks.length) return "";
+  const lv = (n) => n >= KW.strong ? "k3" : n >= KW.mid ? "k2" : "k1";
+  const qk = questionKeys(q, answer);
+  return `<div class="kw"><div class="kw-h">많이 쓴 낱말</div>
+    <div class="kw-chips">${ks.map((k) => `<span class="${lv(k.n)}">${esc(k.w)} <i>${k.n}</i></span>`).join("")}</div>
+    <p class="kw-hint">답변에서 많이 쓴 낱말이에요.${qk.length ? ` 질문의 핵심어가 들어 있는지 확인해 보세요.
+      <span class="kw-q">질문 핵심어: ${qk.map((k) => `<span class="${k.hit ? "hit" : "miss"}">${esc(k.w)}${k.hit ? " ✓" : ""}</span>`).join(" · ")}</span>` : ""}</p></div>`;
 }
 const typeLabelOf = (it) => it.source === "personal" ? "내 생기부" : it.type === "passage" ? "제시문" : it.type === "mmi" ? "MMI" : it.type === "personality" ? "인성" : "학생부 공통";
 function timeChart(done) {
@@ -1856,31 +2223,33 @@ function showResults() {
   const pauses = ms.reduce((s, m) => s + (m.pauses || 0), 0);
   const allF = {}; ms.forEach((m) => Object.entries(m.fillers || {}).forEach(([w, n]) => allF[w] = (allF[w] || 0) + n));
   const tf = topFillers(allF, 3)[0];
+  const sg = sessionGaze().gaze;
   $("#hdMid").innerHTML = `<span class="htime">면접 끝 · ${planSec / 60}분 중 ${fmtSec(Math.min(usedTotalSec, planSec + 999))} 사용</span>`;
   showFull(`<div class="results"><div class="inner">
-    <div class="rtop"><div><h1 class="ttl big">수고했어요</h1><p class="sub">질문별로 시간을 어떻게 썼는지, 말 속도와 멈춘 곳을 확인해 보세요.</p></div>
+    <div class="rtop"><div><h1 class="ttl big">수고했어요</h1><p class="sub">질문별로 시간을 어떻게 썼는지, 말 속도·멈춘 곳·<b>${sttOff ? "" : "많이 쓴 낱말"}${sttOff || !sg ? "" : "·"}${sg ? "시선" : ""}</b>을 확인해 보세요.</p></div>
       <div class="rcount"><b id="rCount">${fmtSec(CONFIG.resultAuto)}</b><span>뒤 선생님께 자동 제출하고<br>처음 화면으로 돌아가요 · 영상 받기 누르면 1분 연장</span></div></div>
     ${clips.length ? `<div class="notice-dl">${I_CAM}<div><b>영상은 웹에 저장되지 않아요. 가져가려면 지금 받아 가세요.</b>
       <p>‘이 영상 받기’로 이 컴퓨터에 내려받은 뒤 <b>내 메일로 보내거나 USB에 담아 가세요.</b> 선생님께는 받아쓴 답변과 말하기 기록만 제출돼요.<br>
       다 옮겼으면 이 컴퓨터의 다운로드 폴더에서 지워 주세요. 다음 학생이 볼 수 있어요.</p></div>
       ${clips.length > 1 ? `<button type="button" class="btn-dl" id="dlAll">영상 모두 받기</button>` : ""}</div>` : ""}
-    <div class="sumline">
+    <div class="sumline${sg ? " five" : ""}">
       <div><b>${done.length}문항</b><span>받은 질문${nFollow ? ` (꼬리질문 ${nFollow}개 포함 ${done.length + nFollow}번 답변)` : ""}</span></div>
       <div><b>${fmtSec(usedTotalSec)} <small>/ ${fmtSec(planSec)}</small></b><span>쓴 시간 / 정한 시간</span></div>
       <div><b>${avg != null ? avg + "자" : "–"}</b><span>평균 말 속도 (분당, 참고 ${SPEED.low}~${SPEED.high}자)</span></div>
       <div><b>${pauses}번</b><span>3초 넘게 멈춘 곳${tf ? ` · “${esc(tf[0])}” ${tf[1]}번` : ""}</span></div>
+      ${sg ? `<div class="gz-sum"><b class="gz-${gzCls(sg.onPct) === "good" ? "ok" : gzCls(sg.onPct) === "note" ? "mid" : "bad"}">${sg.onPct}%</b><span>화면 응시 (답변 중 평균)</span></div>` : ""}
     </div>
     ${timeChart(done)}
     ${clips.length ? `<p class="hint" id="vidNote">영상에는 생각 시간도 들어 있어요.</p>` : ""}
     ${done.map((it, i) => `<article class="res"><div class="pair">
         <div>${vidBlock(it, "main")}</div>
         <div><div class="qn">질문 ${i + 1} · ${esc(typeLabelOf(it))} · ${esc(label(it.askedBy))}</div><div class="qt">${esc(it.text)}</div>${passageBox(it, false)}
-          ${chips(it.m, it.usedSec, it.answerSec)}
-          <div class="ans">${it.answer ? esc(it.answer) : `<span class="hint">받아쓴 답변이 없어요</span>`}</div></div></div>
+          ${chips(it.m, it.usedSec, it.answerSec, it.gaze)}
+          <div class="ans">${it.answer ? esc(it.answer) : `<span class="hint">받아쓴 답변이 없어요</span>`}</div>${kwBlock(it.text, it.answer)}${gzTip(it.gaze)}</div></div>
       ${it.followUp ? `<div class="pair"><div>${vidBlock(it, "follow")}</div>
         <div><div class="qn">꼬리질문</div><div class="qt">${esc(it.followUp)}</div>
-          ${chips(it.followM, it.followUsedSec, 60)}
-          <div class="ans">${it.followAnswer ? esc(it.followAnswer) : `<span class="hint">받아쓴 답변이 없어요</span>`}</div></div></div>` : ""}
+          ${chips(it.followM, it.followUsedSec, 60, it.followGaze)}
+          <div class="ans">${it.followAnswer ? esc(it.followAnswer) : `<span class="hint">받아쓴 답변이 없어요</span>`}</div>${kwBlock(it.followUp, it.followAnswer)}${gzTip(it.followGaze)}</div></div>` : ""}
     </article>`).join("")}
     <div class="foot-r"><button type="button" class="btn-primary btn-lg" id="submitR" data-btn="submit">지금 제출하고 마치기</button>
       <span class="hint">“면접 종료”라고 말해도 바로 제출해요 · 영상은 제출되지 않아요</span></div>
@@ -1984,8 +2353,10 @@ async function resetBooth() {
   try { await Promise.race([storeQ, sleepReal(4000)]); } catch (_) {}
   try { await signOut(auth); } catch (_) {}
   try { clearDataCache(); sessionStorage.clear(); localStorage.removeItem("keepLogin"); } catch (_) {}
-  const keep = URLQ.get("fast");
-  location.replace("booth.html" + (keep ? "?fast=" + encodeURIComponent(keep) : ""));
+  const q = new URLSearchParams();
+  if (URLQ.get("fast")) q.set("fast", URLQ.get("fast"));
+  if (URLQ.get("measure")) q.set("measure", URLQ.get("measure"));   // 부스 PC 측정 표시 유지
+  location.replace("booth.html" + (q.toString() ? "?" + q : ""));
 }
 
 // 대기 화면에서 몇 시간마다 새로고침해 메모리·연결 문제를 비운다 (면접 중엔 안 함)

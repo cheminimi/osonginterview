@@ -90,6 +90,20 @@
   .meter i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .1s linear; }
   .heard { background: var(--accent-faint); border-radius: 10px; padding: 12px 16px; min-height: 48px; color: var(--ink-2); }
 
+  /* 면접 유형 */
+  .ycards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .ycard { min-height: 92px; border-radius: 14px; display: grid; align-content: center; gap: 4px; padding: 12px 16px; text-align: left; background: #fff; justify-content: stretch; }
+  .ycard b { font-size: 1.15rem; display: flex; align-items: center; gap: 8px; }
+  .ycard em { font-style: normal; font-size: .72rem; background: var(--ok-bg); color: var(--ok); border-radius: 999px; padding: 2px 8px; }
+  .ycard span { font-size: .82rem; color: var(--ink-3); font-weight: 400; }
+  .ycard.on { border: 2px solid var(--accent-fill); background: var(--accent-faint); color: var(--accent); }
+  .ycard:disabled { opacity: .45; }
+  /* 제시문 */
+  .psg { border: 1px solid #ebe6d6; background: #fbfaf6; border-radius: 10px; padding: 10px 14px; }
+  .psg summary { cursor: pointer; font-size: .88rem; font-weight: 700; color: var(--ink-2); }
+  .psg-t { white-space: pre-wrap; line-height: 1.8; max-height: 38vh; overflow-y: auto; margin-top: 8px; font-size: .98rem; }
+  .ttable .ytag { font-size: .72rem; background: var(--chip); color: var(--ink-2); border-radius: 999px; padding: 1px 8px; margin-right: 6px; white-space: nowrap; }
+
   /* 면접 시간 */
   .tcards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
   .tcard { min-height: 104px; border-radius: 14px; display: grid; place-content: center; gap: 4px; background: #fff; }
@@ -438,7 +452,10 @@ const FAST = TEST ? Math.max(1, Math.min(60, Number(URLQ.get("fast")) || 1)) : 1
 const CONFIG = {
   planMin: [10, 15, 20], planDefault: 15,   // 면접 시간 선택지(분), 대답이 없을 때
   minLeft: 60,          // 남은 시간이 이보다 적으면 새 질문·꼬리질문 없이 마침
-  answerMax: 180,       // 답변 한 번 최대
+  answerMax: 180,       // 답변 한 번 최대 (제시문은 아래 typeAnswerMax)
+  typePrep: { passage: 300, mmi: 120 },        // 질문 전 준비 시간: 제시문 5분(제시문 읽기), MMI 2분(상황 읽기)
+  typeAnswerMax: { passage: 300 },             // 제시문 답변은 5분까지
+  prepMinAnswer: 120,   // 준비가 있는 질문은 '준비 + 이만큼' 남아 있을 때만 냄 (아니면 건너뜀)
   think: 10,            // 생각 시간 (꼬리질문은 생각 시간 없이 바로 답변)
   thinkMore: 20,        // '잠시만요' 연장 — 질문마다 한 번
   hushAsk: 5,           // 말을 시작한 뒤 이만큼 조용하면 "다음이라고 말해 주세요"
@@ -453,6 +470,14 @@ const CONFIG = {
   voiceOnMs: 500,       // 이만큼 이어서 소리가 나면 '말을 시작함' (받아쓰기가 없을 때)
   reloadHours: 4        // 대기 화면에서 이만큼 지나면 새로고침 (면접 중엔 안 함)
 };
+// 면접 유형 (스튜디오 혼자 연습과 같은 이름·같은 질문 규칙) — 고른 유형을 이 순서대로 차례로 낸다
+const IV_TYPES = [
+  { k: "personal", label: "내 생기부 면접", desc: "내 예상질문" },
+  { k: "document", label: "학생부 공통 질문", desc: "지원 학과에 맞는 학생부 질문" },
+  { k: "passage", label: "제시문 면접", desc: "제시문 읽고 준비 5분 · 답변 5분" },
+  { k: "personality", label: "기본 인성·MMI", desc: "인성 질문 · MMI 상황 질문(준비 2분)" }
+];
+const typeLabel = (k) => IV_TYPES.find((t) => t.k === k)?.label || k;
 const FILLERS = ["음", "어", "아", "그", "저", "약간", "뭔가", "이제", "좀", "막", "그냥", "진짜", "되게", "일단", "그래서", "그리고"];
 const SPEED = { low: 250, high: 330 };      // 분당 글자 수 참고 범위 (띄어쓰기 제외)
 const SAY = {
@@ -462,6 +487,10 @@ const SAY = {
   check: "화면에 얼굴이 보이는지 확인하고, '안녕하세요'라고 말해 보세요.",
   checkAgain: "잘 들리지 않았어요. 한 번 더 '안녕하세요'라고 말해 보세요.",
   noStt: "받아쓰기 없이 진행할게요.",
+  types: "어떤 면접을 볼까요? 내 생기부, 학생부 공통, 제시문, 기본 인성 중에서 골라 주세요. 여러 개를 골라도 돼요.",
+  typesDone: (ls) => `${ls.join(", ")} 순서로 할게요.`,
+  prepPassage: (min) => `제시문을 읽고 ${min}분 동안 준비해 주세요. 다 읽었으면 '다음'이라고 말해 주세요.`,
+  prepMmi: (q, min) => `${q} ${min}분 동안 생각을 정리해 주세요. 준비가 되면 '다음'이라고 말해 주세요.`,
   time: "면접을 몇 분 동안 볼까요? 10분, 15분, 20분 중에서 말해 주세요.",
   timeDefault: `${CONFIG.planDefault}분으로 시작할게요.`,
   think: `${CONFIG.think}초 생각할 시간을 드릴게요.`,
@@ -736,7 +765,9 @@ let ctx = null;             // requireRole 결과
 let stream = null, meter = null;
 let threshold = 0.02;       // 말소리 판정 기준 (장비 점검 때 조정)
 let sttOk = !!SR, sttOff = false;
-let pool = [];              // 남은 질문 (예상질문 → 질문은행)
+let pool = [];              // 남은 질문 (고른 유형 순서대로)
+let poolBy = {};            // 유형별 질문 { personal, document, passage, personality }
+let types = [];             // 고른 면접 유형
 let items = [];             // 물은 질문 (답한 것만 저장)
 let clips = [];             // 녹화 영상 { it, which, blob, url, ext }
 let interviewers = [], planSec = 0, tStart = 0, usedTotalSec = 0, endReason = "";
@@ -751,7 +782,7 @@ const panel = new InterviewPanel($("#scene"));
 // 시험용 엿보기 — 시험 환경에서만 만든다 (화면 동작에는 쓰지 않음)
 if (TEST) {
   window.__iv = () => panel.members.map((m) => ({ id: m.id, voice: m.voice?.voice?.name || null, pitch: m.voice?.pitch, matched: !!m.voice?.matched }));
-  window.__booth = { parsePick: (t) => parsePick(t), cmdOf: (t, a, s) => cmdOf(t, a, s), parseMin: (t) => parseMin(t),
+  window.__booth = { parsePick: (t) => parsePick(t), cmdOf: (t, a, s) => cmdOf(t, a, s), parseMin: (t) => parseMin(t), parseTypes: (t) => parseTypes(t),
     voiceFor: (ids) => { panel.setInterviewers(ids); return window.__iv(); }, left: () => leftSec(),
     panel, releaseVideos, blobs: () => [...ivBlobs.values()].filter(Boolean), preload: (ls) => preloadVideos(ls) };
 }
@@ -791,7 +822,7 @@ const CMDS = {
   no: ["아니에요", "아니요", "아니오", "아뇨", "아니", "계속할게요", "이어서할게요", "이어서"],
   again: ["다시말해주세요", "다시들려주세요", "질문다시", "다시한번", "다시요", "다시", "한번더"],
   wait: ["잠시만기다려주세요", "잠시만요", "잠깐만요", "잠시만", "잠깐만", "잠깐"],
-  next: ["다음질문", "다음이요", "다음요", "다음", "넘어갈게요", "넘어가요", "다했습니다", "다했어요", "이상입니다"],
+  next: ["다음질문", "다음이요", "다음요", "다음", "넘어갈게요", "넘어가요", "다했습니다", "다했어요", "이상입니다", "다읽었어요", "다읽었습니다", "준비됐어요", "준비됐습니다", "준비다됐어요"],
   yes: ["면접시작", "시작하겠습니다", "시작할게요", "시작", "좋아요", "네", "예", "넵", "응"],
   random: ["상관없습니다", "상관없어요", "상관없", "아무나", "아무거나", "누구든", "누구나", "랜덤", "무작위", "알아서"]
 };
@@ -821,6 +852,18 @@ function parsePick(text) {
     else if (tok.length === 2 && find(tok[0]) && find(tok[1])) out.push(find(tok[0]), find(tok[1]));
   }
   return [...new Set(out)].slice(0, 2);
+}
+// 면접 유형 고르기: "생기부랑 인성", "제시문", "전부", "추천" … → ["personal","personality"] / "all" / "rec"
+function parseTypes(text) {
+  const n = norm(text); if (!n) return [];
+  if (n.length <= 8 && /전부|모두|전체|다할게요|다요$|^다$/.test(n)) return "all";
+  if (n.length <= 10 && /추천/.test(n)) return "rec";
+  const out = [];
+  if (/생기부|생활기록부|예상질문|내질문/.test(n)) out.push("personal");
+  if (/학생부|공통/.test(n)) out.push("document");
+  if (/제시문/.test(n)) out.push("passage");
+  if (/인성|mmi|엠엠아이|엠엠|상황/.test(n)) out.push("personality");
+  return IV_TYPES.map((t) => t.k).filter((k) => out.includes(k));
 }
 function parseMin(text) {
   const n = norm(text); if (!n || n.length > 8) return 0;
@@ -928,7 +971,7 @@ async function stopRec(rec, keep, it, which) {
 
 // ---------- 저장 — 답한 문항이 생긴 뒤에만 sessions 에 만든다 ----------
 const ITEM_KEYS = ["source", "qid", "type", "text", "passage", "prepSec", "thinkSec", "answerSec", "followUp", "prepMemo", "answer", "usedSec",
-  "followAnswer", "followUsedSec", "m", "followM", "askedBy", "followAskedBy", "thinkUsedSec", "thinkMore"];
+  "followAnswer", "followUsedSec", "m", "followM", "askedBy", "followAskedBy", "thinkUsedSec", "thinkMore", "prepUsedSec"];
 function cleanItems() {
   return items.filter((it) => it.answered).map((it) => {
     const o = {};
@@ -939,7 +982,7 @@ function cleanItems() {
 function sessionBase() {
   const p = ctx.profile;
   return { studentUid: ctx.user.uid, studentName: p.name || "", studentNo: p.studentNo, track: p.track || "",
-    mode: "booth", modeLabel: "면접 부스", interviewers, planSec, ...(sttOff ? { sttOff: true } : {}) };
+    mode: "booth", modeLabel: "면접 부스", types, interviewers, planSec, ...(sttOff ? { sttOff: true } : {}) };
 }
 let storeQ = Promise.resolve();
 function saveProgress() {
@@ -1163,6 +1206,8 @@ async function startSession() {
     interviewers = panel.setInterviewers(chosen);
     if (!(await greetPhase())) return resetBooth();
     await checkPhase();
+    types = await typesPhase();
+    pool = types.flatMap((k) => shuffle(poolBy[k] || []));   // 유형별로 차례대로, 유형 안에서는 무작위
     const min = await timePhase();
     await runInterview(min);
   } catch (e) {
@@ -1200,25 +1245,25 @@ async function loadPool() {
       loadInterviewsFor(p.studentNo).catch(() => [])
     ]);
     const depts = ivs.map((u) => u.dept || "").filter(Boolean);
-    const modes = recommendedModes(p);
     const relevant = (q) => !q.majors?.length || depts.some((d) => q.majors.some((m) => d.includes(m)));
-    const personal = pq.filter((q) => q.text).map((q) => ({ ...q, source: "personal", type: "document" }));
-    // 트랙에 맞는 질문을 먼저, 기본 인성 질문은 모자랄 때 채우는 용도 (제시문은 준비 10분이라 부스에서 뺌)
-    const rank = (q) => {
-      if (q.type === "document") return modes.includes("document") && relevant(q) ? 1 : 0;
-      if (q.type === "personality") return modes.includes("personality") ? 1 : 2;
-      if (q.type === "mmi") return (p.special || "").includes("MMI") ? 1 : 0;
-      return 0;
+    // 스튜디오 혼자 연습(interview.html)과 같은 규칙
+    const bankQ = bank.filter((q) => q.text).map((q) => ({ ...q, source: "bank" }));
+    poolBy = {
+      personal: pq.filter((q) => q.text).map((q) => ({ ...q, source: "personal", type: "document" })),
+      document: bankQ.filter((q) => q.type === "document" && relevant(q)),
+      passage: bankQ.filter((q) => q.type === "passage" && q.passage),
+      personality: bankQ.filter((q) => q.type === "personality" || q.type === "mmi")
     };
-    const bankQ = bank.filter((q) => q.text && !q.passage).map((q) => ({ ...q, source: "bank", rank: rank(q) })).filter((q) => q.rank);
-    pool = [...shuffle(personal), ...shuffle(bankQ.filter((q) => q.rank === 1)), ...shuffle(bankQ.filter((q) => q.rank === 2))];
-  } catch (e) { showError(e, "질문 불러오기"); pool = []; }
+    pool = Object.values(poolBy).flat();      // 질문이 하나라도 있는지 확인용 (실제 순서는 유형을 고른 뒤 정함)
+  } catch (e) { showError(e, "질문 불러오기"); pool = []; poolBy = {}; }
 }
 function makeItem(q) {
-  const t = TYPES[q.type] || TYPES.document;
+  const t = TYPES[q.type] || TYPES.document, type = q.type || "document";
+  const prep = CONFIG.typePrep[type] || 0;          // 제시문 5분·MMI 2분 준비 (부스용) — 준비가 있으면 생각 시간은 없음
   return {
-    source: q.source, qid: q.id || "", type: q.type || "document", text: q.text, passage: "",
-    prepSec: 0, thinkSec: CONFIG.think, answerSec: Math.round(q.answerSec ?? t.answer),
+    source: q.source, qid: q.id || "", type, text: q.text, passage: type === "passage" ? (q.passage || "") : "",
+    prepSec: prep, thinkSec: prep ? 0 : CONFIG.think,
+    answerSec: CONFIG.typeAnswerMax[type] || Math.round(q.answerSec ?? t.answer), prepUsedSec: 0,
     followUp: ai.nextFollowUp(q), prepMemo: "", answer: "", usedSec: 0, followAnswer: "", followUsedSec: 0, m: null, followM: null,
     askedBy: null, thinkUsedSec: 0
   };
@@ -1380,7 +1425,55 @@ async function checkPhase() {
   } finally { clearInterval(lvl); }
 }
 
-// ---------- 면접 시간 ----------
+// ---------- 면접 시간 ----------// ---------- 면접 유형 (여러 개 가능 · 고른 순서와 상관없이 카드 순서대로 차례로) ----------
+async function typesPhase() {
+  const by = (panel.members[1] || panel.members[0]).id;
+  const n = (k) => (poolBy[k] || []).length;
+  const avail = IV_TYPES.map((t) => t.k).filter((k) => n(k) > 0);
+  const recd = recommendedModes(ctx.profile).filter((k) => n(k) > 0);
+  const fallback = recd.length ? recd : avail;
+  let sel = [];
+  const draw = () => {
+    setPhase("types", true);
+    side(`<div class="phase-l">면접 유형</div><h1 class="ttl">어떤 면접을 볼까요? <small>여러 개 가능</small></h1>
+      <div class="ycards">${IV_TYPES.map((t) => `<button type="button" class="ycard ${sel.includes(t.k) ? "on" : ""}" data-card="${t.k}" ${n(t.k) ? "" : "disabled"}>
+        <b>${t.label}${recd.includes(t.k) ? `<em>추천</em>` : ""}</b><span>${n(t.k) ? `${t.desc} · ${n(t.k)}개` : "아직 질문이 없어요"}</span></button>`).join("")}</div>
+      <div class="info"><p>고른 유형을 <b>위 순서대로 차례로</b> 물어봐요. 제시문을 고르면 면접 시간은 20분을 권해요.</p></div>
+      ${lstat(sel.length ? `${sel.map(typeLabel).join(" · ")} 골랐어요 · ‘다음’이라고 하면 시작` : `듣는 중 · 대답이 없으면 추천(${fallback.map(typeLabel).join(" · ")})으로 해요`)}`);
+  };
+  const done = async (ks) => {
+    ks = IV_TYPES.map((t) => t.k).filter((k) => ks.includes(k) && n(k) > 0);
+    if (!ks.length) ks = fallback;
+    sel = ks; draw();
+    await say(SAY.typesDone(ks.map(typeLabel)), { by, cap: "면접 유형 정하기" });
+    return ks;
+  };
+  evq.length = 0; draw(); stt.start();
+  await say(SAY.types, { by, cap: "면접 유형 정하기" });
+  let until = now() + CONFIG.noReply;
+  while (true) {
+    const e = await nextUntil(until);
+    if (e.type === "tick") return done(sel.length ? sel : fallback);
+    if (e.type === "card") {
+      const k = e.value; if (!n(k)) continue;
+      sel = sel.includes(k) ? sel.filter((x) => x !== k) : [...sel, k];
+      draw(); until = now() + CONFIG.noReply; continue;
+    }
+    let c = e.type === "btn" ? e.name : null;
+    if (e.type === "text" && e.final) {
+      const t = parseTypes(e.text);
+      if (t === "all") return done(avail);
+      if (t === "rec") return done(fallback);
+      if (t.length) return done(t);
+      c = cmdOf(e.text, ["next", "again", "end"], false);
+    }
+    if (c === "next") return done(sel.length ? sel : fallback);
+    if (c === "again") { await say(SAY.types, { by, cap: "면접 유형 정하기" }); until = now() + CONFIG.noReply; }
+    if (c === "end") { await quitConfirm(by); draw(); until = now() + CONFIG.noReply; }
+  }
+}
+
+
 async function timePhase() {
   const by = (panel.members[1] || panel.members[0]).id;
   let sel = CONFIG.planDefault;
@@ -1389,7 +1482,8 @@ async function timePhase() {
     side(`<div class="phase-l">면접 시간</div><h1 class="ttl">면접을 몇 분 동안 볼까요?</h1>
       <div class="tcards">${CONFIG.planMin.map((m) => `<button type="button" class="tcard ${m === sel ? "on" : ""}" data-card="${m}"><b>${m}분</b><span>“${m}분”${m === CONFIG.planDefault ? " · 기본" : ""}</span></button>`).join("")}</div>
       <div class="info"><p>질문 수는 정해져 있지 않아요. <b>답변을 짧게 하면 더 많은 질문</b>을, 길게 하면 적은 질문을 받아요.</p>
-        <p class="m">남은 시간이 1분보다 적으면 새 질문 없이 마쳐요. 답변 중에 시간이 다 되면 그 답변까지는 들어요.</p></div>
+        <p class="m">남은 시간이 1분보다 적으면 새 질문 없이 마쳐요. 답변 중에 시간이 다 되면 그 답변까지는 들어요.</p>
+        ${types.includes("passage") ? `<p><b>제시문 면접을 골랐어요.</b> 준비 5분·답변 5분이라 <b>20분</b>을 권해요.</p>` : ""}</div>
       ${lstat(`듣는 중 · 대답이 없으면 ${CONFIG.planDefault}분으로 시작해요`)}`);
   };
   evq.length = 0; draw(); stt.start();
@@ -1421,6 +1515,8 @@ async function runInterview(min) {
     if (items.length && leftSec() < CONFIG.minLeft) { reason = "time"; break; }
     const q = pool.shift();
     if (!q) { reason = "questions"; break; }
+    const prepNeed = CONFIG.typePrep[q.type] || 0;
+    if (prepNeed && leftSec() < prepNeed + CONFIG.prepMinAnswer) continue;   // 준비할 시간이 모자라면 이 질문은 건너뜀
     const it = makeItem(q); items.push(it); it._t0 = now();
     it.askedBy = panel.nextSpeaker().id;                     // 두 명이면 질문마다 번갈아
     const r = await askPhase(it, "main", items.length === 1);
@@ -1442,13 +1538,17 @@ function clearFollow(it) { it.followUp = ""; it.followAnswer = ""; it.followUsed
 async function askPhase(it, which, first = false) {
   const isF = which === "follow", by = isF ? it.followAskedBy : it.askedBy, text = isF ? it.followUp : it.text;
   let rec = null;
+  if (!isF && it.prepSec && !it._prepped) {                  // 제시문·MMI: 질문 전에 준비 시간
+    const p = await preparePhase(it, by);
+    if (p === "end") return "end";
+  }
   while (true) {
     setPhase("ask"); renderAsk(it, which);
     await say(text, { by, cap: "질문하는 중" });
     dropText();
     if (!rec) rec = startRec();                              // 읽기가 끝난 순간부터 녹화 (생각 중 첫 마디도 담기게)
     stt.start();
-    let r = isF ? { go: "listen" } : await thinkPhase(it, by, first);
+    let r = isF || it.prepSec ? { go: "listen" } : await thinkPhase(it, by, first);
     first = false;
     if (r?.go === "listen") r = await listenPhase(it, which, by, r.carry || [], !!r.started);
     if (r === "again") continue;
@@ -1464,11 +1564,46 @@ async function askPhase(it, which, first = false) {
     return "done";
   }
 }
+const passageBox = (it, open = true) => it.passage ? `<details class="psg" ${open ? "open" : ""}><summary>제시문 ${open ? "" : "다시 보기"}</summary><div class="psg-t">${esc(it.passage)}</div></details>` : "";
+// 제시문 읽기(5분)·MMI 상황 읽기(2분) — 녹화 전. "다음"/"다 읽었어요"로 일찍 끝냄
+async function preparePhase(it, by) {
+  const isP = it.type === "passage", total = it.prepSec, min = Math.round(total / 60);
+  const t0 = now(), until = t0 + total;
+  const draw = () => {
+    setPhase("prepare");
+    side(`<div class="phase-l" id="phaseL">질문 ${qNo(it)} · ${isP ? "제시문 읽고 준비" : "MMI 상황 읽고 준비"}</div>
+      ${isP ? passageBox(it) : ""}
+      <div class="qtext sm" id="qtext">${esc(it.text)}</div>
+      <div class="clock-row"><span class="clock" id="clock">${fmtSec(Math.max(0, until - now()))}</span><span class="clock-s">준비 시간 남음</span></div>
+      <div class="track"><i id="trk"></i></div>
+      ${lstat("다 읽었으면 “다음”이라고 말하거나 다음을 누르세요. 준비하는 동안은 녹화하지 않아요")}`);
+    panel.idle(); panel.caption("준비 시간");
+  };
+  const prompt = async () => { await say(isP ? SAY.prepPassage(min) : SAY.prepMmi(it.text, min), { by, cap: "준비 안내" }); panel.caption("준비 시간"); };
+  draw(); stt.start(); await prompt();
+  const fin = (v) => { it.prepUsedSec = Math.round(now() - t0); it._prepped = true; return v; };
+  while (true) {
+    const left = until - now();
+    const c1 = $("#clock"); if (c1) c1.textContent = fmtSec(Math.max(0, Math.ceil(left)));
+    const tr = $("#trk"); if (tr) tr.style.width = Math.min(100, (now() - t0) / total * 100) + "%";
+    if (left <= 0) return fin("done");
+    const e = await next(Math.min(250, left * 1000 / FAST));
+    const c = e.type === "btn" ? e.name : e.type === "text" && e.final ? cmdOf(e.text, ["next", "end", "again"], true) : null;
+    if (c === "next") return fin("done");
+    if (c === "again") await prompt();
+    if (c === "end") {
+      const r = await confirmPhase({ by, n: items.filter((x) => x.answered).length, qn: `질문 ${qNo(it)}` });
+      if (r === "yes") return fin("end");
+      draw();
+    }
+  }
+}
 function renderAsk(it, which) {
   const isF = which === "follow";
   side(`<div class="phase-l" id="phaseL">${isF ? "꼬리질문" : "질문"} ${qNo(it)}${!isF && it.source === "personal" ? " · 내 예상질문" : ""}</div>
     ${isF ? `<div class="qprev">앞 질문 — ${esc(it.text)}</div>` : ""}
     <div class="qtext" id="qtext">${esc(isF ? it.followUp : it.text)}</div>
+    ${!isF ? passageBox(it, false) : ""}
     ${lstat("질문을 읽는 동안은 마이크를 잠시 꺼 둬요", false)}`);
 }
 
@@ -1520,15 +1655,17 @@ async function thinkPhase(it, by, first) {
 
 async function listenPhase(it, which, by, carry, started) {
   const isF = which === "follow", text = isF ? it.followUp : it.text, limit = isF ? 60 : it.answerSec;
+  const maxSec = !isF && CONFIG.typeAnswerMax[it.type] || CONFIG.answerMax;   // 제시문 5분, 나머지 3분
   setPhase("listen", true);
   side(`<div class="listen" style="display:contents">
     <div class="phase-l" id="phaseL">${isF ? "꼬리질문" : "질문"} ${qNo(it)} · 답변</div>
     <div class="qtext sm" id="qtext">${esc(text)}</div>
+    ${!isF ? passageBox(it, false) : ""}
     <div id="hush" class="hush" hidden><b>더 하실 말씀이 없으면<br>“다음”이라고 말해 주세요</b>
       <div class="hush-n"><span id="hushN">${CONFIG.hushNext}</span><p>초 뒤 다음 질문으로 넘어가요.<br>이어서 말하면 그대로 계속 들어요.</p></div></div>
     <div class="clock-row"><span class="clock" id="clock">0:00</span><span class="clock-s">답변한 시간</span></div>
     <div id="ansTrack"><div class="track"><i id="trk"></i></div>
-      <div class="track-l"><span>0:00</span><span>보통 ${fmtSec(limit)} 안팎</span><span>${fmtSec(CONFIG.answerMax)} 최대</span></div></div>
+      <div class="track-l"><span>0:00</span><span>보통 ${fmtSec(limit)} 안팎</span><span>${fmtSec(maxSec)} 최대</span></div></div>
     ${sttOk ? `<div class="live" id="live"><div class="live-h" id="sttS"><i></i>받아쓰는 중</div><p id="liveT"></p></div>
       <p class="hint" id="lhint">다 말했으면 “다음”이라고 따로 짧게 말해 주세요. 문장 속 ‘다음’은 명령으로 듣지 않아요.</p>`
       : `<p class="hint" id="lhint">받아쓰기 없이 진행하고 있어요. 다 말했으면 <b>다음</b>을 눌러 주세요.</p>`}</div>`);
@@ -1547,8 +1684,8 @@ async function listenPhase(it, which, by, carry, started) {
       if (lastLoud > seenLoud) { seenLoud = lastLoud; if (first || voiceOn()) sound(); }
       el = now() - t0;
       const c1 = $("#clock"); if (c1) c1.textContent = fmtSec(el);
-      const tr = $("#trk"); if (tr) tr.style.width = Math.min(100, el / CONFIG.answerMax * 100) + "%";
-      if (el >= CONFIG.answerMax) break;
+      const tr = $("#trk"); if (tr) tr.style.width = Math.min(100, el / maxSec * 100) + "%";
+      if (el >= maxSec) break;
       if (!first) {
         if (now() - quietFrom >= CONFIG.preSilence) {
           if (++misses >= CONFIG.noReplyMax) { out = "noreply"; break; }
@@ -1679,9 +1816,10 @@ function chips(m, used, limit) {
   topFillers(m.fillers).forEach(([w, n]) => c.push(`<span class="note">“${esc(w)}” ${n}번</span>`));
   return `<div class="chips-m">${c.join("")}</div>`;
 }
+const typeLabelOf = (it) => it.source === "personal" ? "내 생기부" : it.type === "passage" ? "제시문" : it.type === "mmi" ? "MMI" : it.type === "personality" ? "인성" : "학생부 공통";
 function timeChart(done) {
   const rows = done.map((it) => {
-    const th = it.thinkUsedSec || 0, a = it.usedSec || 0, f = it.followUsedSec || 0;
+    const th = (it.thinkUsedSec || 0) + (it.prepUsedSec || 0), a = it.usedSec || 0, f = it.followUsedSec || 0;   // 준비 시간은 '생각·준비'에 함께
     const span = Math.max(th + a + f, (it._t1 ?? 0) - (it._t0 ?? 0));
     return { it, th, a, f, gap: Math.max(0, span - th - a - f), sum: th + a + f };
   });
@@ -1699,10 +1837,10 @@ function timeChart(done) {
     : endReason === "questions" ? "준비된 질문을 모두 해서 마쳤어요." : "‘면접 종료’로 여기서 마쳤어요.";
   const more = rows.map((r, i) => r.it.thinkMore ? `Q${i + 1}` : "").filter(Boolean);
   return `<section class="tchart"><div class="tchart-h"><h2>질문별로 쓴 시간</h2>
-      <div class="legend"><span><i class="s-think"></i>생각</span><span><i class="s-ans"></i>답변</span><span><i class="s-fol"></i>꼬리질문 답변</span><span><i class="s-gap"></i>질문 읽기 등</span><span><i class="s-rest"></i>남은 시간</span></div></div>
+      <div class="legend"><span><i class="s-think"></i>생각·준비</span><span><i class="s-ans"></i>답변</span><span><i class="s-fol"></i>꼬리질문 답변</span><span><i class="s-gap"></i>질문 읽기 등</span><span><i class="s-rest"></i>남은 시간</span></div></div>
     <div class="tbar">${bar}</div><div class="taxis">${axis}</div>
-    <table class="ttable"><thead><tr><th>문항</th><th>질문</th><th>생각</th><th>답변</th><th>꼬리 답변</th><th>합계</th><th></th></tr></thead><tbody>
-      ${rows.map((r, i) => `<tr><td class="n">Q${i + 1}</td><td class="q">${esc(r.it.text)}${i === longest ? `<span class="tag">가장 길게 씀</span>` : ""}</td>
+    <table class="ttable"><thead><tr><th>문항</th><th>질문</th><th>생각·준비</th><th>답변</th><th>꼬리 답변</th><th>합계</th><th></th></tr></thead><tbody>
+      ${rows.map((r, i) => `<tr><td class="n">Q${i + 1}</td><td class="q">${r.it.type !== "document" || r.it.source !== "personal" ? `<span class="ytag">${esc(typeLabelOf(r.it))}</span>` : ""}${esc(r.it.text)}${i === longest ? `<span class="tag">가장 길게 씀</span>` : ""}</td>
         <td>${fmtSec(r.th)}</td><td>${fmtSec(r.a)}</td><td>${r.it.followUp ? fmtSec(r.f) : "–"}</td><td class="n">${fmtSec(r.sum)}</td>
         <td><div class="mini"><i style="width:${r.sum / maxSum * 100}%"></i></div></td></tr>`).join("")}
     </tbody></table>
@@ -1736,7 +1874,7 @@ function showResults() {
     ${clips.length ? `<p class="hint" id="vidNote">영상에는 생각 시간도 들어 있어요.</p>` : ""}
     ${done.map((it, i) => `<article class="res"><div class="pair">
         <div>${vidBlock(it, "main")}</div>
-        <div><div class="qn">질문 ${i + 1}${it.source === "personal" ? " · 내 예상질문" : ""} · ${esc(label(it.askedBy))}</div><div class="qt">${esc(it.text)}</div>
+        <div><div class="qn">질문 ${i + 1} · ${esc(typeLabelOf(it))} · ${esc(label(it.askedBy))}</div><div class="qt">${esc(it.text)}</div>${passageBox(it, false)}
           ${chips(it.m, it.usedSec, it.answerSec)}
           <div class="ans">${it.answer ? esc(it.answer) : `<span class="hint">받아쓴 답변이 없어요</span>`}</div></div></div>
       ${it.followUp ? `<div class="pair"><div>${vidBlock(it, "follow")}</div>

@@ -140,6 +140,13 @@ service cloud.firestore {
       allow read: if isStaff() || (docId in ['schedule', 'push'] && hasAcct());
       allow write: if isAdmin();
     }
+    // 면접 부스: 등록된 부스 PC 목록 (항목 이름은 PC 키의 SHA-256 해시 — 키 자체는 없음)
+    // 학생이 부스에서 로그인한 뒤 '이 PC 가 아직 등록돼 있는지' 확인하려고 읽는다. 쓰기는 관리자만
+    // (위 config/{docId} 규칙은 그대로 — 이 블록은 계정 있는 사용자 읽기만 더한다)
+    match /config/booth {
+      allow read: if hasAcct();
+      allow write: if isAdmin();
+    }
 
     // 휴대폰 알림을 받을 기기 목록. 본인 것만 넣고 뺄 수 있고, 보내는 쪽(교사·동기화)만 전체를 읽는다
     match /pushTokens/{token} {

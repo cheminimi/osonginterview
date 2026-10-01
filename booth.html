@@ -1,0 +1,1871 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#4a6fa8">
+<meta name="robots" content="noindex">
+<title>오송고 면접 부스</title>
+<link rel="icon" type="image/png" href="icons/favicon-32.png">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="style.css">
+<style>
+  /* 면접 부스 전용 — 이 파일 안에서만 쓴다 (style.css 는 건드리지 않음)
+     부스 모니터(1920×1080)를 기준으로, 1280px 노트북에서도 깨지지 않게 */
+  html, body { height: 100%; }
+  body.booth { font-size: 17px; background: var(--bg); overflow: hidden; }
+  .bbar { height: 64px; display: flex; align-items: center; gap: 16px; padding: 0 28px; border-bottom: 1px solid var(--line); background: #fff; }
+  .bbar .brand { font-size: 1.15rem; font-weight: 800; white-space: nowrap; }
+  .hmid { display: flex; align-items: center; gap: 16px; min-width: 0; }
+  .hbar { width: 180px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; flex: none; }
+  .hbar i { display: block; height: 100%; width: 0; background: var(--accent-fill); }
+  .htime, .hnote { font-size: .9rem; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .htime b { color: var(--ink); }
+  .bbar .who { font-weight: 700; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  #app { height: calc(100% - 64px); }
+  .room { height: 100%; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(420px, 1fr); }
+  .room[hidden], .full[hidden] { display: none; }
+  .full { height: 100%; overflow-y: auto; }
+  .scene { position: relative; background: #3b3430; overflow: hidden; min-height: 0; }
+  .self { position: absolute; right: 20px; top: 14px; z-index: 3; width: min(19%, 240px); aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden;
+    background: #cfd6de; border: 2px solid rgba(255,255,255,.85); box-shadow: 0 4px 14px rgba(0,0,0,.3); }
+  .self video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
+  .self .rec { position: absolute; left: 8px; top: 5px; display: none; align-items: center; gap: 5px; color: #fff; font-size: .72rem; font-weight: 700;
+    text-shadow: 0 1px 3px rgba(0,0,0,.5); }
+  .self .rec::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #e0493f; }   /* 깜빡이지 않음 — 녹화 중일 때만 보임 */
+  .self.recording .rec { display: flex; }
+
+  .panel { background: #fff; border-left: 1px solid var(--line); padding: 44px 44px 28px; display: flex; flex-direction: column; gap: 18px; overflow-y: auto; min-height: 0; }
+  .panel .grow { flex: 1; }
+  .phase-l { font-size: .9rem; font-weight: 700; color: var(--accent); }
+  .phase-l.danger { color: var(--danger); }
+  .ttl { font-size: clamp(1.5rem, 1.1rem + 1vw, 2rem); font-weight: 800; line-height: 1.38; letter-spacing: -0.025em; margin: 0; }
+  .ttl.big { font-size: clamp(1.8rem, 1.3rem + 1.2vw, 2.3rem); }
+  .ttl small { font-size: .52em; color: var(--ink-3); font-weight: 700; margin-left: 6px; letter-spacing: 0; }
+  .sub { color: var(--ink-3); line-height: 1.6; margin: 0; }
+  .qtext { font-size: clamp(1.45rem, 1.1rem + 1vw, 2.05rem); font-weight: 800; line-height: 1.42; letter-spacing: -0.025em; color: var(--ink); }
+  .qtext.sm { font-size: clamp(1.15rem, 1rem + .5vw, 1.4rem); font-weight: 700; }
+  .qtext.dim { color: var(--ink-3); }
+  .qprev { font-size: .92rem; color: var(--ink-3); line-height: 1.5; }
+  .hint { font-size: .9rem; color: var(--ink-3); line-height: 1.6; margin: 0; }
+  .lstat { display: flex; align-items: center; gap: 8px; font-size: .9rem; color: var(--ink-3); margin: 0; }
+  .lstat i { width: 8px; height: 8px; border-radius: 50%; background: var(--line); flex: none; }
+  .lstat i.ok { background: var(--ok); }
+  .ico { width: 34px; height: 34px; border-radius: 50%; background: var(--accent-fill); color: #fff; display: grid; place-items: center; flex: none; }
+  .ico svg { width: 18px; height: 18px; }
+
+  /* 말로 하는 안내·버튼 세 개 */
+  .sayto { border: 1px solid var(--accent-line); background: var(--accent-faint); border-radius: 14px; padding: 16px 18px; display: grid; gap: 12px; }
+  .sayto-h { display: flex; align-items: center; gap: 10px; font-weight: 700; }
+  .chips-say { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chips-say span { border: 1px solid var(--accent-line); background: #fff; border-radius: 999px; padding: 8px 16px; font-weight: 700; color: var(--accent); }
+  .chips-say span.mute { color: var(--ink-2); border-color: var(--line); }
+  .acts3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .acts3 > div { display: grid; gap: 6px; }
+  .acts3 button { min-height: 60px; font-size: 1.1rem; font-weight: 700; border-radius: 10px; width: 100%; justify-content: center; text-align: center; }
+  .acts3 button.end { color: var(--danger); }
+  .acts3 span { text-align: center; font-size: .8rem; color: var(--ink-3); }
+
+  /* 로그인 */
+  .form label { display: block; font-weight: 700; margin: 0 0 6px; }
+  .form input { font-size: 1.2rem; padding: 12px 14px; min-height: 52px; }
+  .form .field + .field { margin-top: 16px; }
+  .form .btn-lg { width: 100%; margin-top: 20px; min-height: 58px; font-size: 1.15rem; justify-content: center; }
+  .err { color: var(--danger); font-size: .95rem; min-height: 1.4em; margin: 8px 0 0; }
+  .note-i { display: flex; gap: 10px; align-items: flex-start; background: var(--accent-faint); border-radius: 12px; padding: 14px 16px; font-size: .9rem; line-height: 1.6; color: var(--ink-2); }
+  .note-i svg { flex: none; width: 18px; height: 18px; margin-top: 3px; color: var(--accent); }
+
+  /* 장비 점검 */
+  .ck { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+  .ck li { display: flex; gap: 12px; align-items: center; }
+  .ck .n { flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: .85rem; font-weight: 700; background: var(--chip); color: var(--ink-2); }
+  .ck li.ok .n { background: var(--ok-bg); color: var(--ok); }
+  .ck li.ok .n::before { content: "✓"; } .ck li.ok .n span { display: none; }
+  .ck li.now .n { background: var(--accent-soft); color: var(--accent); }
+  .ck li.bad .n { background: var(--warn-bg); color: var(--warn); }
+  .ck .d { color: var(--ink-3); }
+  .meter { height: 10px; border-radius: 5px; background: var(--line-3); overflow: hidden; }
+  .meter i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .1s linear; }
+  .heard { background: var(--accent-faint); border-radius: 10px; padding: 12px 16px; min-height: 48px; color: var(--ink-2); }
+
+  /* 면접 시간 */
+  .tcards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .tcard { min-height: 104px; border-radius: 14px; display: grid; place-content: center; gap: 4px; background: #fff; }
+  .tcard b { font-size: 1.9rem; font-weight: 800; }
+  .tcard span { font-size: .8rem; color: var(--ink-3); }
+  .tcard.on { border: 2px solid var(--accent-fill); background: var(--accent-faint); color: var(--accent); }
+  .info { background: var(--accent-faint); border-radius: 12px; padding: 14px 16px; display: grid; gap: 8px; font-size: .92rem; line-height: 1.6; }
+  .info p { margin: 0; } .info .m { color: var(--ink-3); }
+
+  /* 질문·생각·답변 */
+  .clock-row { display: flex; align-items: baseline; gap: 10px; }
+  .clock { font-size: 3.2rem; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; line-height: 1; }
+  .clock-s { font-size: 1rem; font-weight: 600; color: var(--ink-3); }
+  .track { height: 8px; background: var(--line-3); border-radius: 4px; overflow: hidden; }
+  .track i { display: block; height: 100%; width: 0; background: var(--accent-fill); transition: width .25s linear; }
+  .track-l { display: flex; justify-content: space-between; font-size: .8rem; color: var(--ink-3); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .cmds { background: var(--accent-faint); border-radius: 14px; padding: 14px 16px; display: grid; gap: 10px; }
+  .cmds-h { font-size: .9rem; font-weight: 700; }
+  .cmds-g { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .cmds-g > div { background: #fff; border: 1px solid var(--accent-line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 2px; }
+  .cmds-g b { color: var(--accent); } .cmds-g span { font-size: .8rem; color: var(--ink-3); }
+  .cmds-g > div.used { opacity: .45; }
+  .live { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; background: var(--bg); display: grid; gap: 8px; }
+  .live-h { display: flex; align-items: center; gap: 8px; font-size: .88rem; font-weight: 700; color: var(--ok); }
+  .live-h i { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+  .live p { margin: 0; line-height: 1.65; color: var(--ink-2); max-height: 8.3em; overflow: hidden; }
+  .live p span { color: var(--ink-3); }
+  .hush { background: var(--warn-bg); border-radius: 14px; padding: 18px 20px; display: grid; gap: 10px; }
+  .hush > b { font-size: 1.35rem; line-height: 1.45; }
+  .hush-n { display: flex; gap: 12px; align-items: center; color: var(--warn); }
+  .hush-n span { font-size: 2.2rem; font-weight: 800; }
+  .hush-n p { margin: 0; font-size: .9rem; line-height: 1.5; }
+  .listen.hushing .clock { font-size: 2.2rem; color: var(--ink-3); }
+
+  /* 종료 확인·막힘 */
+  .ccards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .ccard { text-align: left; display: grid; gap: 4px; padding: 14px 16px; border-radius: 12px; background: #fff; min-height: 78px; }
+  .ccard b { font-size: 1.1rem; } .ccard span { font-size: .85rem; color: var(--ink-3); font-weight: 400; }
+  .ccard.on { background: var(--accent-faint); border-color: var(--accent-line); color: var(--accent); }
+  .cnt { display: flex; gap: 12px; align-items: center; border-top: 1px solid var(--line); padding-top: 16px; }
+  .cnt p { margin: 0; font-size: .92rem; line-height: 1.5; color: var(--ink-2); }
+  .cnum { font-size: 1.8rem; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .cnum.danger { color: var(--danger); }
+  .blk-i { width: 52px; height: 52px; border-radius: 50%; background: #fbe9e7; color: var(--danger); display: grid; place-items: center; }
+  .blk-i svg { width: 22px; height: 22px; }
+  .help { background: var(--chip); border-radius: 12px; padding: 14px 16px; display: grid; gap: 6px; }
+  .help p { margin: 0; font-size: .9rem; color: var(--ink-3); line-height: 1.6; }
+  .blk-go { width: 100%; min-height: 54px; justify-content: center; text-align: center; }
+
+  /* 부스 PC 잠금·관리자 등록 */
+  .lockv { min-height: 100%; display: grid; place-items: center; padding: 32px 20px; position: relative; }
+  .lock-card { width: min(560px, 100%); background: #fff; border: 1px solid var(--line); border-radius: 20px; padding: 36px 36px 30px; display: grid; gap: 16px; }
+  .lock-card .ico { width: 52px; height: 52px; } .lock-card .ico svg { width: 24px; height: 24px; }
+  .lock-card .btn-lg { min-height: 56px; justify-content: center; text-align: center; font-size: 1.1rem; }
+  .lock-card a.btn-lg { display: flex; align-items: center; text-decoration: none; border-radius: 10px; }
+  .lock-admin { position: absolute; right: 20px; bottom: 16px; background: none; border: none; color: var(--ink-3); font-size: .85rem; text-decoration: underline; min-height: 36px; }
+  .lock-back { background: none; border: none; color: var(--ink-3); font-size: .9rem; text-decoration: underline; justify-self: center; }
+
+  /* 면접관 고르기 */
+  .pick { max-width: 1280px; margin: 0 auto; padding: 22px 48px 24px; display: flex; flex-direction: column; gap: 18px; min-height: 100%; }
+  .pick-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+  .say-pill { display: flex; align-items: center; gap: 10px; border: 1px solid var(--accent-line); background: var(--accent-faint); border-radius: 999px;
+    padding: 8px 16px 8px 8px; font-weight: 700; color: var(--accent); font-size: .92rem; }
+  .pgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+  .pcard { padding: 0; text-align: left; border-radius: 16px; overflow: hidden; background: #fff; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; font-weight: 400; min-height: 0; }
+  .pcard .pimg { display: block; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: #cdbfae; }
+  .pcard img { width: 100%; height: 100%; object-fit: cover; display: block; }   /* 원본 16:9 그대로 (자르지 않음) */
+  .pcard .pbody { display: grid; gap: 4px; padding: 12px 16px 16px; width: 100%; justify-items: start; }
+  .pcard b { font-size: 1.15rem; display: flex; align-items: center; gap: 8px; }
+  .pcard em { font-style: normal; font-size: .75rem; background: var(--accent-fill); color: #fff; border-radius: 999px; padding: 2px 10px; }
+  .pcard small { color: var(--ink-3); font-size: .85rem; line-height: 1.45; }
+  .pcard.on { box-shadow: 0 0 0 3px var(--accent-fill); border-color: var(--accent-fill); }
+  .pcard.on .pbody { background: var(--accent-faint); } .pcard.on b { color: var(--accent); }
+  .pick-foot { display: flex; align-items: flex-end; gap: 24px; justify-content: space-between; margin-top: auto; }
+  .pick-foot .acts3 { width: min(480px, 100%); flex: none; }
+
+  /* 결과 */
+  .results .inner { max-width: 1180px; margin: 0 auto; padding: 28px 28px 60px; display: grid; gap: 18px; }
+  .rtop { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; flex-wrap: wrap; }
+  .rcount { display: flex; gap: 12px; align-items: center; background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 12px 16px; }
+  .rcount b { font-size: 1.7rem; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .rcount span { font-size: .85rem; color: var(--ink-2); line-height: 1.5; }
+  .notice-dl { background: var(--warn-bg); color: var(--warn); border-radius: 14px; padding: 18px 20px; display: flex; gap: 14px; align-items: center; }
+  .notice-dl > svg { flex: none; width: 24px; height: 24px; align-self: flex-start; margin-top: 2px; }
+  .notice-dl > div { flex: 1; }
+  .notice-dl b { font-size: 1.05rem; } .notice-dl p { margin: 6px 0 0; font-size: .9rem; line-height: 1.65; }
+  .notice-dl p b { font-size: inherit; }
+  .btn-dl { background: var(--warn); color: #fff; border-color: var(--warn); min-height: 52px; font-weight: 700; font-size: 1.05rem; padding: 0 20px; flex: none; }
+  .sumline { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  .sumline > div { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+  .sumline b { display: block; font-size: 1.5rem; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .sumline b small { font-size: .6em; color: var(--ink-3); }
+  .sumline span { font-size: .85rem; color: var(--ink-3); }
+  .tchart, .res { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; }
+  .tchart-h { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  .tchart-h h2 { margin: 0; font-size: 1.2rem; }
+  .legend { display: flex; gap: 14px; font-size: .85rem; color: var(--ink-3); flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .tbar { display: flex; height: 40px; border-radius: 8px; overflow: hidden; background: var(--line-3); }
+  .tbar i { display: grid; place-items: center; color: #fff; font-size: .8rem; font-weight: 700; font-style: normal; min-width: 0; overflow: hidden; white-space: nowrap; }
+  .s-think { background: #dfe7f1; } .s-ans { background: #2e4a7a; } .s-fol { background: #8fa8cf; } .s-gap { background: #f1ecea; } .s-rest { background: #f6f2f0; }
+  .taxis { display: flex; justify-content: space-between; font-size: .8rem; color: var(--ink-3); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .ttable { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: .95rem; }
+  .ttable th { text-align: left; font-size: .82rem; color: var(--ink-3); font-weight: 700; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  .ttable td { padding: 10px 8px; border-bottom: 1px solid var(--line-3); font-variant-numeric: tabular-nums; }
+  .ttable td.q { width: 42%; } .ttable td.n { font-weight: 700; }
+  .ttable .tag { font-size: .75rem; background: var(--warn-bg); color: var(--warn); border-radius: 999px; padding: 1px 8px; margin-left: 6px; white-space: nowrap; }
+  .ttable .mini { height: 8px; background: var(--line-3); border-radius: 4px; overflow: hidden; min-width: 120px; }
+  .ttable .mini i { display: block; height: 100%; background: var(--accent-fill); }
+  .tnote { font-size: .88rem; color: var(--ink-3); margin: 12px 0 0; line-height: 1.6; }
+  .res .pair { display: grid; grid-template-columns: minmax(0, 360px) minmax(0, 1fr); gap: 22px; }
+  .res .pair + .pair { border-top: 1px solid var(--line-3); padding-top: 18px; margin-top: 18px; }
+  .res video { width: 100%; aspect-ratio: 16 / 9; background: #1f2023; border-radius: 10px; display: block; }
+  .res .novid { aspect-ratio: 16 / 9; border-radius: 10px; background: var(--line-3); display: grid; place-items: center; color: var(--ink-3); }
+  .res .qn { font-size: .88rem; font-weight: 700; color: var(--accent); }
+  .res .qt { font-size: 1.1rem; font-weight: 700; line-height: 1.45; margin: 4px 0 8px; }
+  .res .ans { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; line-height: 1.65; white-space: pre-wrap; }
+  .chips-m { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 10px; }
+  .chips-m span { border-radius: 999px; padding: 5px 12px; font-size: .85rem; background: var(--chip); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .chips-m span.good { background: var(--ok-bg); color: var(--ok); }
+  .chips-m span.note { background: var(--warn-bg); color: var(--warn); }
+  .dl { margin-top: 10px; }
+  .foot-r { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+
+  /* ════════ 면접관 — 원본 사진(16:9) + 상태 영상 ════════
+     한 명이면 크게, 두 명이면 위아래. 사진과 영상은 같은 칸·같은 크기로 겹쳐 레이아웃이 움직이지 않음 */
+  .ivs { position:absolute; inset:0; overflow:hidden; background:#2f2a27; container-type:size; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2cqh; }
+  .ivs::before { content:""; position:absolute; inset:-5%; background: var(--ivs-bg) center / cover no-repeat; filter: blur(24px) brightness(.55) saturate(.9); }
+  .ivp { position:relative; flex:none; width:min(94cqw, calc(90cqh * 16 / 9)); aspect-ratio:16 / 9; overflow:hidden; border-radius:14px; background:#cdbfae; box-shadow:0 10px 32px rgba(0,0,0,.35); }
+  .ivs[data-count="2"] .ivp { width:min(94cqw, calc(45cqh * 16 / 9)); }
+  /* 사진·영상을 칸보다 2% 크게 '고정'해 두어, 아주 작은 움직임에도 가장자리 틈이 보이지 않게 (움직이는 확대 아님) */
+  .ivp-photo, .ivp-vid { position:absolute; left:-1%; top:-1%; width:102%; height:102%; object-fit:cover; display:block; user-select:none; -webkit-user-drag:none; }
+  .ivp-vid { opacity:0; transition: opacity .35s ease; background:transparent; }
+  .ivp.vid-on .ivp-vid { opacity:1; }
+  /* 영상이 없을 때만: 말할 때 아주 미세한 위아래, 들을 때 가끔 약한 끄덕임 (세기 = --ivp-amp) */
+  .ivp[data-state="speaking"]:not(.vid-on) .ivp-photo { animation: ivp-talk 4s ease-in-out infinite; }
+  .ivp.nod:not(.vid-on) .ivp-photo { animation: ivp-nod 1.4s ease-in-out 1; }
+  @keyframes ivp-talk { 0%,100% { transform: translateY(0); } 50% { transform: translateY(calc(var(--ivp-amp, 1) * -0.15%)); } }
+  @keyframes ivp-nod { 0%,100% { transform: translateY(0); } 40% { transform: translateY(calc(var(--ivp-amp, 1) * 0.4%)); } }
+  /* 이름표는 왼쪽 아래 구석 (손·펜을 가리지 않게) */
+  .ivp-name { position:absolute; left:2.5%; bottom:4%; z-index:3; background:rgba(36,41,56,.9); color:#fff; border-radius:8px;
+    padding:.4em 1.1em; font-weight:700; font-size:clamp(12px, 2.4cqh, 19px); white-space:nowrap; transition: background .25s; }
+  .ivp.asking .ivp-name { background:#4a6fa8; }
+  /* 말하는 면접관에게만 얇은 파란 테두리 (칸 안쪽에 그려서 레이아웃은 그대로) */
+  .ivp::after { content:""; position:absolute; inset:0; z-index:2; border-radius:inherit; border:3px solid transparent; pointer-events:none; transition: border-color .25s; }
+  .ivp.asking::after { border-color:#4a6fa8; }
+  .ivs-cap { position:absolute; left:2.5%; top:3%; z-index:3; display:flex; align-items:center; gap:10px; background:rgba(255,255,255,.94); border-radius:999px;
+    padding:8px 16px; font-weight:700; font-size:clamp(13px, 2.6cqh, 17px); color:#33363b; }
+  .ivs-cap:empty { display:none; }
+  .ivs-cap::before { content:""; width:10px; height:10px; border-radius:50%; background:#bccee5; }
+  .ivs-cap[data-kind="speaking"]::before { background:#4a6fa8; }
+  .ivs-cap[data-kind="listening"]::before { background:#c2453c; }
+  .ivs-cap[data-kind="ending"]::before { background:#1e7a5a; }
+  @media (prefers-reduced-motion: reduce) { .ivp .ivp-photo { animation: none !important; } .ivp-vid { display:none; } }
+  /* ════════ [/면접관] ════════ */
+
+  @media (max-width: 1100px) {
+    .room { grid-template-columns: minmax(0, 1fr) minmax(380px, 1fr); }
+    .panel { padding: 28px 26px 22px; gap: 14px; }
+    .pgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .pcard .pimg { aspect-ratio: 16 / 9; }
+    .res .pair { grid-template-columns: 1fr; }
+    .sumline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .pick { padding: 18px 24px; }
+  }
+  @media (max-height: 800px) {
+    .panel { padding-top: 26px; gap: 12px; }
+    .clock { font-size: 2.6rem; }
+    .acts3 button { min-height: 52px; }
+  }
+  @media (max-width: 760px) {
+    body.booth { overflow: auto; }
+    #app { height: auto; }
+    .room { grid-template-columns: 1fr; height: auto; }
+    .scene { min-height: 320px; }
+    .hbar { display: none; }
+  }
+</style>
+<script>
+/* 새 버전 확인 (수정 금지 · 모든 화면 공통)
+   GitHub Pages는 파일을 10분간 캐시해서, 업데이트 직후 옛 파일과 새 파일이 섞이면 화면이 멈출 수 있다.
+   화면 코드를 실행하기 전에 쓰는 파일을 서버에 한 번씩 확인(재검증)해 항상 같은 버전으로 맞추고,
+   열어 둔 화면은 10분마다 확인해 새 버전이 올라오면 새로고침 안내를 띄운다.
+   index.html?reset=1 → 이 사이트에 저장된 데이터(로그인 포함)를 지우고 처음부터 다시 연다. */
+(function () {
+  var q = new URLSearchParams(location.search);
+  if (q.has("reset")) {
+    try { localStorage.clear(); sessionStorage.clear(); } catch (e) {}
+    var jobs = [];
+    try { if (window.indexedDB) jobs.push(new Promise(function (ok) { var r = indexedDB.deleteDatabase("firebaseLocalStorageDb"); r.onsuccess = r.onerror = r.onblocked = function () { ok(); }; })); } catch (e) {}
+    try { if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); })); } catch (e) {}
+    Promise.all(jobs).then(function () { location.replace(location.pathname + "?resetdone=1"); });
+    return;
+  }
+  var RX = /(?:import|export)\s[^;]*?from\s*["'](\.\/[^"']+)["']|import\(\s*["'](\.\/[^"']+)["']\s*\)/g;
+  function deps(text) { var out = [], m; RX.lastIndex = 0; while ((m = RX.exec(text))) out.push(m[1] || m[2]); return out; }
+  // 느린 네트워크·응답 없는 서버에서 화면 준비가 영영 끝나지 않는 것을 막는다
+  function fetchT(url, ms) {
+    var ctl = null;
+    try { if (window.AbortController) ctl = new AbortController(); } catch (e) {}
+    return new Promise(function (ok, no) {
+      var settled = false;
+      var t = setTimeout(function () {
+        if (settled) return; settled = true;
+        try { if (ctl) ctl.abort(); } catch (e) {}
+        no(new Error("시간 초과: " + url));
+      }, ms);
+      var opt = { cache: "no-cache" };
+      if (ctl) opt.signal = ctl.signal;
+      fetch(url, opt).then(function (r) { if (settled) return; settled = true; clearTimeout(t); ok(r); },
+        function (e) { if (settled) return; settled = true; clearTimeout(t); no(e); });
+    });
+  }
+  function check(files, seen, sig) {
+    files = files.filter(function (f) { if (seen[f]) return false; seen[f] = 1; return true; });
+    if (!files.length) return Promise.resolve();
+    return Promise.all(files.map(function (f) {
+      return fetchT(f, 8000).then(function (r) {
+        sig[f] = r.headers.get("etag") || r.headers.get("last-modified") || "";
+        return /\.js$/.test(f) ? r.text().then(deps) : [];
+      }).catch(function () { return []; });
+    })).then(function (lists) { return check([].concat.apply([], lists), seen, sig); });
+  }
+  // 화면 코드가 오류로 멈추면 안내 (하얀 화면·눌리지 않는 화면 방지)
+  var failShown = false;
+  function failBar(msg) {
+    if (failShown) return; failShown = true;
+    var lock = document.querySelector(".login.loading");
+    if (lock) lock.classList.remove("loading");   // 로그인 화면은 일단 쓸 수 있게
+    var sub = document.getElementById("submit"); if (sub) sub.disabled = false;
+    var d = document.createElement("div");
+    d.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:9999;background:#c2453c;color:#fff;padding:10px 14px;font-size:.92rem;line-height:1.5";
+    d.innerHTML = '화면을 제대로 불러오지 못했어요. <b>새로고침</b>해 보고, 그래도 같으면 <a href="index.html?reset=1" style="color:#fff">여기를 눌러 초기화</a>하세요.<br><span style="opacity:.85;font-size:.85rem"></span>';
+    var text = String(msg || "");
+    if (/gstatic|googleapis|firebase/i.test(text) || blockedFirebase) {
+      d.querySelector("b").insertAdjacentHTML("afterend", " · 브라우저 확장 프로그램(광고 차단 등)이나 보안 프로그램이 firebase 파일을 막고 있을 수 있어요.");
+    }
+    d.querySelector("span").textContent = text.slice(0, 140);
+    (document.body || document.documentElement).appendChild(d);
+  }
+  // Firebase 파일을 받을 수 있는지 미리 확인 (확장 프로그램·보안 프로그램 차단 진단용)
+  var blockedFirebase = false;
+  try {
+    fetch("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js", { method: "GET", mode: "no-cors" })
+      .catch(function () { blockedFirebase = true; });
+  } catch (e) { blockedFirebase = true; }
+  addEventListener("error", function (e) { if (e && (e.message || e.error)) failBar(e.message || e.error); }, true);
+  addEventListener("unhandledrejection", function (e) { failBar(e.reason && (e.reason.message || e.reason)); });
+  function sigText(sig) { return Object.keys(sig).sort().map(function (k) { return k + "=" + sig[k]; }).join("|"); }
+  function banner() {
+    if (document.getElementById("newVersionBar")) return;
+    var d = document.createElement("div");
+    d.id = "newVersionBar";
+    d.style.cssText = "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;background:#24262a;color:#fff;padding:10px 12px 10px 16px;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.25);display:flex;gap:10px;align-items:center;font-size:.92rem;max-width:92vw";
+    d.innerHTML = '<span>새 버전이 올라왔어요. 저장할 내용이 있으면 먼저 저장하세요.</span><button type="button" style="background:#fff;color:#24262a;border:none;border-radius:8px;padding:6px 12px;font-weight:700;cursor:pointer;white-space:nowrap">새로고침</button>';
+    d.querySelector("button").onclick = function () { location.reload(); };
+    document.body.appendChild(d);
+  }
+  function start() {
+    var mains = [].slice.call(document.querySelectorAll('script[type="app-module"]'));
+    var page = location.pathname.split("/").pop() || "index.html";
+    var initial = ["style.css", page];
+    mains.forEach(function (s) { initial = initial.concat(deps(s.textContent)); });
+    var sig = {}, done = false;
+    function go() {
+      if (done) return; done = true;
+      var first = sigText(sig);
+      // 화면(HTML) 자체가 옛 버전이면 한 번만 새로 불러온다
+      fetchT(page, 6000).then(function (r) { return r.text(); }).then(function (html) {
+        var cur = mains.map(function (s) { return s.textContent.trim(); }).join("\n");
+        var key = "reloadedFor:" + page;
+        if (cur && html.indexOf(cur) < 0 && sessionStorage.getItem(key) !== sig[page]) {
+          sessionStorage.setItem(key, sig[page] || "1");
+          location.reload();
+          return true;
+        }
+      }).catch(function () {}).then(function (reloading) {
+        if (reloading) return;
+        // 앱 파일이 바뀌면 이 기기에 저장해 둔 화면용 데이터를 비운다 (옛 형식이 남아 생기는 오류 방지)
+        try {
+          var sigKey = "appSig:" + page, prevSig = localStorage.getItem(sigKey);
+          if (prevSig && prevSig !== first) {   // 이 화면이 업데이트됐을 때만 정리
+            [localStorage, sessionStorage].forEach(function (st) {
+              Object.keys(st).filter(function (k) { return k.indexOf("c1:") === 0; }).forEach(function (k) { st.removeItem(k); });
+            });
+          }
+          if (prevSig !== first) localStorage.setItem(sigKey, first);
+        } catch (e) {}
+        var css = document.querySelector('link[rel="stylesheet"][href^="style.css"]');
+        if (css && sig["style.css"]) css.href = "style.css?v=" + encodeURIComponent(sig["style.css"]).replace(/%/g, "");
+        mains.forEach(function (old) { var s = document.createElement("script"); s.type = "module"; s.textContent = old.textContent; old.replaceWith(s); });
+        setInterval(function () {
+          if (document.visibilityState !== "visible" || document.getElementById("newVersionBar")) return;
+          var s2 = {};
+          check(initial, {}, s2).then(function () { if (Object.keys(s2).length && sigText(s2) !== first) banner(); });
+        }, 10 * 60 * 1000);
+      });
+    }
+    check(initial, {}, sig).then(go, go);
+    setTimeout(go, 5000);
+    // 10초가 지나도 화면이 비어 있으면 안내
+    setTimeout(function () {
+      var m = document.querySelector("main");
+      var filled = m && m.querySelector(".card, .q-item, table, .stage, .mode, #app > *");
+      if (m && !filled) failBar("화면 내용을 불러오지 못했습니다.");
+    }, 10000);
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
+})();
+</script>
+</head>
+<body class="booth">
+<header class="bbar">
+  <span class="brand">오송고 면접 부스</span>
+  <div class="hmid" id="hdMid"></div>
+  <div class="spacer"></div>
+  <span class="hnote" id="hdNote"></span>
+  <span class="who" id="who"></span>
+</header>
+
+<main id="app">
+  <div class="room" id="room">
+    <section class="scene" id="scene">
+      <div class="self" id="self" hidden><video id="selfVid" autoplay muted playsinline></video><span class="rec">녹화 중</span></div>
+    </section>
+    <section class="panel" id="side"></section>
+  </div>
+  <div class="full" id="full" hidden></div>
+</main>
+
+<script type="app-module">
+import {
+  auth, db, signIn, signOut, resolveLoginEmail, requireRole, clearDataCache,
+  collection, doc, getDoc, getDocs, addDoc, updateDoc, setDoc, serverTimestamp, cachedCollection, loadInterviewsFor,
+  recommendedModes, esc, $, $$, toast, showError, TYPES, fmtSec, shuffle, isAdminEmail
+} from "./common.js";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+// =====================================================================
+// 0. 설정값 — 부스의 시간·횟수는 여기 한 곳에서만 바꾼다 (단위: 초)
+// =====================================================================
+const URLQ = new URLSearchParams(location.search);
+// 시험 환경 표시: 시험용 가짜 장치(handoff/testenv/fake/media.js)가 켤 때만 true. 배포본에서는 항상 false
+const TEST = window.__boothTest === true;
+const FAST = TEST ? Math.max(1, Math.min(60, Number(URLQ.get("fast")) || 1)) : 1;   // 시험용: 흐름 시간을 N배 빠르게 (?fast=10)
+const CONFIG = {
+  planMin: [10, 15, 20], planDefault: 15,   // 면접 시간 선택지(분), 대답이 없을 때
+  minLeft: 60,          // 남은 시간이 이보다 적으면 새 질문·꼬리질문 없이 마침
+  answerMax: 180,       // 답변 한 번 최대
+  think: 10,            // 생각 시간 (꼬리질문은 생각 시간 없이 바로 답변)
+  thinkMore: 20,        // '잠시만요' 연장 — 질문마다 한 번
+  hushAsk: 5,           // 말을 시작한 뒤 이만큼 조용하면 "다음이라고 말해 주세요"
+  hushNext: 5,          // 그 안내 뒤 이만큼 더 조용하면 다음으로
+  preSilence: 15,       // 답변 시작 전 무음 → "다시 들려드릴까요?" (noReplyMax 번째면 마침)
+  noReply: 15, noReplyMax: 3,   // 대답 기다리는 시간, 무응답 허용 횟수
+  confirm: 10,          // '면접 종료' 확인 — 대답 없으면 종료
+  resultAuto: 60, resultExtend: 60, resultMax: 300,   // 결과 화면 자동 제출, 영상 받기 누르면 연장, 최대
+  blockedBack: 30,      // 막혔을 때 처음 화면으로
+  doneBack: 20,         // 제출한 뒤 처음 화면으로
+  checkQuiet: 2, checkVoice: 8,   // 장비 점검 (실제 초 — 빠르게 하지 않음)
+  voiceOnMs: 500,       // 이만큼 이어서 소리가 나면 '말을 시작함' (받아쓰기가 없을 때)
+  reloadHours: 4        // 대기 화면에서 이만큼 지나면 새로고침 (면접 중엔 안 함)
+};
+const FILLERS = ["음", "어", "아", "그", "저", "약간", "뭔가", "이제", "좀", "막", "그냥", "진짜", "되게", "일단", "그래서", "그리고"];
+const SPEED = { low: 250, high: 330 };      // 분당 글자 수 참고 범위 (띄어쓰기 제외)
+const SAY = {
+  pick: "오늘 면접관을 골라 주세요. 한 명 또는 두 명을 말하거나 눌러 주세요.",
+  greet: (n) => `${n ? n + " 학생, " : ""}반가워요. 면접을 시작할까요?`,
+  greetAgain: "면접을 시작할까요? '네' 또는 '아니요'라고 말해 주세요.",
+  check: "화면에 얼굴이 보이는지 확인하고, '안녕하세요'라고 말해 보세요.",
+  checkAgain: "잘 들리지 않았어요. 한 번 더 '안녕하세요'라고 말해 보세요.",
+  noStt: "받아쓰기 없이 진행할게요.",
+  time: "면접을 몇 분 동안 볼까요? 10분, 15분, 20분 중에서 말해 주세요.",
+  timeDefault: `${CONFIG.planDefault}분으로 시작할게요.`,
+  think: `${CONFIG.think}초 생각할 시간을 드릴게요.`,
+  thinkMore: `네, ${CONFIG.thinkMore}초 더 드릴게요.`,
+  preSilence: "질문을 다시 들려드릴까요? '다시'라고 말하거나 바로 답해 주세요.",
+  hush: "더 하실 말씀이 없으면 '다음'이라고 말해 주세요.",
+  confirm: "면접을 끝낼까요?",
+  quit: "처음 화면으로 돌아갈까요?",
+  resume: "네, 이어서 할게요.",
+  noreply: "대답이 없어서 면접을 마칠게요.",
+  bye: {
+    time: "시간이 다 되어 면접을 마칠게요. 수고했어요. 결과는 화면에서 확인하세요.",
+    questions: "준비한 질문을 모두 했어요. 수고했어요. 결과는 화면에서 확인하세요.",
+    asked: "수고했어요. 결과는 화면에서 확인하세요."
+  }
+};
+const I_MIC = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>`;
+const I_MICOFF = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 3l18 18M9 9v2a3 3 0 0 0 5 2.2M15 9.3V6a3 3 0 0 0-5.7-1.3M5 11a7 7 0 0 0 11.3 5.5M19 11a7 7 0 0 1-.6 2.8M12 18v3"/></svg>`;
+const I_SPK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9v6h4l5 4V5L8 9H4zM16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>`;
+const I_LOCK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>`;
+const I_CAM = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2.5" y="6" width="13" height="12" rx="2"/><path d="M15.5 10.5l6-3.5v10l-6-3.5"/></svg>`;
+
+// =====================================================================
+// 1. 면접관 — 원본 사진(master.jpg) + 상태별 영상(있을 때만, manifest.json 으로 판단)
+//    상태는 interviewer.setState('idle'|'speaking'|'listening'|'ending') 하나로만 바꾼다
+//    영상 파일을 넣을 때는 booth-img/interviewers/<ID>/ 에 파일을 두고 manifest.json 에 한 줄만 추가 (코드 수정 없음)
+// =====================================================================
+const IV_BASE = "booth-img/interviewers/";
+const IV_STATES = ["idle", "speaking", "listening", "ending"];
+const IV_LOOP = { idle: true, speaking: true, listening: true, ending: false };   // ending 은 한 번 재생 후 마지막 장면에서 멈춤
+const CHARACTERS = {
+  A: { id: "professor_male_senior", label: "A 교수", desc: "나이 든 남자 교수 · 인자하고 푸근한 인상" },
+  B: { id: "professor_male_young", label: "B 교수", desc: "젊은 남자 교수 · 진지하고 날카로운 인상" },
+  C: { id: "professor_female_senior", label: "C 교수", desc: "나이 든 여자 교수 · 지적이고 날카로운 인상" },
+  D: { id: "professor_female_young", label: "D 교수", desc: "젊은 여자 교수 · 밝고 차분한 인상" }
+};
+// 영상이 없을 때의 아주 작은 움직임 세기 (인물마다 따로, 0 이면 움직임 없음)
+const IV_MOTION = { A: 1, B: 1, C: 1, D: 1 };
+const IV_VOICE = {
+  A: { gender: "m", rate: 0.92, pitch: 0.86, prefer: ["InJoon", "BongJin", "GookMin", "Hyunsu"] },
+  B: { gender: "m", rate: 1.02, pitch: 0.98, prefer: ["Hyunsu", "InJoon", "GookMin"] },
+  C: { gender: "f", rate: 0.94, pitch: 0.92, prefer: ["SeoHyeon", "SoonBok", "YuJin", "Heami", "SunHi", "Google"] },
+  D: { gender: "f", rate: 1.0, pitch: 1.04, prefer: ["SunHi", "Heami", "Google", "JiMin", "Yuna"] }
+};
+const IV_REDUCED = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+let IV_MANIFEST = {};                         // { <ID>: { master, idle?, speaking?, listening?, ending? } }
+const ivUrl = (id, file) => `${IV_BASE}${id}/${file}`;
+const masterUrl = (L) => { const id = CHARACTERS[L].id; return ivUrl(id, IV_MANIFEST[id]?.master || "master.jpg"); };
+async function loadManifest() {
+  try {
+    const r = await fetch(IV_BASE + "manifest.json", { cache: "no-cache" });
+    if (r.ok) IV_MANIFEST = (await r.json()) || {};
+  } catch (e) { console.warn("면접관 manifest 를 읽지 못했어요 — 사진만 씁니다", e); }
+}
+// 미리 받은 영상: 원래 주소 → blob 주소. <video> 는 blob 주소를 그대로 써서 다시 받지 않는다
+const ivBlobs = new Map(), ivWait = new Map();     // ivWait: 받는 중인 파일 → 끝나면 풀리는 약속
+function preloadVideos(letters) {
+  if (IV_REDUCED) return;
+  for (const L of letters) {
+    const id = CHARACTERS[L]?.id, m = IV_MANIFEST[id] || {};
+    for (const st of IV_STATES) {
+      if (!m[st]) continue;
+      const u = ivUrl(id, m[st]);
+      if (ivBlobs.has(u)) continue;
+      ivBlobs.set(u, null);
+      ivWait.set(u, fetch(u).then((r) => (r.ok ? r.blob() : null)).then((b) => {
+        if (b && ivBlobs.has(u)) ivBlobs.set(u, URL.createObjectURL(b)); else ivBlobs.delete(u);
+      }).catch(() => ivBlobs.delete(u)).finally(() => ivWait.delete(u)));
+    }
+  }
+}
+function releaseVideos() { ivBlobs.forEach((b) => { if (b) URL.revokeObjectURL(b); }); ivBlobs.clear(); ivWait.clear(); }
+
+// ---------- 그리기: 사진을 항상 밑에 깔고, 상태 영상이 있으면 재생이 시작된 뒤 위로 서서히 ----------
+class PhotoRenderer {
+  constructor(L) { this.L = L; this.el = null; this.vid = null; this.timer = null; this.state = null; }
+  mount(parent) {
+    const el = document.createElement("div");
+    el.className = "ivp";
+    el.innerHTML = `<img class="ivp-photo" alt="" draggable="false"><div class="ivp-name"></div>`;
+    parent.appendChild(el); this.el = el; this.photo = el.querySelector(".ivp-photo");
+    el.addEventListener("animationend", this._onEnd = (e) => { if (e.animationName === "ivp-nod") el.classList.remove("nod"); });
+    return this;
+  }
+  setCharacter(L) {
+    this.L = L; this.id = CHARACTERS[L].id;
+    this.photo.src = masterUrl(L);
+    this.el.querySelector(".ivp-name").textContent = CHARACTERS[L].label;
+    this.el.setAttribute("role", "img"); this.el.setAttribute("aria-label", CHARACTERS[L].label);
+    this.el.style.setProperty("--ivp-amp", String(IV_MOTION[L] ?? 1));
+    this.el.dataset.who = L;
+    if (this.vid) { this.hideVideo(); this.vid.poster = masterUrl(L); this.vid.dataset.u = ""; this.vid.removeAttribute("src"); this.vid.load(); }
+  }
+  _video() {                 // 사람마다 하나만 만들어 계속 재사용
+    if (this.vid || IV_REDUCED) return this.vid;
+    const v = document.createElement("video");
+    v.className = "ivp-vid"; v.muted = true; v.playsInline = true; v.preload = "auto";
+    v.setAttribute("muted", ""); v.setAttribute("playsinline", ""); v.disablePictureInPicture = true;
+    v.poster = masterUrl(this.L);
+    v.addEventListener("playing", () => { if (v.dataset.want === "1") { clearTimeout(this.timer); this.el.classList.add("vid-on"); } });
+    v.addEventListener("error", () => this.hideVideo());
+    this.el.insertBefore(v, this.el.querySelector(".ivp-name"));
+    return (this.vid = v);
+  }
+  apply(s) {
+    if (!this.el) return;
+    if (s.state !== undefined) this.show(s.state);
+    if (s.nod && !this.el.classList.contains("vid-on")) { this.el.classList.remove("nod"); void this.el.offsetWidth; this.el.classList.add("nod"); }
+    if (s.asking !== undefined) this.el.classList.toggle("asking", s.asking);
+  }
+  show(state) {
+    this.state = state; this.el.dataset.state = state;
+    const file = IV_REDUCED ? null : IV_MANIFEST[this.id]?.[state];
+    if (!file) return this.hideVideo();
+    const v = this._video(), u = ivUrl(this.id, file);
+    v.dataset.want = "1"; v.loop = IV_LOOP[state];
+    clearTimeout(this.timer);   // 늦게 오거나 실패하면 사진으로 그대로 진행 (검은 화면 없음)
+    this.timer = setTimeout(() => { if (!this.el?.classList.contains("vid-on")) this.hideVideo(); }, 1500);
+    const start = () => {
+      if (!this.el || this.state !== state || v.dataset.want !== "1") return;
+      if (v.dataset.u !== u) { this.el.classList.remove("vid-on"); v.dataset.u = u; v.src = ivBlobs.get(u) || u; }   // 미리 받은 blob 우선
+      else if (v.ended || !IV_LOOP[state]) { try { v.currentTime = 0; } catch (_) {} }
+      try { v.play()?.catch?.(() => this.hideVideo()); } catch (_) { this.hideVideo(); }
+    };
+    const wait = ivWait.get(u);
+    if (wait && v.dataset.u !== u) { this.el.classList.remove("vid-on"); wait.then(start); }   // 미리 받는 중이면 기다렸다 그 파일로 (다시 받지 않음)
+    else start();
+  }
+  hideVideo() {
+    clearTimeout(this.timer);
+    this.el?.classList.remove("vid-on");
+    if (this.vid) { this.vid.dataset.want = "0"; try { this.vid.pause(); } catch (_) {} }
+  }
+  pause() { this.hideVideo(); }
+  resume() { if (this.state) this.show(this.state); }
+  destroy() {
+    clearTimeout(this.timer);
+    if (this.vid) { try { this.vid.pause(); this.vid.removeAttribute("src"); this.vid.load(); } catch (_) {} }
+    if (this.el) { this.el.removeEventListener("animationend", this._onEnd); this.el.remove(); }
+    this.el = this.vid = null;
+  }
+}
+
+// ---------- 상태·타이머 (그리는 방법은 모름 — 렌더러만 바꾸면 다른 방식으로 교체 가능) ----------
+const rnd = (a, b) => a + Math.random() * (b - a);
+class Interviewer {
+  constructor(L, renderer) {
+    this.id = L; this.character = CHARACTERS[L]; this.renderer = renderer || new PhotoRenderer(L);
+    this.state = null; this.timers = {}; this.paused = false; this.stats = { nods: 0 };
+  }
+  mount(parent) { this.renderer.mount(parent); this.setCharacter(this.id); this.setState("idle"); return this; }
+  setCharacter(L) {
+    if (!CHARACTERS[L]) return;
+    this.id = L; this.character = CHARACTERS[L]; this.renderer.setCharacter(L);
+    const s = this.state; this.state = null; if (s) this.setState(s);
+  }
+  _after(n, ms, fn) { clearTimeout(this.timers[n]); this.timers[n] = setTimeout(() => { this.timers[n] = null; fn(); }, ms); }
+  _clear(n) { clearTimeout(this.timers[n]); this.timers[n] = null; }
+  _clearAll() { for (const k in this.timers) clearTimeout(this.timers[k]); this.timers = {}; }
+  setState(s) {
+    if (!IV_STATES.includes(s) || s === this.state) return;
+    this.state = s; this._clear("nod");
+    if (this.paused) return;
+    this.renderer.apply({ state: s });
+    if (s === "listening") this._scheduleNod();
+  }
+  _scheduleNod() {           // 듣는 동안 10~20초마다 아주 약한 끄덕임 (영상이 있으면 영상이 대신)
+    if (IV_REDUCED || !(IV_MOTION[this.id] > 0)) return;
+    this._after("nod", rnd(10000, 20000), () => { if (this.state !== "listening") return; this.stats.nods++; this.renderer.apply({ nod: true }); this._scheduleNod(); });
+  }
+  pause() { this.paused = true; this._clearAll(); this.renderer.pause(); }
+  resume() { if (!this.paused) return; this.paused = false; const s = this.state; this.state = null; this.setState(s); }
+  pendingTimers() { return Object.values(this.timers).filter(Boolean).length; }
+  destroy() { this._clearAll(); this.renderer.destroy(); this.renderer = { apply() {}, destroy() {}, pause() {}, setCharacter() {} }; }
+}
+
+// ---------- 목소리 (외모에 맞게 자동 선택 — 성별 맞는 목소리가 없으면 높낮이로 구분) ----------
+const VOICE_MALE = /InJoon|Hyunsu|BongJin|GookMin|Minjun|male|남성|남자/i;
+const VOICE_FEMALE = /SunHi|Heami|JiMin|SeoHyeon|SoonBok|YuJin|Yuna|Google|female|여성|여자/i;
+function pickVoice(profile, voices, taken = []) {
+  const ko = (voices || []).filter((v) => /^ko/i.test(v.lang || ""));
+  if (!ko.length) return { voice: null, pitch: profile.pitch, rate: profile.rate, matched: false };
+  const score = (v) => { let s = 0; const i = profile.prefer.findIndex((p) => v.name.includes(p)); if (i >= 0) s += 20 - i;
+    const g = VOICE_MALE.test(v.name) ? "m" : VOICE_FEMALE.test(v.name) ? "f" : ""; if (g === profile.gender) s += 10; else if (g) s -= 10;
+    if (/Natural|Online|Neural/i.test(v.name)) s += 3; if (taken.includes(v.name)) s -= 4; return s; };
+  const best = [...ko].sort((a, b) => score(b) - score(a))[0];
+  const g = VOICE_MALE.test(best.name) ? "m" : VOICE_FEMALE.test(best.name) ? "f" : "", matched = g === profile.gender;
+  const pitch = matched ? profile.pitch : profile.gender === "m" ? Math.min(profile.pitch, 0.72) : Math.max(profile.pitch, 1.08);
+  return { voice: best, pitch, rate: profile.rate, matched };
+}
+// 긴 글은 문장 단위로 끊어 읽는다 (크롬 온라인 목소리는 긴 글을 중간에 끊는 일이 있다)
+function splitSpeech(text) {
+  const out = String(text || "").split(/(?<=[.?!。])\s+/).map((s) => s.trim()).filter(Boolean);
+  return out.length ? out : [""];
+}
+
+// ---------- 면접실: 1~2명, 번갈아 묻기, 누가 물었는지 ----------
+class InterviewPanel {
+  constructor(host) {
+    this.members = []; this.turn = 0; this.utter = null; this.voices = []; this.sayToken = null;
+    this.root = document.createElement("div"); this.root.className = "ivs";
+    this.root.innerHTML = `<div class="ivs-cap"></div>`; host.appendChild(this.root);
+    this.cap = this.root.querySelector(".ivs-cap");
+    this._onVis = () => this.members.forEach((m) => (document.hidden ? m.pause() : m.resume()));
+    document.addEventListener("visibilitychange", this._onVis);
+    if ("speechSynthesis" in window) {
+      this._loadVoices = () => { try { this.voices = speechSynthesis.getVoices() || []; } catch (_) { this.voices = []; } this._assignVoices(); };
+      speechSynthesis.addEventListener?.("voiceschanged", this._loadVoices); this._loadVoices();
+    }
+  }
+  setInterviewers(ids) {          // 1~2명. 비어 있으면 4명 중 2명 무작위
+    if (!ids || !ids.length) ids = Object.keys(CHARACTERS).sort(() => Math.random() - 0.5).slice(0, 2);
+    ids = [...new Set(ids)].filter((id) => CHARACTERS[id]).slice(0, 2);
+    this.stop(); this.members.forEach((m) => m.destroy());
+    this.members = ids.map((id) => new Interviewer(id).mount(this.root));
+    this.root.dataset.count = String(this.members.length);
+    this.root.style.setProperty("--ivs-bg", `url("${masterUrl(ids[0])}")`);
+    this.turn = 0; this._assignVoices(); this.caption("");
+    return this.members.map((m) => m.id);
+  }
+  _assignVoices() { const taken = []; this.members.forEach((m) => { m.voice = pickVoice(IV_VOICE[m.id], this.voices, taken); if (m.voice.voice) taken.push(m.voice.voice.name); }); }
+  caption(t, kind = "") { this.cap.textContent = t; this.cap.dataset.kind = kind; }
+  all(s) { this.members.forEach((m) => { m.setState(s); m.renderer.apply({ asking: false }); }); }
+  member(id) { return this.members.find((x) => x.id === id) || this.members[0]; }
+  nextSpeaker() { const m = this.members[this.turn % this.members.length]; this.turn++; return m; }
+  say(text, { by, cap } = {}) {   // → Promise<{ askedBy }>
+    const m = by ? this.member(by) : this.nextSpeaker();
+    if (!m) return Promise.resolve({ askedBy: null });
+    this.stop();
+    this.members.forEach((x) => { x.setState(x === m ? "speaking" : "listening"); x.renderer.apply({ asking: x === m }); });
+    this.caption(`${m.character.label} · ${cap || "질문하는 중"}`, "speaking");
+    const token = this.sayToken = {};
+    return (async () => {
+      for (const chunk of splitSpeech(text)) { if (this.sayToken !== token) break; await this._utter(chunk, m); }
+      if (this.sayToken === token) { this.sayToken = null; m.setState("idle"); m.renderer.apply({ asking: false }); }
+      return { askedBy: m.id };
+    })();
+  }
+  _utter(text, m) {
+    return new Promise((resolve) => {
+      let done = false, u = null;
+      const fin = () => { if (done) return; done = true; clearTimeout(guard); if (this.utter === u) this.utter = null; resolve(); };
+      const guard = setTimeout(fin, Math.max(3500, text.length * 190 + 2000));   // 끝 신호가 안 오는 경우 대비
+      this._fin = fin;
+      if (!("speechSynthesis" in window)) return;
+      try {
+        u = new SpeechSynthesisUtterance(text); u.lang = "ko-KR";
+        u.voice = m.voice?.voice || null; u.pitch = m.voice?.pitch ?? 1; u.rate = m.voice?.rate ?? 1;
+        u.onend = fin; u.onerror = fin;
+        this.utter = u; speechSynthesis.speak(u);
+      } catch (_) { fin(); }
+    });
+  }
+  listen() { this.stop(); this.all("listening"); this.caption("듣고 있어요", "listening"); }
+  idle() { this.stop(); this.all("idle"); this.caption(""); }
+  end() { this.stop(); this.all("ending"); this.caption("수고했어요", "ending"); }
+  stop() {
+    this.sayToken = null;
+    const u = this.utter; this.utter = null;
+    if (u && "speechSynthesis" in window) { try { speechSynthesis.cancel(); } catch (_) {} }
+    this._fin?.(); this._fin = null;
+  }
+  destroy() { this.stop(); this.members.forEach((m) => m.destroy()); this.members = []; document.removeEventListener("visibilitychange", this._onVis);
+    if (this._loadVoices) speechSynthesis.removeEventListener?.("voiceschanged", this._loadVoices); this.root.remove(); }
+}
+
+// =====================================================================
+// 2. 상태
+// =====================================================================
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let ctx = null;             // requireRole 결과
+let stream = null, meter = null;
+let threshold = 0.02;       // 말소리 판정 기준 (장비 점검 때 조정)
+let sttOk = !!SR, sttOff = false;
+let pool = [];              // 남은 질문 (예상질문 → 질문은행)
+let items = [];             // 물은 질문 (답한 것만 저장)
+let clips = [];             // 녹화 영상 { it, which, blob, url, ext }
+let interviewers = [], planSec = 0, tStart = 0, usedTotalSec = 0, endReason = "";
+let sessionRef = null, finished = false, resetting = false, aborted = false;
+let phase = "boot", hdTimer = null, keepAlive = null;
+const recorders = new Set();
+const now = () => performance.now() / 1000 * FAST;          // 흐름 시계 (초)
+const sleepReal = (ms) => new Promise((r) => setTimeout(r, ms));
+class Abort extends Error {}
+async function sleepV(sec) { await sleepReal(sec * 1000 / FAST); if (aborted) throw new Abort(); }
+const panel = new InterviewPanel($("#scene"));
+// 시험용 엿보기 — 시험 환경에서만 만든다 (화면 동작에는 쓰지 않음)
+if (TEST) {
+  window.__iv = () => panel.members.map((m) => ({ id: m.id, voice: m.voice?.voice?.name || null, pitch: m.voice?.pitch, matched: !!m.voice?.matched }));
+  window.__booth = { parsePick: (t) => parsePick(t), cmdOf: (t, a, s) => cmdOf(t, a, s), parseMin: (t) => parseMin(t),
+    voiceFor: (ids) => { panel.setInterviewers(ids); return window.__iv(); }, left: () => leftSec(),
+    panel, releaseVideos, blobs: () => [...ivBlobs.values()].filter(Boolean), preload: (ls) => preloadVideos(ls) };
+}
+
+// ---------- 사건 (버튼·카드·받아쓰기) — 상태마다 next() 로 하나씩 받는다 ----------
+const evq = []; let wake = null;
+function emit(e) {
+  if (aborted) return;
+  if (ttsBusy && (e.type === "btn" || e.type === "card")) panel.stop();   // 누르면 읽던 말을 멈춘다
+  evq.push(e); if (evq.length > 300) evq.splice(0, evq.length - 300);
+  wake?.();
+}
+function next(ms) {      // 사건 하나 → 없이 ms 가 지나면 { type: "tick" }
+  return new Promise((resolve, reject) => {
+    let t = null;
+    const take = () => {
+      if (aborted) { clearTimeout(t); wake = null; reject(new Abort()); return true; }
+      if (!evq.length) return false;
+      clearTimeout(t); wake = null; resolve(evq.shift()); return true;
+    };
+    if (take()) return;
+    wake = take;
+    if (ms != null) t = setTimeout(() => { if (wake === take) wake = null; resolve({ type: "tick" }); }, Math.max(0, ms));
+  });
+}
+const nextUntil = (until) => next((until - now()) * 1000 / FAST);   // 흐름 시계로 until 까지
+function setPhase(name, keep = false) { phase = name; document.body.dataset.phase = name; if (!keep) evq.length = 0; }
+const dropText = () => { for (let i = evq.length - 1; i >= 0; i--) if (evq[i].type === "text") evq.splice(i, 1); };
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-btn],[data-card]"); if (!b || b.disabled) return;
+  if (b.dataset.btn) emit({ type: "btn", name: b.dataset.btn }); else emit({ type: "card", value: b.dataset.card });
+});
+
+// ---------- 명령어 — 상태마다 알아듣는 말을 제한 ----------
+const CMDS = {
+  end: ["면접종료", "면접끝", "종료", "그만하겠습니다", "그만할게요", "그만", "끝낼게요"],
+  no: ["아니에요", "아니요", "아니오", "아뇨", "아니", "계속할게요", "이어서할게요", "이어서"],
+  again: ["다시말해주세요", "다시들려주세요", "질문다시", "다시한번", "다시요", "다시", "한번더"],
+  wait: ["잠시만기다려주세요", "잠시만요", "잠깐만요", "잠시만", "잠깐만", "잠깐"],
+  next: ["다음질문", "다음이요", "다음요", "다음", "넘어갈게요", "넘어가요", "다했습니다", "다했어요", "이상입니다"],
+  yes: ["면접시작", "시작하겠습니다", "시작할게요", "시작", "좋아요", "네", "예", "넵", "응"],
+  random: ["상관없습니다", "상관없어요", "상관없", "아무나", "아무거나", "누구든", "누구나", "랜덤", "무작위", "알아서"]
+};
+const ALL_CMD = Object.values(CMDS).flat();
+const norm = (t) => String(t || "").normalize("NFKC").toLowerCase().replace(/[\s.,?!~…'"“”‘’·\-()]/g, "");
+// strict: 그 말만 따로 짧게 했을 때만 (명령어 ±2글자). 아니면 짧은 대답 안에 들어 있으면
+function cmdOf(text, allowed, strict = true) {
+  const n = norm(text); if (!n) return null;
+  for (const k of ["end", "no", "again", "wait", "next", "yes", "random"]) {
+    if (!allowed.includes(k)) continue;
+    for (const s of CMDS[k]) if (n.includes(s) && n.length <= s.length + (strict ? 2 : 8)) return k;
+  }
+  return null;
+}
+const maybeCmd = (text) => { const n = norm(text); return !n || ALL_CMD.some((s) => s.startsWith(n) || (n.includes(s) && n.length <= s.length + 2)); };
+// 면접관 고르기: "B 교수랑 D 교수", "비디", "삐 교수", "D" … → ["B","D"] / "아무나" → "random"
+const PICK_SYN = { A: ["에이", "에이스", "애이", "a", "에"], B: ["비", "삐", "피", "b"], C: ["씨", "시", "쒸", "c"], D: ["디", "띠", "티", "뒤", "d"] };
+function parsePick(text) {
+  if (cmdOf(text, ["random"], false)) return "random";
+  let s = String(text || "").normalize("NFKC").toLowerCase().replace(/[.,?!~…'"“”‘’·\-()]/g, " ");
+  s = s.replace(/면접관님|면접관|교수님|교수|선생님|이랑요|이랑|그리고|하고요|하고|할게요|해\s?주세요|주세요|랑|님|와|과|으로|로|이요|요|및/g, " ");
+  const find = (tok) => Object.keys(PICK_SYN).find((k) => PICK_SYN[k].includes(tok));
+  const out = [];
+  for (const tok of s.split(/\s+/).filter(Boolean)) {
+    const one = find(tok);
+    if (one) out.push(one);
+    else if (tok.length === 2 && find(tok[0]) && find(tok[1])) out.push(find(tok[0]), find(tok[1]));
+  }
+  return [...new Set(out)].slice(0, 2);
+}
+function parseMin(text) {
+  const n = norm(text); if (!n || n.length > 8) return 0;
+  const m = /20|이십|스무/.test(n) ? 20 : /15|십오|열다섯/.test(n) ? 15 : /10|십|열/.test(n) ? 10 : 0;
+  return CONFIG.planMin.includes(m) ? m : 0;
+}
+
+// ---------- 받아쓰기 — 면접관이 말하는 동안은 끈다 (스피커 소리를 되받지 않게) ----------
+const stt = {
+  on: false, paused: false, r: null, gen: 0, interim: "",
+  start() { this.on = true; this._open(); },
+  stop() { this.on = false; this._close(); },
+  pause(flush) { if (flush) this.flush(); this.paused = true; this._close(); },
+  resume() { this.paused = false; this._open(); },
+  flush() { const t = this.interim.trim(); this.interim = ""; if (t) emit({ type: "text", text: t, final: true }); },
+  _open() {
+    if (!SR || !sttOk || !this.on || this.paused || this.r || aborted) return;
+    const g = ++this.gen, r = new SR();
+    r.lang = "ko-KR"; r.continuous = true; r.interimResults = true;
+    r.onresult = (ev) => {
+      if (g !== this.gen) return;
+      let interim = "";
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const t = ev.results[i][0].transcript;
+        if (ev.results[i].isFinal) { if (t.trim()) emit({ type: "text", text: t.trim(), final: true }); }
+        else interim += t;
+      }
+      this.interim = interim;
+      if (interim.trim()) emit({ type: "text", text: interim.trim(), final: false });
+    };
+    r.onerror = (e) => { if (e.error === "not-allowed" || e.error === "service-not-allowed") sttOk = false; };
+    r.onend = () => { if (this.r === r) this.r = null; if (g === this.gen) setTimeout(() => this._open(), 60); };   // 크롬은 조용하면 스스로 끊는다 → 다시 켬
+    try { r.start(); this.r = r; } catch (e) { console.warn("stt", e); }
+  },
+  _close() { const r = this.r; this.r = null; this.gen++; this.interim = ""; if (r) { try { r.stop(); } catch (_) {} } }
+};
+
+// ---------- 소리 크기 (침묵 판정) ----------
+class Meter {
+  constructor(s) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    this.ac = new AC();
+    const src = this.ac.createMediaStreamSource(s);
+    this.an = this.ac.createAnalyser(); this.an.fftSize = 1024;
+    src.connect(this.an);
+    this.buf = new Float32Array(this.an.fftSize);
+  }
+  level() {
+    this.an.getFloatTimeDomainData(this.buf);
+    let s = 0; for (const v of this.buf) s += v * v;
+    return Math.sqrt(s / this.buf.length);
+  }
+}
+const pct = (arr, p) => { if (!arr.length) return 0; const a = [...arr].sort((x, y) => x - y); return a[Math.min(a.length - 1, Math.floor(a.length * p))]; };
+let loudRun = 0, lastLoud = 0, frameSink = null, ttsBusy = false, ttsEnd = 0;
+setInterval(() => {
+  if (!meter) return;
+  let loud = false;
+  try { loud = !(ttsBusy || performance.now() - ttsEnd < 400) && meter.level() > threshold; } catch (_) {}
+  loudRun = loud ? loudRun + 1 : 0;
+  if (loud) lastLoud = performance.now();
+  frameSink?.(loud);
+}, 100);
+const voiceOn = (ms = CONFIG.voiceOnMs) => loudRun * 100 >= ms;
+
+// ---------- 면접관이 말하기 ----------
+async function say(text, { by, cap } = {}) {
+  if (aborted) throw new Abort();
+  stt.pause(phase === "listen");        // 답변 중이면 받아쓰던 말은 답변에 넣고 끈다
+  ttsBusy = true; document.body.dataset.tts = "1";
+  let r = { askedBy: null };
+  try { r = await panel.say(text, { by, cap }); }
+  finally { ttsBusy = false; ttsEnd = performance.now(); document.body.dataset.tts = "0"; }
+  if (aborted) throw new Abort();
+  stt.resume();
+  return r;
+}
+
+// ---------- 녹화 ----------
+function pickMime() {
+  const list = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+  return list.find((m) => window.MediaRecorder?.isTypeSupported?.(m)) || "";
+}
+function startRec() {
+  if (!stream || !window.MediaRecorder) return null;
+  const chunks = [], mime = pickMime();
+  let mr;
+  try { mr = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 1_500_000 } : undefined); }
+  catch (e) { console.warn("recorder", e); return null; }
+  const done = new Promise((ok) => {
+    mr.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+    mr.onstop = () => ok(chunks.length ? new Blob(chunks, { type: mr.mimeType || mime || "video/webm" }) : null);
+  });
+  try { mr.start(1000); } catch (e) { console.warn("recorder", e); return null; }
+  recorders.add(mr); $("#self").classList.add("recording");
+  return { mr, done };
+}
+async function stopRec(rec, keep, it, which) {
+  if (!rec) return;
+  try { if (rec.mr.state !== "inactive") rec.mr.stop(); } catch (_) {}
+  recorders.delete(rec.mr); if (!recorders.size) $("#self")?.classList.remove("recording");
+  const blob = await Promise.race([rec.done, sleepReal(4000).then(() => null)]);
+  if (keep && blob) clips.push({ it, which, blob, url: URL.createObjectURL(blob), ext: /mp4/.test(blob.type) ? "mp4" : "webm" });
+}
+
+// ---------- 저장 — 답한 문항이 생긴 뒤에만 sessions 에 만든다 ----------
+const ITEM_KEYS = ["source", "qid", "type", "text", "passage", "prepSec", "thinkSec", "answerSec", "followUp", "prepMemo", "answer", "usedSec",
+  "followAnswer", "followUsedSec", "m", "followM", "askedBy", "followAskedBy", "thinkUsedSec", "thinkMore"];
+function cleanItems() {
+  return items.filter((it) => it.answered).map((it) => {
+    const o = {};
+    for (const k of ITEM_KEYS) if (it[k] !== undefined && it[k] !== false && !(k === "followAskedBy" && !it[k])) o[k] = it[k];
+    return o;
+  });
+}
+function sessionBase() {
+  const p = ctx.profile;
+  return { studentUid: ctx.user.uid, studentName: p.name || "", studentNo: p.studentNo, track: p.track || "",
+    mode: "booth", modeLabel: "면접 부스", interviewers, planSec, ...(sttOff ? { sttOff: true } : {}) };
+}
+let storeQ = Promise.resolve();
+function saveProgress() {
+  storeQ = storeQ.then(async () => {
+    const list = cleanItems();
+    if (!list.length || finished) return;
+    if (!sessionRef) sessionRef = await addDoc(collection(db, "sessions"), { ...sessionBase(), items: list, status: "in_progress", startedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    else await updateDoc(sessionRef, { items: list, updatedAt: serverTimestamp() });
+  }).catch((e) => console.warn("save", e));
+  return storeQ;
+}
+async function submit(auto, reason) {
+  if (finished) return true;
+  await saveProgress();
+  if (!sessionRef) return false;
+  await updateDoc(sessionRef, { ...sessionBase(), items: cleanItems(), usedTotalSec, endReason: reason,
+    status: "submitted", submittedAt: serverTimestamp(), updatedAt: serverTimestamp(), ...(auto ? { autoSubmitted: true } : {}) });
+  finished = true;
+  return true;
+}
+
+// ---------- AI 자리 (V1 은 이 컴퓨터에서만 계산 — V2 에서 이 묶음만 바꾼다) ----------
+const ai = {
+  nextFollowUp(q) { const fu = (q.followUps || []).filter(Boolean); return fu.length ? fu[Math.floor(Math.random() * fu.length)] : ""; },
+  analyze(frames, text) {
+    const first = frames.indexOf(true), last = frames.lastIndexOf(true);
+    const out = { firstSec: null, speakSec: 0, pauses: 0, cpm: null, fillers: {} };
+    if (first >= 0) {
+      out.firstSec = Math.round(first / 10 * 10) / 10;
+      out.speakSec = Math.round((last - first + 1) / 10);
+      let run = 0;
+      for (let i = first; i <= last; i++) { if (!frames[i]) run++; else { if (run >= 30) out.pauses++; run = 0; } }
+    }
+    const chars = text.replace(/[\s.,?!~'"…·\-()]/g, "").length;
+    if (chars && out.speakSec >= 5) out.cpm = Math.round(chars / out.speakSec * 60);
+    for (const w of text.split(/\s+/)) { const k = w.replace(/[.,?!~…]/g, ""); if (FILLERS.includes(k)) out.fillers[k] = (out.fillers[k] || 0) + 1; }
+    return out;
+  },
+  report() { return null; }
+};
+const topFillers = (f, min = 3) => Object.entries(f || {}).filter(([, n]) => n >= min).sort((a, b) => b[1] - a[1]).slice(0, 3);
+
+// =====================================================================
+// 3. 화면 조각
+// =====================================================================
+function showRoom() { $("#room").hidden = false; $("#full").hidden = true; }
+function showFull(html) { $("#room").hidden = true; const f = $("#full"); f.hidden = false; f.innerHTML = html; f.scrollTop = 0; }
+const acts = () => `<div class="acts3">
+  <div><button type="button" data-btn="again">다시 듣기</button><span>“다시”</span></div>
+  <div><button type="button" class="btn-primary" data-btn="next">다음</button><span>“다음”</span></div>
+  <div><button type="button" class="end" data-btn="end">종료</button><span>“면접 종료”</span></div></div>`;
+function side(html, buttons = true) { showRoom(); $("#side").innerHTML = html + (buttons ? `<div class="grow"></div>${acts()}` : ""); $("#side").scrollTop = 0; }
+const lstat = (t, ok = true) => `<p class="lstat"><i class="${ok ? "ok" : ""}"></i>${esc(t)}</p>`;
+const label = (id) => CHARACTERS[id]?.label || id;
+const qNo = (it) => items.indexOf(it) + 1;
+function drawHeader() {
+  const used = now() - tStart, left = Math.max(0, planSec - used);
+  $("#hdMid").innerHTML = `<div class="hbar"><i style="width:${Math.min(100, used / planSec * 100)}%"></i></div>
+    <span class="htime" id="hdLeft">남은 시간 <b>${fmtSec(left)}</b> / ${fmtSec(planSec)} · 질문 ${Math.max(1, items.length)}</span>`;
+}
+
+// =====================================================================
+// 3-1. 부스 PC 잠금 — 관리자가 등록한 PC 에서만 (보안 장치가 아니라 '집에서 헷갈려 쓰지 않게' 하는 안내 장치)
+//   이 PC 의 키는 localStorage `boothKey` (c1: 밖이라 clearDataCache·resetBooth 가 지우지 않음)
+//   config/booth.devices 에는 키가 아니라 키의 SHA-256 해시를 이름으로 둔다 (학생이 목록을 읽어도 키를 모르게)
+// =====================================================================
+const BOOTH_KEY = "boothKey";
+const getKey = () => { try { return localStorage.getItem(BOOTH_KEY) || ""; } catch (_) { return ""; } };
+async function sha256hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+function newKey() {
+  const a = crypto.getRandomValues(new Uint8Array(18));
+  return btoa(String.fromCharCode(...a)).replace(/\+/g, "-").replace(/\//g, "_");   // 24자
+}
+// 학생 로그인 직후: 이 PC 가 아직 등록돼 있는지. 읽기에 실패하면 막지 않고 진행 (콘솔에만 남김)
+async function stillRegistered() {
+  const key = getKey(); if (!key) return false;
+  try {
+    const snap = await getDoc(doc(db, "config", "booth"));
+    const h = await sha256hex(key);
+    return !!(snap.exists() && snap.data()?.devices?.[h]);
+  } catch (e) { console.warn("부스 등록 확인에 실패했어요 — 막지 않고 진행합니다", e); return true; }
+}
+function renderLocked(msg = "") {
+  setPhase("locked");
+  $("#who").textContent = ""; $("#hdMid").innerHTML = ""; $("#hdNote").textContent = "";
+  showFull(`<div class="lockv"><div class="lock-card">
+      <span class="ico">${I_LOCK}</span>
+      <h1 class="ttl">이 화면은 학교 면접 부스 전용이에요</h1>
+      ${msg ? `<p class="err" id="lockMsg" style="margin:0">${esc(msg)}</p>` : ""}
+      <p class="sub">연습은 면접 스튜디오의 <b>'혼자 연습'</b>을 이용하세요.</p>
+      <a class="btn-primary btn-lg" href="index.html" id="lockGo">면접 스튜디오로 가기</a>
+      <p class="hint">학교 부스 컴퓨터인데 이 화면이 보이면 등록이 풀린 거예요. 관리자 선생님께 알려 주세요.</p>
+    </div>
+    <button type="button" class="lock-admin" id="lkAdmin">관리자 등록</button></div>`);
+  $("#lkAdmin").onclick = () => renderRegister();
+}
+function renderRegister(msg = "") {
+  setPhase("register");
+  showFull(`<div class="lockv"><div class="lock-card">
+      <div class="phase-l">부스 PC 등록 · 관리자만</div>
+      <h1 class="ttl">이 컴퓨터를 면접 부스로 등록할까요?</h1>
+      <p class="sub">관리자 계정으로 등록하면 이 컴퓨터에서만 면접 부스가 열려요. 등록이 끝나면 관리자는 자동으로 로그아웃돼요.</p>
+      <form class="form" id="regForm" autocomplete="off">
+        <div class="field"><label for="rid">교사 ID 또는 관리자 이메일</label><input id="rid" autocomplete="off" required></div>
+        <div class="field"><label for="rpw">비밀번호</label><input id="rpw" type="password" autocomplete="off" required></div>
+        <div class="field"><label for="rname">부스 이름</label><input id="rname" placeholder="예: 3층 면접 부스" maxlength="40" required></div>
+        <p class="err" id="rerr">${esc(msg)}</p>
+        <button class="btn-primary btn-lg" id="rgo">등록하기</button>
+      </form>
+      <button type="button" class="lock-back" id="rback">돌아가기</button>
+    </div></div>`);
+  $("#rid").focus();
+  $("#rback").onclick = () => renderLocked();
+  $("#regForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const id = $("#rid").value.trim(), pw = $("#rpw").value, name = $("#rname").value.trim();
+    if (!id || !pw || !name) return;
+    $("#rgo").disabled = true; $("#rerr").textContent = "";
+    try {
+      const email = await resolveLoginEmail("staff", id);
+      const cred = await signIn(email, pw, false);
+      const acc = await getDoc(doc(db, "accounts", cred.user.uid)).catch(() => null);
+      const a = acc?.exists() ? acc.data() : null;
+      if (!(a?.role === "admin" || isAdminEmail(cred.user.email))) throw Object.assign(new Error("관리자만 등록할 수 있어요."), { code: "booth/not-admin" });
+      const key = newKey(), h = await sha256hex(key);
+      await setDoc(doc(db, "config", "booth"), { devices: { [h]: { name, registeredAt: serverTimestamp(), registeredBy: a?.name || cred.user.email || "" } } }, { merge: true });
+      localStorage.setItem(BOOTH_KEY, key);
+      try { await signOut(auth); } catch (_) {}
+      try { clearDataCache(); sessionStorage.clear(); localStorage.removeItem("keepLogin"); } catch (_) {}
+      renderLogin();
+      toast(`이 컴퓨터를 '${name}'(으)로 등록했어요.`, "ok", 6000);
+    } catch (err) {
+      console.warn(err);
+      try { await signOut(auth); } catch (_) {}
+      try { sessionStorage.clear(); } catch (_) {}
+      const code = err?.code || "";
+      $("#rerr").textContent = code === "booth/not-admin" ? err.message
+        : /invalid-credential|wrong-password|user-not-found|invalid-email/.test(code) ? "ID 또는 비밀번호가 맞지 않아요."
+        : /permission/.test(code) ? "등록 권한이 없어요. 관리자 계정인지 확인해 주세요."
+        : /network/.test(code) ? "인터넷 연결을 확인해 주세요."
+        : (err?.message || "등록하지 못했어요.");
+      $("#rgo").disabled = false; $("#rpw").value = "";
+    }
+  };
+}
+
+// =====================================================================
+// 4. 대기·로그인
+// =====================================================================
+function renderLogin(msg = "") {
+  setPhase("login");
+  $("#who").textContent = ""; $("#hdMid").innerHTML = ""; $("#hdNote").textContent = "로그인하면 면접관이 말로 안내해요";
+  panel.setInterviewers([Object.keys(CHARACTERS)[Math.floor(Math.random() * 4)]]); panel.idle();
+  side(`<div class="grow"></div>
+    <div><h1 class="ttl big">면접을 시작해 볼까요?</h1>
+      <p class="sub" style="margin-top:10px">학번과 비밀번호로 시작하세요.<br>그다음부터는 버튼 없이 말로 진행돼요.</p></div>
+    <form class="form" id="loginForm" autocomplete="off">
+      <div class="field"><label for="lid">학번</label><input id="lid" inputmode="numeric" autocomplete="off" required></div>
+      <div class="field"><label for="lpw">비밀번호</label><input id="lpw" type="password" autocomplete="off" required></div>
+      <p class="err" id="lerr">${esc(msg)}</p>
+      <button class="btn-primary btn-lg" id="lgo">시작하기</button>
+    </form>
+    <div class="grow"></div>
+    <div class="note-i">${I_SPK}<span>면접관 목소리가 스피커로 나와요. 공용 컴퓨터라 끝나면 자동으로 로그아웃되고 영상은 남지 않아요.</span></div>`, false);
+  $("#lid").focus();
+  $("#loginForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const id = $("#lid").value.trim(), pw = $("#lpw").value;
+    if (!id || !pw) return;
+    $("#lgo").disabled = true; $("#lerr").textContent = "";
+    document.documentElement.requestFullscreen?.().catch(() => {});
+    try {
+      const email = await resolveLoginEmail("student", id);
+      const cred = await signIn(email, pw, false);
+      const acc = await getDoc(doc(db, "accounts", cred.user.uid));
+      if (!acc.exists() || acc.data().role !== "student") {
+        await signOut(auth);
+        throw Object.assign(new Error("학생 계정으로만 들어올 수 있어요."), { code: "booth/not-student" });
+      }
+      ctx = await requireRole("student");
+      if (!(await stillRegistered())) {      // 관리자가 이 PC 등록을 해제함 → 잠금
+        try { await signOut(auth); } catch (_) {}
+        try { localStorage.removeItem(BOOTH_KEY); clearDataCache(); sessionStorage.clear(); localStorage.removeItem("keepLogin"); } catch (_) {}
+        ctx = null;
+        return renderLocked("이 컴퓨터의 부스 등록이 해제됐어요.");
+      }
+      startSession();
+    } catch (err) {
+      console.warn(err);
+      const code = err?.code || "";
+      $("#lerr").textContent = code === "booth/not-student" ? err.message
+        : /invalid-credential|wrong-password|user-not-found|invalid-email/.test(code) ? "학번 또는 비밀번호가 맞지 않아요."
+        : /too-many/.test(code) ? "시도가 너무 많아요. 잠시 뒤 다시 해 보세요."
+        : /network/.test(code) ? "인터넷 연결을 확인해 주세요."
+        : (err?.message || "로그인하지 못했어요.");
+      $("#lgo").disabled = false; $("#lpw").value = ""; $("#lpw").focus();
+    }
+  };
+}
+
+// =====================================================================
+// 5. 한 학생의 흐름: 준비 → 면접관 고르기 → 인사 → 장비 점검 → 시간 → 질문 루프 → 결과
+// =====================================================================
+async function startSession() {
+  const p = ctx.profile;
+  $("#hdNote").textContent = ""; $("#who").textContent = `${p.studentNo} ${p.name || ""}`;
+  // 웹앱 공통의 '60분 무조작 로그아웃'이 면접 중에 끼어들지 않게 (common.js 는 window 의 조작 이벤트를 본다)
+  keepAlive = setInterval(() => window.dispatchEvent(new Event("pointerdown")), 5 * 60000);
+  try {
+    setPhase("prep");
+    side(`<div class="grow"></div><div class="phase-l">면접 준비</div><h1 class="ttl">카메라와 질문을 준비하고 있어요…</h1><div class="grow"></div>`, false);
+    const [okDev] = await Promise.all([openDevices(), loadPool()]);
+    if (!okDev || aborted) return;
+    if (!pool.length) return showNoQuestions();
+    const picked = await pickPhase();
+    const chosen = picked.length ? picked : Object.keys(CHARACTERS).sort(() => Math.random() - 0.5).slice(0, 2);   // 대답 없으면 두 명 무작위
+    preloadVideos(chosen);                // 고른 면접관의 상태 영상을 먼저 받기 시작 (manifest 에 있을 때만) → 화면의 <video> 는 그 파일을 씀
+    interviewers = panel.setInterviewers(chosen);
+    if (!(await greetPhase())) return resetBooth();
+    await checkPhase();
+    const min = await timePhase();
+    await runInterview(min);
+  } catch (e) {
+    if (e instanceof Abort) return;
+    console.error(e);
+    block("app", e?.message || String(e));
+  }
+}
+
+async function openDevices() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+  } catch (e) {
+    const n = e?.name || "";
+    block(n === "NotAllowedError" || n === "SecurityError" ? "denied" : n === "NotFoundError" || n === "OverconstrainedError" ? "notfound"
+      : n === "NotReadableError" ? "busy" : "camera", e?.message || n);
+    return false;
+  }
+  $("#self").hidden = false;
+  const v = $("#selfVid"); v.srcObject = stream; v.play?.().catch(() => {});
+  try { meter = new Meter(stream); meter.ac.resume?.(); } catch (e) { console.warn("meter", e); }
+  stream.getTracks().forEach((t) => t.addEventListener("ended", () => { if (!resetting && !aborted) block("device"); }));
+  return true;
+}
+
+async function loadPool() {
+  const p = ctx.profile;
+  try {
+    const [pq, bank, ivs] = await Promise.all([
+      getDocs(collection(db, "students", p.studentNo, "personalQuestions")).then((s) => s.docs.map((d) => ({ id: d.id, ...d.data() }))).catch((e) => { console.warn(e); return []; }),
+      cachedCollection("questions").catch((e) => { console.warn(e); return []; }),
+      loadInterviewsFor(p.studentNo).catch(() => [])
+    ]);
+    const depts = ivs.map((u) => u.dept || "").filter(Boolean);
+    const modes = recommendedModes(p);
+    const relevant = (q) => !q.majors?.length || depts.some((d) => q.majors.some((m) => d.includes(m)));
+    const personal = pq.filter((q) => q.text).map((q) => ({ ...q, source: "personal", type: "document" }));
+    // 트랙에 맞는 질문을 먼저, 기본 인성 질문은 모자랄 때 채우는 용도 (제시문은 준비 10분이라 부스에서 뺌)
+    const rank = (q) => {
+      if (q.type === "document") return modes.includes("document") && relevant(q) ? 1 : 0;
+      if (q.type === "personality") return modes.includes("personality") ? 1 : 2;
+      if (q.type === "mmi") return (p.special || "").includes("MMI") ? 1 : 0;
+      return 0;
+    };
+    const bankQ = bank.filter((q) => q.text && !q.passage).map((q) => ({ ...q, source: "bank", rank: rank(q) })).filter((q) => q.rank);
+    pool = [...shuffle(personal), ...shuffle(bankQ.filter((q) => q.rank === 1)), ...shuffle(bankQ.filter((q) => q.rank === 2))];
+  } catch (e) { showError(e, "질문 불러오기"); pool = []; }
+}
+function makeItem(q) {
+  const t = TYPES[q.type] || TYPES.document;
+  return {
+    source: q.source, qid: q.id || "", type: q.type || "document", text: q.text, passage: "",
+    prepSec: 0, thinkSec: CONFIG.think, answerSec: Math.round(q.answerSec ?? t.answer),
+    followUp: ai.nextFollowUp(q), prepMemo: "", answer: "", usedSec: 0, followAnswer: "", followUsedSec: 0, m: null, followM: null,
+    askedBy: null, thinkUsedSec: 0
+  };
+}
+
+function showNoQuestions() {
+  setPhase("noq");
+  side(`<div class="grow"></div><div class="phase-l">면접 준비</div><h1 class="ttl">아직 준비된 질문이 없어요</h1>
+    <p class="sub">선생님께 예상질문 등록을 부탁하세요. 등록되면 여기서 바로 면접을 볼 수 있어요.</p>
+    <div class="grow"></div><button type="button" class="btn-lg blk-go" id="bye">마치기</button><p class="hint" id="byeT"></p>`, false);
+  $("#bye").onclick = resetBooth;
+  countdownThen("#byeT", CONFIG.blockedBack, (s) => `${s}초 뒤 처음 화면으로 돌아가요.`, resetBooth);
+}
+function countdownThen(sel, sec, text, fn) {
+  const until = now() + sec;
+  const t = setInterval(() => {
+    const left = Math.max(0, Math.ceil(until - now()));
+    const el = $(sel); if (el) el.textContent = text(left, fmtSec(left));
+    if (left <= 0) { clearInterval(t); fn(); }
+  }, 250);
+  const el = $(sel); if (el) el.textContent = text(sec, fmtSec(sec));
+}
+
+// ---------- 면접관 고르기 ----------
+async function pickPhase() {
+  setPhase("pick");
+  let sel = [];
+  const draw = () => showFull(`<div class="pick">
+    <div class="pick-top"><div><div class="phase-l">면접관 고르기</div><h1 class="ttl big">오늘 면접관을 골라 주세요 <small>한 명 또는 두 명</small></h1></div>
+      <div class="say-pill"><span class="ico">${I_MIC}</span>“B 교수” 또는 “B 교수랑 D 교수”처럼 말하거나 눌러 주세요</div></div>
+    <div class="pgrid">${Object.keys(CHARACTERS).map((id) => {
+      const k = sel.indexOf(id);
+      return `<button type="button" class="pcard ${k >= 0 ? "on" : ""}" data-card="${id}"><span class="pimg"><img src="${masterUrl(id)}" alt="${label(id)}"></span>
+        <span class="pbody"><b>${label(id)}${k >= 0 ? `<em>${k ? "두 번째" : "첫 번째"}</em>` : ""}</b><small>${CHARACTERS[id].desc}</small></span></button>`;
+    }).join("")}</div>
+    <div class="pick-foot">${lstat(`${sel.length ? sel.map(label).join(" · ") + "을 골랐어요. " : ""}두 명이면 번갈아 질문해요 · 대답이 없으면 두 명을 무작위로 정해요`)}${acts()}</div></div>`);
+  draw();
+  stt.start();
+  const prompt = async () => { await say(SAY.pick, { cap: "면접관 고르기" }); panel.idle(); };
+  await prompt();
+  let until = now() + CONFIG.noReply;
+  while (true) {
+    const e = await nextUntil(until);
+    if (e.type === "tick") return sel;                 // 대답이 없으면 누른 사람, 아무도 없으면 무작위 두 명
+    let c = e.type === "btn" ? e.name : null;
+    if (e.type === "card") {
+      const id = e.value; sel = sel.includes(id) ? sel.filter((x) => x !== id) : [...sel, id].slice(-2);
+      draw(); until = now() + CONFIG.noReply; continue;
+    }
+    if (e.type === "text" && e.final) {
+      const p = parsePick(e.text);
+      if (p === "random") return [];
+      if (p.length) { sel = p; draw(); await sleepV(1.2); return sel; }
+      c = cmdOf(e.text, ["next", "again", "end"], false);
+    }
+    if (c === "next") return sel;
+    if (c === "again") { await prompt(); until = now() + CONFIG.noReply; }
+    if (c === "end") { await quitConfirm(); draw(); await prompt(); until = now() + CONFIG.noReply; }
+  }
+}
+
+// ---------- 인사·시작 확인 ----------
+async function greetPhase() {
+  const by = panel.members[0].id, name = ctx.profile.name || "";
+  const draw = () => {
+    setPhase("greet");
+    side(`<div class="phase-l">시작 확인</div><h1 class="ttl">${name ? esc(name) + " 학생, " : ""}반가워요.<br>면접을 시작할까요?</h1>
+      <div class="sayto"><div class="sayto-h"><span class="ico">${I_MIC}</span>이렇게 말해 주세요</div>
+        <div class="chips-say"><span>“네”</span><span>“면접 시작”</span><span class="mute">“아니요” → 로그아웃</span></div></div>
+      ${lstat(`듣는 중 · ${CONFIG.noReply}초 안에 대답이 없으면 한 번 더 물어봐요`)}`);
+  };
+  draw(); stt.start();
+  await say(SAY.greet(name), { by, cap: "인사하는 중" }); panel.caption("대답을 기다리는 중", "listening");
+  let misses = 0, until = now() + CONFIG.noReply;
+  while (true) {
+    const e = await nextUntil(until);
+    if (e.type === "tick") {
+      if (++misses >= CONFIG.noReplyMax) return false;
+      await say(SAY.greetAgain, { by, cap: "다시 묻는 중" }); until = now() + CONFIG.noReply; continue;
+    }
+    const c = e.type === "btn" ? e.name : e.type === "text" && e.final ? cmdOf(e.text, ["end", "no", "again", "next", "yes"], false) : null;
+    if (c === "yes" || c === "next") return true;
+    if (c === "no") return false;
+    if (c === "again") { await say(SAY.greet(name), { by, cap: "인사하는 중" }); until = now() + CONFIG.noReply; }
+    if (c === "end") { await quitConfirm(by); draw(); until = now() + CONFIG.noReply; }
+  }
+}
+
+// ---------- 장비 점검 (자동) ----------
+async function sample(ms, onTick, onEvent) {
+  const end = performance.now() + ms; let last = 0;
+  while (performance.now() < end) {
+    const e = await next(Math.max(10, Math.min(100, end - performance.now())));
+    if (performance.now() - last >= 95) { last = performance.now(); onTick?.(); }
+    if (e.type === "btn") return e.name;
+    if (e.type === "text") { const r = onEvent?.(e); if (r) return r; }
+  }
+  return "time";
+}
+async function checkPhase() {
+  const by = panel.members[0].id, name = ctx.profile.name || "○○○";
+  const draw = () => {
+    setPhase("check");
+    side(`<div class="phase-l">장비 점검</div><h1 class="ttl">화면에 얼굴이 보이는지 확인하고<br>“안녕하세요”라고 말해 보세요</h1>
+      <ol class="ck" id="ck">
+        <li data-s="cam"><span class="n"><span>1</span></span><b>카메라</b><span class="d"></span></li>
+        <li data-s="quiet"><span class="n"><span>2</span></span><b>주변 소리</b><span class="d"></span></li>
+        <li data-s="voice"><span class="n"><span>3</span></span><b>목소리</b><span class="d"></span></li></ol>
+      <div class="meter"><i id="lvl"></i></div>
+      <div class="heard" id="heard">“안녕하세요, 저는 ${esc(name)}입니다”</div>
+      <p class="hint" id="ckMsg">확인되면 저절로 다음으로 넘어가요. 두 번 안 되면 “받아쓰기 없이 진행할게요” 하고 계속해요.</p>`);
+  };
+  const mark = (s, st, d) => { const li = $(`#ck li[data-s="${s}"]`); if (!li) return; li.className = st; li.querySelector(".d").textContent = d; };
+  draw();
+  const lvl = setInterval(() => { const el = $("#lvl"); if (el && meter) try { el.style.width = Math.min(100, meter.level() * 900) + "%"; } catch (_) {} }, 100);
+  try {
+    const camOk = !!stream?.getVideoTracks().some((t) => t.readyState === "live");
+    mark("cam", camOk ? "ok" : "bad", camOk ? "얼굴이 보여요" : "영상이 없어요");
+    panel.idle(); stt.start();
+    await say(SAY.check, { by, cap: "장비 점검" }); panel.caption("장비 점검", "listening");
+    const needStt = !!(SR && sttOk);
+    let anyVoice = false;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      mark("quiet", "now", "2초 동안 조용히 있어 주세요"); mark("voice", "", "");
+      const quiet = [];
+      let r = await sample(CONFIG.checkQuiet * 1000, () => quiet.push(meter ? meter.level() : 0), (e) => e.final && cmdOf(e.text, ["next", "end", "again"], true));
+      let loud = [], said = "";
+      const floor = pct(quiet, 0.6);
+      if (r === "time") {
+        mark("quiet", "ok", "조용해요"); mark("voice", "now", "듣고 있어요");
+        r = await sample(CONFIG.checkVoice * 1000, () => loud.push(meter ? meter.level() : 0), (e) => {
+          const c = e.final && cmdOf(e.text, ["next", "end", "again"], true); if (c) return c;
+          said = e.text; $("#heard").textContent = `“${e.text}”`;
+          const v = pct(loud, 0.9);
+          if (e.final && norm(said).length >= 4 && v > floor * 1.8 && v > 0.01) return "heard";
+        });
+      }
+      if (r === "next") { mark("voice", "ok", "건너뜀"); return; }
+      if (r === "end") { await quitConfirm(by); draw(); attempt--; continue; }
+      if (r === "again") { await say(SAY.check, { by, cap: "장비 점검" }); attempt--; continue; }
+      const voice = pct(loud, 0.9), heardVoice = voice > floor * 1.8 && voice > 0.01;
+      if (heardVoice) { anyVoice = true; threshold = Math.max(0.006, floor * 1.6, floor + (voice - floor) * 0.22); }
+      if (heardVoice && (said || !needStt)) {
+        mark("voice", "ok", "잘 들려요");
+        if (!needStt) { sttOk = false; sttOff = true; stt.stop(); $("#ckMsg").textContent = SAY.noStt; await say(SAY.noStt, { by, cap: "장비 점검" }); }
+        await sleepV(0.6); return;
+      }
+      mark("voice", "bad", heardVoice ? "받아쓰기가 되지 않아요" : "목소리가 거의 안 들려요");
+      if (attempt === 1) await say(SAY.checkAgain, { by, cap: "장비 점검" });
+    }
+    if (anyVoice) {      // 소리는 들리는데 받아쓰기만 안 됨 → 녹화·시간만으로 진행
+      sttOk = false; sttOff = true; stt.stop();
+      $("#ckMsg").textContent = SAY.noStt;
+      await say(SAY.noStt, { by, cap: "장비 점검" });
+      return;
+    }
+    block("mic");
+    throw new Abort();
+  } finally { clearInterval(lvl); }
+}
+
+// ---------- 면접 시간 ----------
+async function timePhase() {
+  const by = (panel.members[1] || panel.members[0]).id;
+  let sel = CONFIG.planDefault;
+  const draw = () => {
+    setPhase("time", true);
+    side(`<div class="phase-l">면접 시간</div><h1 class="ttl">면접을 몇 분 동안 볼까요?</h1>
+      <div class="tcards">${CONFIG.planMin.map((m) => `<button type="button" class="tcard ${m === sel ? "on" : ""}" data-card="${m}"><b>${m}분</b><span>“${m}분”${m === CONFIG.planDefault ? " · 기본" : ""}</span></button>`).join("")}</div>
+      <div class="info"><p>질문 수는 정해져 있지 않아요. <b>답변을 짧게 하면 더 많은 질문</b>을, 길게 하면 적은 질문을 받아요.</p>
+        <p class="m">남은 시간이 1분보다 적으면 새 질문 없이 마쳐요. 답변 중에 시간이 다 되면 그 답변까지는 들어요.</p></div>
+      ${lstat(`듣는 중 · 대답이 없으면 ${CONFIG.planDefault}분으로 시작해요`)}`);
+  };
+  evq.length = 0; draw(); stt.start();
+  await say(SAY.time, { by, cap: "면접 시간 정하기" });
+  let until = now() + CONFIG.noReply;
+  while (true) {
+    const e = await nextUntil(until);
+    if (e.type === "tick") { await say(SAY.timeDefault, { by, cap: "면접 시간 정하기" }); return CONFIG.planDefault; }
+    if (e.type === "card") { sel = Number(e.value); draw(); await sleepV(0.4); return sel; }
+    let c = e.type === "btn" ? e.name : null;
+    if (e.type === "text" && e.final) {
+      const m = parseMin(e.text);
+      if (m) { sel = m; draw(); await sleepV(0.8); return m; }
+      c = cmdOf(e.text, ["next", "again", "end"], false);
+    }
+    if (c === "next") return sel;
+    if (c === "again") { await say(SAY.time, { by, cap: "면접 시간 정하기" }); until = now() + CONFIG.noReply; }
+    if (c === "end") { await quitConfirm(by); draw(); until = now() + CONFIG.noReply; }
+  }
+}
+
+// ---------- 질문 루프 ----------
+const leftSec = () => planSec - (now() - tStart);
+async function runInterview(min) {
+  planSec = min * 60; tStart = now();
+  clearInterval(hdTimer); hdTimer = setInterval(drawHeader, 250); drawHeader();
+  let reason = "";
+  while (!reason) {
+    if (items.length && leftSec() < CONFIG.minLeft) { reason = "time"; break; }
+    const q = pool.shift();
+    if (!q) { reason = "questions"; break; }
+    const it = makeItem(q); items.push(it); it._t0 = now();
+    it.askedBy = panel.nextSpeaker().id;                     // 두 명이면 질문마다 번갈아
+    const r = await askPhase(it, "main", items.length === 1);
+    if (r !== "done") { items.pop(); reason = r === "end" ? "asked" : "noreply"; break; }
+    it.answered = true; saveProgress();
+    if (it.followUp && leftSec() >= CONFIG.minLeft) {       // 꼬리질문도 남은 시간 안에서만, 본 질문을 한 사람이 묻는다
+      it.followAskedBy = it.askedBy;
+      const f = await askPhase(it, "follow");
+      if (f !== "done") { clearFollow(it); reason = f === "end" ? "asked" : "noreply"; }
+      saveProgress();
+    } else it.followUp = "";
+    it._t1 = now();
+  }
+  await finish(reason);
+}
+function clearFollow(it) { it.followUp = ""; it.followAnswer = ""; it.followUsedSec = 0; it.followM = null; delete it.followAskedBy; }
+
+// 질문 하나(또는 꼬리질문): 읽기 → (생각) → 답변. '면접 종료' → 확인 → 아니요면 그 질문부터 다시 (영상은 이어 찍음)
+async function askPhase(it, which, first = false) {
+  const isF = which === "follow", by = isF ? it.followAskedBy : it.askedBy, text = isF ? it.followUp : it.text;
+  let rec = null;
+  while (true) {
+    setPhase("ask"); renderAsk(it, which);
+    await say(text, { by, cap: "질문하는 중" });
+    dropText();
+    if (!rec) rec = startRec();                              // 읽기가 끝난 순간부터 녹화 (생각 중 첫 마디도 담기게)
+    stt.start();
+    let r = isF ? { go: "listen" } : await thinkPhase(it, by, first);
+    first = false;
+    if (r?.go === "listen") r = await listenPhase(it, which, by, r.carry || [], !!r.started);
+    if (r === "again") continue;
+    if (r === "end") {
+      const n = items.filter((x) => x.answered).length;
+      const c = await confirmPhase({ by, n, qn: isF ? `꼬리질문 ${qNo(it)}` : `질문 ${qNo(it)}` });
+      if (c === "yes") { await stopRec(rec, false); return "end"; }
+      await say(SAY.resume, { by, cap: "이어서 하기" });
+      continue;
+    }
+    if (r === "noreply") { await stopRec(rec, false); return "noreply"; }
+    await stopRec(rec, true, it, which);
+    return "done";
+  }
+}
+function renderAsk(it, which) {
+  const isF = which === "follow";
+  side(`<div class="phase-l" id="phaseL">${isF ? "꼬리질문" : "질문"} ${qNo(it)}${!isF && it.source === "personal" ? " · 내 예상질문" : ""}</div>
+    ${isF ? `<div class="qprev">앞 질문 — ${esc(it.text)}</div>` : ""}
+    <div class="qtext" id="qtext">${esc(isF ? it.followUp : it.text)}</div>
+    ${lstat("질문을 읽는 동안은 마이크를 잠시 꺼 둬요", false)}`);
+}
+
+async function thinkPhase(it, by, first) {
+  setPhase("think", true);
+  side(`<div class="phase-l" id="phaseL">질문 ${qNo(it)} · 생각할 시간</div>
+    <div class="qtext sm">${esc(it.text)}</div>
+    <div class="clock-row"><span class="clock" id="clock">${fmtSec(CONFIG.think)}</span><span class="clock-s">남음 · 말을 시작하면 바로 답변으로</span></div>
+    <div class="track"><i id="trk"></i></div>
+    ${sttOk ? `<div class="cmds"><div class="cmds-h">이렇게 말해도 돼요</div><div class="cmds-g">
+      <div><b>“다시”</b><span>질문 다시 듣기</span></div>
+      <div id="cmdWait" class="${it.thinkMore ? "used" : ""}"><b>“잠시만요”</b><span>${CONFIG.thinkMore}초 더 (한 번)</span></div>
+      <div><b>“다음”</b><span>바로 답변</span></div></div></div>` : ""}`);
+  panel.idle(); panel.caption("생각할 시간");
+  if (first) { await say(SAY.think, { by, cap: "생각할 시간 안내" }); panel.caption("생각할 시간"); }
+  const t0 = now(); let until = t0 + CONFIG.think;
+  const fin = (v) => { it.thinkUsedSec = Math.round(now() - t0); return v; };
+  while (true) {
+    const left = until - now();
+    const c1 = $("#clock"); if (c1) c1.textContent = fmtSec(Math.max(0, Math.ceil(left)));
+    const tr = $("#trk"); if (tr) tr.style.width = Math.min(100, (now() - t0) / (until - t0) * 100) + "%";
+    if (left <= 0) return fin({ go: "listen" });
+    // 받아쓰기가 없으면 소리로, 있으면 받아쓴 말로 '말 시작'을 안다 (명령어와 헷갈리지 않게)
+    if (!sttOk ? voiceOn() : voiceOn(2000)) return fin({ go: "listen", started: true });
+    const e = await next(Math.min(100, left * 1000 / FAST));
+    if (e.type === "btn") {
+      if (e.name === "again") return fin("again");
+      if (e.name === "next") return fin({ go: "listen" });
+      if (e.name === "end") return fin("end");
+    }
+    if (e.type === "text") {
+      const c = cmdOf(e.text, ["again", "wait", "next", "end"], true);
+      if (c) {
+        if (!e.final) continue;
+        if (c === "again") return fin("again");
+        if (c === "next") return fin({ go: "listen" });
+        if (c === "end") return fin("end");
+        if (c === "wait" && !it.thinkMore) {
+          it.thinkMore = true; $("#cmdWait")?.classList.add("used");
+          await say(SAY.thinkMore, { by, cap: "생각할 시간" }); panel.caption("생각할 시간");
+          until = Math.max(until, now()) + CONFIG.thinkMore;
+        }
+        continue;
+      }
+      if (e.final || (norm(e.text).length >= 4 && !maybeCmd(e.text))) return fin({ go: "listen", started: true, carry: e.final ? [e.text] : [] });
+    }
+  }
+}
+
+async function listenPhase(it, which, by, carry, started) {
+  const isF = which === "follow", text = isF ? it.followUp : it.text, limit = isF ? 60 : it.answerSec;
+  setPhase("listen", true);
+  side(`<div class="listen" style="display:contents">
+    <div class="phase-l" id="phaseL">${isF ? "꼬리질문" : "질문"} ${qNo(it)} · 답변</div>
+    <div class="qtext sm" id="qtext">${esc(text)}</div>
+    <div id="hush" class="hush" hidden><b>더 하실 말씀이 없으면<br>“다음”이라고 말해 주세요</b>
+      <div class="hush-n"><span id="hushN">${CONFIG.hushNext}</span><p>초 뒤 다음 질문으로 넘어가요.<br>이어서 말하면 그대로 계속 들어요.</p></div></div>
+    <div class="clock-row"><span class="clock" id="clock">0:00</span><span class="clock-s">답변한 시간</span></div>
+    <div id="ansTrack"><div class="track"><i id="trk"></i></div>
+      <div class="track-l"><span>0:00</span><span>보통 ${fmtSec(limit)} 안팎</span><span>${fmtSec(CONFIG.answerMax)} 최대</span></div></div>
+    ${sttOk ? `<div class="live" id="live"><div class="live-h" id="sttS"><i></i>받아쓰는 중</div><p id="liveT"></p></div>
+      <p class="hint" id="lhint">다 말했으면 “다음”이라고 따로 짧게 말해 주세요. 문장 속 ‘다음’은 명령으로 듣지 않아요.</p>`
+      : `<p class="hint" id="lhint">받아쓰기 없이 진행하고 있어요. 다 말했으면 <b>다음</b>을 눌러 주세요.</p>`}</div>`);
+  panel.listen();
+  const parts = [...carry], frames = [];
+  frameSink = (b) => frames.push(b);
+  const t0 = now();
+  let first = started || parts.length > 0, lastSound = now(), quietFrom = now(), misses = 0, hush = null, seenLoud = lastLoud, out = "done", el = 0;
+  const live = (interim = "") => { const p = $("#liveT"); if (p) { p.innerHTML = `<span style="color:inherit">${esc(parts.join(" "))}</span>${interim ? ` <span>${esc(interim)}</span>` : ""}`; p.scrollTop = p.scrollHeight; } };
+  const hushOff = () => { hush = null; const h = $("#hush"); if (h) h.hidden = true; $(".listen")?.classList.remove("hushing"); $("#qtext")?.classList.remove("dim"); panel.listen(); };
+  const sound = () => { first = true; lastSound = now(); if (hush) hushOff(); };
+  const reread = async () => { if (hush) hushOff(); await say(text, { by, cap: "질문하는 중" }); panel.listen(); quietFrom = lastSound = now(); misses = 0; seenLoud = lastLoud; };
+  live();
+  try {
+    while (true) {
+      if (lastLoud > seenLoud) { seenLoud = lastLoud; if (first || voiceOn()) sound(); }
+      el = now() - t0;
+      const c1 = $("#clock"); if (c1) c1.textContent = fmtSec(el);
+      const tr = $("#trk"); if (tr) tr.style.width = Math.min(100, el / CONFIG.answerMax * 100) + "%";
+      if (el >= CONFIG.answerMax) break;
+      if (!first) {
+        if (now() - quietFrom >= CONFIG.preSilence) {
+          if (++misses >= CONFIG.noReplyMax) { out = "noreply"; break; }
+          await say(SAY.preSilence, { by, cap: "다시 들려드릴까요?" }); panel.listen();
+          quietFrom = now(); seenLoud = lastLoud; continue;
+        }
+      } else if (!hush && now() - lastSound >= CONFIG.hushAsk) {
+        const h = $("#hush"); if (h) h.hidden = false;
+        $(".listen")?.classList.add("hushing"); $("#qtext")?.classList.add("dim");
+        await say(SAY.hush, { by, cap: "더 하실 말씀 있나요?" });
+        panel.all("listening"); panel.caption(`${label(by)} · 더 하실 말씀 있나요?`, "speaking");
+        hush = { until: now() + CONFIG.hushNext }; seenLoud = lastLoud; lastSound = now();
+        continue;
+      } else if (hush) {
+        const n = $("#hushN"); if (n) n.textContent = Math.max(0, Math.ceil(hush.until - now()));
+        if (now() >= hush.until) break;
+      }
+      const e = await next(100);
+      if (e.type === "btn") {
+        if (e.name === "next") break;
+        if (e.name === "end") { out = "end"; break; }
+        if (e.name === "again") await reread();
+        continue;
+      }
+      if (e.type === "text") {
+        const c = cmdOf(e.text, first ? ["next", "end"] : ["next", "end", "again"], true);
+        if (c) {
+          if (!e.final) continue;
+          if (c === "next") break;
+          if (c === "end") { out = "end"; break; }
+          if (c === "again") { await reread(); continue; }
+        }
+        if (e.final) parts.push(e.text);
+        live(e.final ? "" : e.text); sound();
+      }
+    }
+  } finally { frameSink = null; }
+  if (out !== "done") return out;
+  const used = Math.round(el);
+  // 마지막 말이 받아쓰기에 들어올 시간을 조금 준다
+  if (sttOk) { await sleepReal(700); if (aborted) throw new Abort(); }
+  const isCmd = (t) => cmdOf(t, ["next", "end", "again"], true);
+  for (const e of evq.splice(0)) if (e.type === "text" && e.final && !isCmd(e.text)) parts.push(e.text);
+  const pend = stt.interim.trim(); stt.interim = "";
+  if (pend && !isCmd(pend)) parts.push(pend);
+  const answer = parts.join(" ").trim(), m = ai.analyze(frames, answer);
+  if (isF) { it.followAnswer = answer; it.followUsedSec = used; it.followM = m; }
+  else { it.answer = answer; it.usedSec = used; it.m = m; }
+  return "done";
+}
+
+// ---------- '면접 종료' 확인 — "네" 또는 대답 없음 → 종료, "아니요"만 이어서 ----------
+async function confirmPhase({ pre = false, by, n = 0, qn = "" }) {
+  setPhase("confirm");
+  const endText = pre || !n ? "처음 화면으로" : "여기까지 하고 결과 보기";
+  side(`<div class="phase-l danger">면접 종료</div>
+    <h1 class="ttl">${pre ? "처음 화면으로 돌아갈까요?" : "면접을 끝낼까요?"}</h1>
+    <p class="sub">${pre ? "면접을 시작하기 전이라 저장되는 것은 없어요." : n ? `지금까지 답한 ${n}문항으로 결과를 보여 드려요.` : "아직 답한 질문이 없어서 저장하지 않고 처음 화면으로 돌아가요."}</p>
+    <div class="ccards"><button type="button" class="ccard on" data-card="yes"><b>“네” 또는 대답 없음</b><span>${endText}</span></button>
+      <button type="button" class="ccard" data-card="no"><b>“아니요”</b><span>${pre ? "이어서 하기" : `${esc(qn)}부터 이어서`}</span></button></div>
+    <div class="cnt"><span class="cnum danger" id="cfN">${CONFIG.confirm}</span><p>초 뒤 ${pre ? "처음 화면으로 돌아가요" : "면접을 마쳐요"}.<br>이어서 하려면 “아니요”라고 말해 주세요.</p></div>`);
+  stt.start();
+  const ask = () => say(pre ? SAY.quit : SAY.confirm, { by, cap: "확인하는 중" });
+  await ask();
+  let until = now() + CONFIG.confirm;
+  while (true) {
+    const left = until - now();
+    const c1 = $("#cfN"); if (c1) c1.textContent = Math.max(0, Math.ceil(left));
+    if (left <= 0) return "yes";
+    const e = await next(Math.min(100, left * 1000 / FAST));
+    const c = e.type === "btn" ? (e.name === "again" ? "again" : "yes") : e.type === "card" ? e.value
+      : e.type === "text" && e.final ? cmdOf(e.text, ["end", "no", "again", "next", "yes"], false) : null;
+    if (c === "no") return "no";
+    if (c === "yes" || c === "end" || c === "next") return "yes";
+    if (c === "again") { await ask(); until = now() + CONFIG.confirm; }
+  }
+}
+async function quitConfirm(by) {
+  if ((await confirmPhase({ pre: true, by })) === "yes") { resetBooth(); throw new Abort(); }
+}
+
+// ---------- 마침 ----------
+async function finish(reason) {
+  endReason = reason; usedTotalSec = Math.round(now() - tStart);
+  clearInterval(hdTimer); stt.stop();
+  items.forEach((it) => { if (it._t1 == null) it._t1 = now(); });
+  const answered = items.filter((it) => it.answered).length;
+  const by = panel.members[0].id;
+  setPhase("closing");
+  if (reason === "noreply") {      // 학생이 자리를 떠난 것으로 본다 → 답한 게 있으면 제출하고 처음으로
+    side(`<div class="grow"></div><h1 class="ttl">대답이 없어서 면접을 마칠게요</h1><p class="sub">${answered ? "지금까지 답한 내용은 선생님께 제출해요." : "답한 질문이 없어 저장하지 않아요."}</p><div class="grow"></div>`, false);
+    await say(SAY.noreply, { by, cap: "마치는 중" });
+    if (answered) { try { await submit(true, "noreply"); } catch (e) { console.warn(e); } }
+    return resetBooth();
+  }
+  if (!answered) return resetBooth();
+  side(`<div class="grow"></div><h1 class="ttl big">수고했어요</h1><p class="sub">결과를 준비하고 있어요…</p><div class="grow"></div>`, false);
+  await say(SAY.bye[reason] || SAY.bye.asked, { by, cap: "인사하는 중" });
+  panel.end(); await sleepV(1.2);
+  showResults();
+}
+
+// =====================================================================
+// 6. 결과 — 질문별 시간 · 영상 받아 가기 · 1분 뒤 자동 제출
+// =====================================================================
+function clipFor(it, which) { return clips.find((c) => c.it === it && c.which === which); }
+function fileName(i, which) {
+  const d = new Date(), ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+  return `면접부스_${ctx.profile.studentNo}_${ymd}_Q${i + 1}${which === "follow" ? "-꼬리" : ""}`;
+}
+function vidBlock(it, which) {
+  const c = clipFor(it, which);
+  if (!c) return `<div class="novid">녹화된 영상이 없어요</div>`;
+  return `<video class="clip" src="${c.url}" controls playsinline preload="metadata"></video>
+    <div class="dl"><button type="button" class="btn-sm" data-dl="${items.indexOf(it)}:${which}">이 영상 받기</button></div>`;
+}
+function chips(m, used, limit) {
+  if (!m) return "";
+  const c = [`<span class="${used > limit + 30 ? "note" : ""}">답변 ${fmtSec(used)}</span>`];
+  if (m.cpm != null) {
+    const cls = m.cpm < SPEED.low || m.cpm > SPEED.high ? "note" : "good";
+    const w = m.cpm < SPEED.low ? "조금 느려요" : m.cpm > SPEED.high ? "조금 빨라요" : "알맞아요";
+    c.push(`<span class="${cls}">말 속도 ${m.cpm}자/분 · ${w}</span>`);
+  }
+  if (m.firstSec != null && m.firstSec >= 4) c.push(`<span class="note">첫 마디까지 ${Math.round(m.firstSec)}초</span>`);
+  if (m.firstSec == null) c.push(`<span class="note">목소리가 잡히지 않았어요</span>`);
+  else c.push(`<span class="${m.pauses >= 2 ? "note" : "good"}">3초 넘게 멈춤 ${m.pauses}번</span>`);
+  topFillers(m.fillers).forEach(([w, n]) => c.push(`<span class="note">“${esc(w)}” ${n}번</span>`));
+  return `<div class="chips-m">${c.join("")}</div>`;
+}
+function timeChart(done) {
+  const rows = done.map((it) => {
+    const th = it.thinkUsedSec || 0, a = it.usedSec || 0, f = it.followUsedSec || 0;
+    const span = Math.max(th + a + f, (it._t1 ?? 0) - (it._t0 ?? 0));
+    return { it, th, a, f, gap: Math.max(0, span - th - a - f), sum: th + a + f };
+  });
+  const total = Math.max(planSec, rows.reduce((s, r) => s + r.sum + r.gap, 0));
+  const w = (v) => `${v / total * 100}%`;
+  const bar = rows.map((r, i) => [
+    r.th ? `<i class="s-think" style="width:${w(r.th)}"></i>` : "",
+    `<i class="s-ans" style="width:${w(r.a)}">${r.a / total > 0.04 ? `Q${i + 1}` : ""}</i>`,
+    r.f ? `<i class="s-fol" style="width:${w(r.f)}"></i>` : "",
+    r.gap ? `<i class="s-gap" style="width:${w(r.gap)}"></i>` : ""].join("")).join("") + `<i class="s-rest" style="flex:1"></i>`;
+  const maxSum = Math.max(1, ...rows.map((r) => r.sum)), longest = rows.length > 1 ? rows.findIndex((r) => r.sum === maxSum) : -1;
+  const axis = [0, 1, 2, 3].map((k) => `<span>${fmtSec(total * k / 3)}</span>`).join("");
+  const leftAtEnd = Math.max(0, planSec - usedTotalSec);
+  const why = endReason === "time" ? `남은 시간 ${fmtSec(leftAtEnd)} — 다음 질문을 받기엔 부족해서 여기서 마쳤어요.`
+    : endReason === "questions" ? "준비된 질문을 모두 해서 마쳤어요." : "‘면접 종료’로 여기서 마쳤어요.";
+  const more = rows.map((r, i) => r.it.thinkMore ? `Q${i + 1}` : "").filter(Boolean);
+  return `<section class="tchart"><div class="tchart-h"><h2>질문별로 쓴 시간</h2>
+      <div class="legend"><span><i class="s-think"></i>생각</span><span><i class="s-ans"></i>답변</span><span><i class="s-fol"></i>꼬리질문 답변</span><span><i class="s-gap"></i>질문 읽기 등</span><span><i class="s-rest"></i>남은 시간</span></div></div>
+    <div class="tbar">${bar}</div><div class="taxis">${axis}</div>
+    <table class="ttable"><thead><tr><th>문항</th><th>질문</th><th>생각</th><th>답변</th><th>꼬리 답변</th><th>합계</th><th></th></tr></thead><tbody>
+      ${rows.map((r, i) => `<tr><td class="n">Q${i + 1}</td><td class="q">${esc(r.it.text)}${i === longest ? `<span class="tag">가장 길게 씀</span>` : ""}</td>
+        <td>${fmtSec(r.th)}</td><td>${fmtSec(r.a)}</td><td>${r.it.followUp ? fmtSec(r.f) : "–"}</td><td class="n">${fmtSec(r.sum)}</td>
+        <td><div class="mini"><i style="width:${r.sum / maxSum * 100}%"></i></div></td></tr>`).join("")}
+    </tbody></table>
+    <p class="tnote">${why}${more.length ? ` ${more.join("·")} 의 생각 시간에는 “잠시만요” ${CONFIG.thinkMore}초가 들어 있어요.` : ""}</p></section>`;
+}
+function showResults() {
+  setPhase("result");
+  const done = items.filter((it) => it.answered);
+  const ms = done.flatMap((it) => [it.m, it.followM]).filter(Boolean);
+  const nFollow = done.filter((it) => it.followUp).length;
+  const speeds = ms.map((m) => m.cpm).filter((x) => x != null);
+  const avg = speeds.length ? Math.round(speeds.reduce((a, b) => a + b, 0) / speeds.length) : null;
+  const pauses = ms.reduce((s, m) => s + (m.pauses || 0), 0);
+  const allF = {}; ms.forEach((m) => Object.entries(m.fillers || {}).forEach(([w, n]) => allF[w] = (allF[w] || 0) + n));
+  const tf = topFillers(allF, 3)[0];
+  $("#hdMid").innerHTML = `<span class="htime">면접 끝 · ${planSec / 60}분 중 ${fmtSec(Math.min(usedTotalSec, planSec + 999))} 사용</span>`;
+  showFull(`<div class="results"><div class="inner">
+    <div class="rtop"><div><h1 class="ttl big">수고했어요</h1><p class="sub">질문별로 시간을 어떻게 썼는지, 말 속도와 멈춘 곳을 확인해 보세요.</p></div>
+      <div class="rcount"><b id="rCount">${fmtSec(CONFIG.resultAuto)}</b><span>뒤 선생님께 자동 제출하고<br>처음 화면으로 돌아가요 · 영상 받기 누르면 1분 연장</span></div></div>
+    ${clips.length ? `<div class="notice-dl">${I_CAM}<div><b>영상은 웹에 저장되지 않아요. 가져가려면 지금 받아 가세요.</b>
+      <p>‘이 영상 받기’로 이 컴퓨터에 내려받은 뒤 <b>내 메일로 보내거나 USB에 담아 가세요.</b> 선생님께는 받아쓴 답변과 말하기 기록만 제출돼요.<br>
+      다 옮겼으면 이 컴퓨터의 다운로드 폴더에서 지워 주세요. 다음 학생이 볼 수 있어요.</p></div>
+      ${clips.length > 1 ? `<button type="button" class="btn-dl" id="dlAll">영상 모두 받기</button>` : ""}</div>` : ""}
+    <div class="sumline">
+      <div><b>${done.length}문항</b><span>받은 질문${nFollow ? ` (꼬리질문 ${nFollow}개 포함 ${done.length + nFollow}번 답변)` : ""}</span></div>
+      <div><b>${fmtSec(usedTotalSec)} <small>/ ${fmtSec(planSec)}</small></b><span>쓴 시간 / 정한 시간</span></div>
+      <div><b>${avg != null ? avg + "자" : "–"}</b><span>평균 말 속도 (분당, 참고 ${SPEED.low}~${SPEED.high}자)</span></div>
+      <div><b>${pauses}번</b><span>3초 넘게 멈춘 곳${tf ? ` · “${esc(tf[0])}” ${tf[1]}번` : ""}</span></div>
+    </div>
+    ${timeChart(done)}
+    ${clips.length ? `<p class="hint" id="vidNote">영상에는 생각 시간도 들어 있어요.</p>` : ""}
+    ${done.map((it, i) => `<article class="res"><div class="pair">
+        <div>${vidBlock(it, "main")}</div>
+        <div><div class="qn">질문 ${i + 1}${it.source === "personal" ? " · 내 예상질문" : ""} · ${esc(label(it.askedBy))}</div><div class="qt">${esc(it.text)}</div>
+          ${chips(it.m, it.usedSec, it.answerSec)}
+          <div class="ans">${it.answer ? esc(it.answer) : `<span class="hint">받아쓴 답변이 없어요</span>`}</div></div></div>
+      ${it.followUp ? `<div class="pair"><div>${vidBlock(it, "follow")}</div>
+        <div><div class="qn">꼬리질문</div><div class="qt">${esc(it.followUp)}</div>
+          ${chips(it.followM, it.followUsedSec, 60)}
+          <div class="ans">${it.followAnswer ? esc(it.followAnswer) : `<span class="hint">받아쓴 답변이 없어요</span>`}</div></div></div>` : ""}
+    </article>`).join("")}
+    <div class="foot-r"><button type="button" class="btn-primary btn-lg" id="submitR" data-btn="submit">지금 제출하고 마치기</button>
+      <span class="hint">“면접 종료”라고 말해도 바로 제출해요 · 영상은 제출되지 않아요</span></div>
+  </div></div>`);
+  $$("[data-dl]").forEach((b) => b.onclick = () => { const [i, w] = b.dataset.dl.split(":"); download(Number(i), w); emit({ type: "card", value: "dl" }); });
+  if ($("#dlAll")) $("#dlAll").onclick = async () => {
+    emit({ type: "card", value: "dl" });
+    for (const c of clips) { download(items.indexOf(c.it), c.which); await sleepReal(600); }
+  };
+  resultLoop().catch((e) => { if (!(e instanceof Abort)) console.error(e); });
+}
+async function resultLoop() {
+  stt.start();
+  let until = now() + CONFIG.resultAuto;
+  while (true) {
+    const left = until - now();
+    const c1 = $("#rCount"); if (c1) c1.textContent = fmtSec(Math.max(0, Math.ceil(left)));
+    if (left <= 0) return submitAndLeave(true);
+    const e = await next(Math.min(250, left * 1000 / FAST));
+    if (e.type === "card" && e.value === "dl") until = Math.min(now() + CONFIG.resultMax, until + CONFIG.resultExtend);
+    if (e.type === "btn" && e.name === "submit") return submitAndLeave(false);
+    if (e.type === "text" && e.final && cmdOf(e.text, ["end"], true)) return submitAndLeave(false);
+  }
+}
+async function submitAndLeave(auto) {
+  const b = $("#submitR"); if (b) b.disabled = true;
+  stt.stop();
+  try { await submit(auto, endReason); }
+  catch (e) {
+    if (!auto) { showError(e, "제출"); if (b) b.disabled = false; return resultLoop(); }
+    console.warn(e);
+  }
+  if (auto) return resetBooth();
+  showEnd();
+}
+function download(i, which) {
+  const c = clipFor(items[i], which); if (!c) return;
+  const a = document.createElement("a");
+  a.href = c.url; a.download = `${fileName(i, which)}.${c.ext}`;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+function showEnd() {
+  setPhase("done");
+  panel.end();
+  side(`<div class="grow"></div><h1 class="ttl big">제출했어요</h1>
+    <p class="sub">선생님이 피드백을 남기면 면접 스튜디오의 <b>피드백</b> 탭에서 볼 수 있어요.</p>
+    ${clips.length ? `<p class="hint" style="color:var(--warn)">영상을 받았다면 다운로드 폴더에서 지웠는지 한 번 더 확인해 주세요.</p>` : ""}
+    <div class="grow"></div><button type="button" class="btn-primary btn-lg blk-go" id="byeNow">마치기</button><p class="hint" id="byeT"></p>`, false);
+  $("#byeNow").onclick = resetBooth;
+  countdownThen("#byeT", CONFIG.doneBack, (s) => `${s}초 뒤 자동으로 로그아웃해요.`, resetBooth);
+}
+
+// =====================================================================
+// 7. 막혔을 때 · 처음으로 · 대기 화면 새로고침
+// =====================================================================
+const BLOCK = {
+  denied: ["카메라·마이크 사용이 막혀 있어요.", "주소창 왼쪽 아이콘에서 카메라·마이크 ‘허용’ → 새로고침. 윈도우 설정 → 개인 정보 → 카메라·마이크 → ‘데스크톱 앱 접근 허용’도 확인"],
+  notfound: ["카메라나 마이크를 찾지 못했어요.", "카메라·마이크 선이 꽂혀 있는지 확인 → 새로고침"],
+  busy: ["다른 프로그램이 카메라를 쓰고 있어요.", "화상 회의 같은 다른 프로그램을 닫고 → 새로고침"],
+  camera: ["카메라·마이크를 켜지 못했어요.", "선이 꽂혀 있는지 확인 → 브라우저를 모두 닫았다가 다시 열기"],
+  mic: ["마이크가 잡히지 않아요.", "마이크 선이 꽂혀 있는지 확인 → 주소창 왼쪽 아이콘에서 카메라·마이크 ‘허용’ → 새로고침"],
+  device: ["카메라나 마이크 연결이 끊겼어요.", "선이 빠졌는지 확인 → 다시 꽂고 새로고침"],
+  app: ["화면에 문제가 생겼어요.", "새로고침 → 계속되면 관리 선생님께 알려 주세요"]
+};
+async function block(kind, detail = "") {
+  if (aborted || resetting) return;
+  aborted = true; wake?.();
+  try { panel.stop(); } catch (_) {}
+  stt.stop(); clearInterval(hdTimer); frameSink = null;
+  recorders.forEach((mr) => { try { mr.stop(); } catch (_) {} }); recorders.clear();
+  $("#self")?.classList.remove("recording");
+  document.body.dataset.phase = phase = "blocked";
+  const [msg, help] = BLOCK[kind] || BLOCK.app;
+  panel.idle(); panel.caption("잠깐 멈췄어요");
+  side(`<div class="blk-i">${I_MICOFF}</div>
+    <h1 class="ttl" id="blkMsg">${esc(msg)}<br>선생님께 알려 주세요.</h1>
+    <div class="help"><b>선생님용 해결 방법</b><p>${esc(help)}</p>${detail ? `<p style="font-size:.78rem">${esc(String(detail).slice(0, 120))}</p>` : ""}</div>
+    <p class="hint" id="blkSaved"></p>
+    <div class="grow"></div>
+    <div class="cnt"><span class="cnum" id="blkT">${fmtSec(CONFIG.blockedBack)}</span><p>뒤 로그아웃하고 처음 화면으로 돌아가요.<br>다음 학생이 바로 쓸 수 있어요.</p></div>
+    <button type="button" class="btn-lg blk-go" id="blkGo">지금 처음으로</button>`, false);
+  $("#blkGo").onclick = resetBooth;
+  countdownThen("#blkT", CONFIG.blockedBack, (s, f) => f, resetBooth);
+  // 면접 중이었으면 답한 데까지 제출 (한 문항도 없으면 저장하지 않음)
+  if (items.some((it) => it.answered) && !finished) {
+    endReason = "error"; usedTotalSec = Math.round(now() - tStart);
+    try { if (await submit(true, "error")) { const s = $("#blkSaved"); if (s) s.textContent = "지금까지 답한 내용은 선생님께 제출했어요."; } } catch (e) { console.warn(e); }
+  }
+}
+
+async function resetBooth() {
+  if (resetting) return; resetting = true;
+  aborted = true; wake?.();
+  clearInterval(keepAlive); clearInterval(hdTimer);
+  try { stt.stop(); } catch (_) {}
+  try { panel.stop(); if ("speechSynthesis" in window) speechSynthesis.cancel(); } catch (_) {}
+  recorders.forEach((mr) => { try { mr.stop(); } catch (_) {} });
+  try { stream?.getTracks().forEach((t) => t.stop()); } catch (_) {}
+  clips.forEach((c) => { try { URL.revokeObjectURL(c.url); } catch (_) {} });
+  try { releaseVideos(); } catch (_) {}   // 미리 받은 면접관 영상도 메모리에서 비움
+  try { await Promise.race([storeQ, sleepReal(4000)]); } catch (_) {}
+  try { await signOut(auth); } catch (_) {}
+  try { clearDataCache(); sessionStorage.clear(); localStorage.removeItem("keepLogin"); } catch (_) {}
+  const keep = URLQ.get("fast");
+  location.replace("booth.html" + (keep ? "?fast=" + encodeURIComponent(keep) : ""));
+}
+
+// 대기 화면에서 몇 시간마다 새로고침해 메모리·연결 문제를 비운다 (면접 중엔 안 함)
+let lastInput = Date.now();
+["pointerdown", "keydown"].forEach((ev) => document.addEventListener(ev, () => { lastInput = Date.now(); }, { capture: true, passive: true }));
+setInterval(() => {
+  if (phase === "login" && now() > CONFIG.reloadHours * 3600 && Date.now() - lastInput > 60000 && !$("#lid")?.value) location.reload();
+}, 10000);
+
+// ---------- 시작: 공용 PC이므로 들어올 때마다 남은 로그인을 지운다
+const unsub = onAuthStateChanged(auth, async (u) => {
+  unsub();
+  if (u) { try { await signOut(auth); } catch (_) {} try { clearDataCache(); sessionStorage.clear(); } catch (_) {} }
+  await loadManifest();                      // 면접관 사진·영상 목록
+  if (!getKey()) return renderLocked();      // 등록하지 않은 기기 → 잠금 화면만
+  if (!SR) toast("이 브라우저는 받아쓰기를 지원하지 않아요. 크롬이나 엣지로 열어 주세요.", "error", 8000);
+  renderLogin();
+});
+</script>
+</body>
+</html>

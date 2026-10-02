@@ -263,16 +263,19 @@
 
 **면접관 사진과 영상**
 - 면접관은 원본 사진 4장(`booth-img/interviewers/<ID>/master.jpg`, 가로 16:9)을 그대로 씁니다. A 교수 `professor_male_senior` · B 교수 `professor_male_young` · C 교수 `professor_female_senior` · D 교수 `professor_female_young`.
-- 상태별 짧은 영상(`idle` 대기 · `speaking` 질문 · `listening` 듣기 · `ending` 인사)을 나중에 넣으면 코드 수정 없이 살아 움직입니다. 영상이 없는 상태는 사진으로 보여 줍니다.
-- **영상 넣는 방법**: 파일을 그 인물 폴더에 넣고 `booth-img/interviewers/manifest.json` 에 한 줄 추가 → GitHub 에 올리기.
-  예) `"professor_male_senior": { "master": "master.jpg", "idle": "idle.mp4", "listening": "listening.mp4" }`
-- **영상 기준**
-  - master.jpg 에서 만든 영상만. 첫 장면이 master.jpg 와 거의 같아야 함. 같은 비율(16:9), 카메라 이동·줌 없음, 얼굴이 다른 사람처럼 바뀌면 안 됨
-  - `idle` 6~8초 반복(호흡·눈 깜빡임) / `speaking` 6~8초 반복(입·고개 약간) / `listening` 8~12초 반복(약한 끄덕임 한 번) / `ending` 3~5초(미소·고개 인사, 한 번만 재생)
-  - 반복 영상은 끝과 처음이 자연스럽게 이어지게
-  - 형식: mp4(H.264), 720p 정도, 한 개 2MB 안팎. 소리는 쓰지 않음(무음 재생)
-  - 만드는 순서: A 교수 `idle`·`listening` 두 개만 먼저 → 부스 모니터에서 확인 → 자연스러우면 A 교수 `speaking`·`ending` → 나머지 3명
-- 영상이 늦게 오거나 깨져도 사진으로 그대로 진행합니다. 브라우저의 '움직임 줄이기'가 켜져 있으면 영상 없이 사진만 보여 줍니다.
+- **질문할 때(speaking)·듣고 기다릴 때(listening)는 짧은 무음 영상**이 나옵니다 (2026-10-02, 15개). 대기(로그인·면접관 고르기·장비 점검)와 끝 인사는 사진입니다. 목소리는 지금처럼 브라우저 목소리(TTS)입니다.
+  | | speaking | listening |
+  |---|---|---|
+  | A 교수 | 5개 | 1개 |
+  | B 교수 | 2개 | 2개 |
+  | C 교수 | 1개 | 1개 |
+  | D 교수 | 2개 | 1개 |
+- 같은 상태가 길어지면 다른 영상으로 자연스럽게 이어 붙이고(약 0.2초 겹쳐 바꿈), 바로 앞 영상은 다시 고르지 않습니다. 영상이 1개뿐이면 그 영상을 겹쳐 이어 붙입니다.
+- 면접을 시작할 때 고른 면접관의 영상을 미리 받아 둡니다 (두 명 최대 약 11MB · 첫 접속 뒤에는 브라우저에 저장). 다 받기 전이거나 영상이 깨지면 사진으로 그대로 진행합니다.
+- **영상 바꾸기·더하기**: 파일을 그 인물 폴더에 `speaking_03.mp4` 처럼 넣고 `booth-img/interviewers/manifest.json` 의 목록에 이름을 더한 뒤 GitHub 에 올리면 됩니다 (`booth.html` 은 고치지 않음). 어색한 영상은 목록에서 이름만 빼면 바로 안 나옵니다.
+  예) `"professor_male_senior": { "master": "master.jpg", "speaking": ["speaking_01.mp4", "speaking_02.mp4"], "listening": ["listening_01.mp4"] }`
+- **영상 기준**: master.jpg 에서 만든 영상, 첫 장면이 master.jpg 와 같을 것, 16:9 · 카메라 이동·줌 없음, **mp4(H.264)** 720p · 무음. HEVC(H.265) 는 윈도우 PC 에 따라 안 나올 수 있어 H.264 로 바꿔서 넣습니다.
+- 브라우저의 '움직임 줄이기'가 켜져 있으면 영상 없이 사진만 보여 줍니다.
 
 **답변 분석 (많이 쓴 낱말 · 시선)**
 - **많이 쓴 낱말**: 받아쓴 답변에서 자주 쓴 낱말을 문항마다 칩으로 보여 주고, 질문의 핵심어가 답변에 나왔는지(✓) 표시합니다. 받아쓰기가 없으면 나오지 않습니다.

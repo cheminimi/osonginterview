@@ -266,8 +266,12 @@
   .ivs[data-count="2"] .ivp { width:min(94cqw, calc(45cqh * 16 / 9)); }
   /* 사진·영상을 칸보다 2% 크게 '고정'해 두어, 아주 작은 움직임에도 가장자리 틈이 보이지 않게 (움직이는 확대 아님) */
   .ivp-photo, .ivp-vid { position:absolute; left:-1%; top:-1%; width:102%; height:102%; object-fit:cover; display:block; user-select:none; -webkit-user-drag:none; }
-  .ivp-vid { opacity:0; transition: opacity .35s ease; background:transparent; }
-  .ivp.vid-on .ivp-vid { opacity:1; }
+  /* 영상 두 장(A/B)을 번갈아 씀: 위에 올라오는 쪽(.top)이 서서히 나타나며 이전 영상을 덮는다 (사진은 항상 맨 밑) */
+  .ivp-vid { opacity:0; transition: opacity 220ms linear; background:transparent; z-index:1; }
+  .ivp-vid.top { z-index:2; }
+  .ivp-vid.on { opacity:1; }
+  .ivp-vid.out { transition-duration: 250ms; }
+  .ivp-vid.cut { transition: none; }   /* 이미 새 영상에 가려진 이전 영상은 바로 내림 */
   /* 영상이 없을 때만: 말할 때 아주 미세한 위아래, 들을 때 가끔 약한 끄덕임 (세기 = --ivp-amp) */
   .ivp[data-state="speaking"]:not(.vid-on) .ivp-photo { animation: ivp-talk 4s ease-in-out infinite; }
   .ivp.nod:not(.vid-on) .ivp-photo { animation: ivp-nod 1.4s ease-in-out 1; }
@@ -603,7 +607,13 @@ const I_CAM = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
 // =====================================================================
 const IV_BASE = "booth-img/interviewers/";
 const IV_STATES = ["idle", "speaking", "listening", "ending"];
-const IV_LOOP = { idle: true, speaking: true, listening: true, ending: false };   // ending 은 한 번 재생 후 마지막 장면에서 멈춤
+const IV_LOOP = { idle: true, speaking: true, listening: true, ending: false };   // ending 은 한 번 재생 후 마지막 장면에서 멈춤 (반복 상태는 다른 영상으로 이어 붙임)
+const IV_FADE = 220;      // 영상 → 영상 크로스페이드 (ms) — CSS .ivp-vid transition 과 같게
+const IV_OUT = 250;       // 영상 → 사진 (ms)
+const IV_LEAD = 0.25;     // 지금 영상이 끝나기 이만큼(초) 전에 다음 영상을 시작
+const IV_READY = 2000;    // 다음 영상이 이 안에 재생되지 않으면 사진으로 (ms) — 그동안 지금 영상은 마지막 장면에서 멈춰 보임
+const IV_IDLE_PHASES = new Set(["boot", "login", "pick", "check", "blocked"]);   // 이 화면에서만 '대기(사진)', 나머지는 말이 끝나면 '듣기'
+
 const CHARACTERS = {
   A: { id: "professor_male_senior", label: "A 교수", desc: "나이 든 남자 교수 · 인자하고 푸근한 인상" },
   B: { id: "professor_male_young", label: "B 교수", desc: "젊은 남자 교수 · 진지하고 날카로운 인상" },
@@ -619,8 +629,9 @@ const IV_VOICE = {
   D: { gender: "f", rate: 1.0, pitch: 1.04, prefer: ["SunHi", "Heami", "Google", "JiMin", "Yuna"] }
 };
 const IV_REDUCED = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-let IV_MANIFEST = {};                         // { <ID>: { master, idle?, speaking?, listening?, ending? } }
+let IV_MANIFEST = {};                         // { <ID>: { master, speaking?: "a.mp4" | ["a.mp4", …], listening?, idle?, ending? } }
 const ivUrl = (id, file) => `${IV_BASE}${id}/${file}`;
+const ivList = (id, st) => { const v = IV_MANIFEST[id]?.[st]; return (Array.isArray(v) ? v : v ? [v] : []).filter((f) => typeof f === "string" && f); };   // 문자열·배열 모두
 const masterUrl = (L) => { const id = CHARACTERS[L].id; return ivUrl(id, IV_MANIFEST[id]?.master || "master.jpg"); };
 async function loadManifest() {
   try {
@@ -634,9 +645,8 @@ function preloadVideos(letters) {
   if (IV_REDUCED) return;
   for (const L of letters) {
     const id = CHARACTERS[L]?.id, m = IV_MANIFEST[id] || {};
-    for (const st of IV_STATES) {
-      if (!m[st]) continue;
-      const u = ivUrl(id, m[st]);
+    for (const st of IV_STATES) for (const f of ivList(id, st)) {
+      const u = ivUrl(id, f);
       if (ivBlobs.has(u)) continue;
       ivBlobs.set(u, null);
       ivWait.set(u, fetch(u).then((r) => (r.ok ? r.blob() : null)).then((b) => {
@@ -645,11 +655,16 @@ function preloadVideos(letters) {
     }
   }
 }
-function releaseVideos() { ivBlobs.forEach((b) => { if (b) URL.revokeObjectURL(b); }); ivBlobs.clear(); ivWait.clear(); }
+function releaseVideos() {
+  document.querySelectorAll(".ivp-vid").forEach((v) => { try { v.pause(); v.removeAttribute("src"); v.load(); } catch (_) {} });   // 영상을 먼저 비운 뒤
+  ivBlobs.forEach((b) => { if (b) URL.revokeObjectURL(b); }); ivBlobs.clear(); ivWait.clear();
+}
 
-// ---------- 그리기: 사진을 항상 밑에 깔고, 상태 영상이 있으면 재생이 시작된 뒤 위로 서서히 ----------
+// ---------- 그리기: 사진을 항상 밑에 깔고, 그 위에 영상 두 장(A/B)을 번갈아 씀 ----------
+// 같은 상태가 길어지면 다른 영상으로 이어 붙이고(끝나기 0.25초 전 다음 영상 시작 → 재생 확인 → 크로스페이드),
+// 상태가 바뀌면 바로 그 상태 영상으로 크로스페이드. 영상이 없거나 실패하면 사진으로 서서히. 영상 요소는 두 장만 만들어 계속 재사용
 class PhotoRenderer {
-  constructor(L) { this.L = L; this.el = null; this.vid = null; this.timer = null; this.state = null; }
+  constructor(L) { this.L = L; this.el = null; this.vids = null; this.cur = -1; this.tok = 0; this.timers = {}; this.state = null; this.used = new Map(); this.last = {}; this.stats = { switches: 0, fallbacks: 0 }; }
   mount(parent) {
     const el = document.createElement("div");
     el.className = "ivp";
@@ -659,24 +674,39 @@ class PhotoRenderer {
     return this;
   }
   setCharacter(L) {
-    this.L = L; this.id = CHARACTERS[L].id;
+    this.L = L; this.id = CHARACTERS[L].id; this.used.clear(); this.last = {};
     this.photo.src = masterUrl(L);
     this.el.querySelector(".ivp-name").textContent = CHARACTERS[L].label;
     this.el.setAttribute("role", "img"); this.el.setAttribute("aria-label", CHARACTERS[L].label);
     this.el.style.setProperty("--ivp-amp", String(IV_MOTION[L] ?? 1));
     this.el.dataset.who = L;
-    if (this.vid) { this.hideVideo(); this.vid.poster = masterUrl(L); this.vid.dataset.u = ""; this.vid.removeAttribute("src"); this.vid.load(); }
+    if (this.vids) { this.toMaster(true); this.vids.forEach((v) => { v.poster = masterUrl(L); v.dataset.u = ""; v.removeAttribute("src"); v.load(); }); }
   }
-  _video() {                 // 사람마다 하나만 만들어 계속 재사용
-    if (this.vid || IV_REDUCED) return this.vid;
-    const v = document.createElement("video");
-    v.className = "ivp-vid"; v.muted = true; v.playsInline = true; v.preload = "auto";
-    v.setAttribute("muted", ""); v.setAttribute("playsinline", ""); v.disablePictureInPicture = true;
-    v.poster = masterUrl(this.L);
-    v.addEventListener("playing", () => { if (v.dataset.want === "1") { clearTimeout(this.timer); this.el.classList.add("vid-on"); } });
-    v.addEventListener("error", () => this.hideVideo());
-    this.el.insertBefore(v, this.el.querySelector(".ivp-name"));
-    return (this.vid = v);
+  _layers() {                // 영상이 필요할 때 처음 한 번만 두 장 만든다
+    if (this.vids || IV_REDUCED) return this.vids;
+    this.vids = [0, 1].map(() => {
+      const v = document.createElement("video");
+      v.className = "ivp-vid"; v.muted = true; v.playsInline = true; v.preload = "auto"; v.loop = false;
+      v.setAttribute("muted", ""); v.setAttribute("playsinline", ""); v.disablePictureInPicture = true;
+      v.poster = masterUrl(this.L);
+      this.el.insertBefore(v, this.el.querySelector(".ivp-name"));
+      return v;
+    });
+    return this.vids;
+  }
+  _t(n, ms, fn) { clearTimeout(this.timers[n]); this.timers[n] = setTimeout(() => { this.timers[n] = null; fn(); }, ms); }
+  _clearT() { for (const k in this.timers) clearTimeout(this.timers[k]); this.timers = {}; }
+  // 다음 영상 고르기: 이미 받은 것만, 직전 것은 빼고(하나뿐이면 그것), 가장 적게 쓴 것 중 무작위
+  pick(state) {
+    const all = ivList(this.id, state).map((f) => ivUrl(this.id, f));
+    const ready = all.filter((u) => ivBlobs.get(u));
+    if (!ready.length) return null;
+    let c = ready.length > 1 ? ready.filter((u) => u !== this.last[state]) : ready;
+    const min = Math.min(...c.map((u) => this.used.get(u) || 0));
+    c = c.filter((u) => (this.used.get(u) || 0) === min);
+    const u = c[Math.floor(Math.random() * c.length)];
+    this.used.set(u, (this.used.get(u) || 0) + 1); this.last[state] = u;
+    return u;
   }
   apply(s) {
     if (!this.el) return;
@@ -686,34 +716,84 @@ class PhotoRenderer {
   }
   show(state) {
     this.state = state; this.el.dataset.state = state;
-    const file = IV_REDUCED ? null : IV_MANIFEST[this.id]?.[state];
-    if (!file) return this.hideVideo();
-    const v = this._video(), u = ivUrl(this.id, file);
-    v.dataset.want = "1"; v.loop = IV_LOOP[state];
-    clearTimeout(this.timer);   // 늦게 오거나 실패하면 사진으로 그대로 진행 (검은 화면 없음)
-    this.timer = setTimeout(() => { if (!this.el?.classList.contains("vid-on")) this.hideVideo(); }, 1500);
-    const start = () => {
-      if (!this.el || this.state !== state || v.dataset.want !== "1") return;
-      if (v.dataset.u !== u) { this.el.classList.remove("vid-on"); v.dataset.u = u; v.src = ivBlobs.get(u) || u; }   // 미리 받은 blob 우선
-      else if (v.ended || !IV_LOOP[state]) { try { v.currentTime = 0; } catch (_) {} }
-      try { v.play()?.catch?.(() => this.hideVideo()); } catch (_) { this.hideVideo(); }
+    if (IV_REDUCED || !ivList(this.id, state).length) return this.toMaster();
+    this._layers();
+    this.next(state);
+  }
+  // state 의 다음 영상을 뒤쪽 레이어에서 시작 → 실제로 재생되면 크로스페이드
+  next(state) {
+    const wait = (this.fadeEnd || 0) - performance.now();
+    if (wait > 0) {          // 크로스페이드·사진으로 가는 중이면 끝난 뒤에 (덮고 있는 레이어를 중간에 내리면 사진이 비침)
+      const t = ++this.tok; this._clearT();
+      return this._t("defer", wait + 20, () => { if (this.tok === t && this.el) this.next(state); });
+    }
+    const tok = ++this.tok; this._clearT();
+    const u = this.pick(state);
+    if (!u) {                // 아직 받은 영상이 없음 → 사진으로, 받는 중이면 다 받은 뒤 다시
+      if (!ivList(this.id, state).some((f) => ivBlobs.has(ivUrl(this.id, f)))) preloadVideos([this.L]);   // 미리 받기 전(로그인 화면 등)이면 이때 한 번 받음
+      const waits = ivList(this.id, state).map((f) => ivWait.get(ivUrl(this.id, f))).filter(Boolean);
+      this.toMaster(false, tok);
+      if (waits.length) Promise.race(waits).then(() => { if (this.tok === tok && this.state === state && this.el) this.next(state); });
+      return;
+    }
+    const ni = this.cur === 0 ? 1 : 0, v = this.vids[ni], old = this.cur >= 0 ? this.vids[this.cur] : null;
+    const blob = ivBlobs.get(u);
+    v.classList.add("cut"); v.classList.remove("on", "out", "top"); void v.offsetWidth;   // 다시 쓰는 레이어는 그림을 바꾸기 전에 바로 숨김
+    v.onplaying = v.onerror = v.onended = null;
+    try { v.pause(); } catch (_) {}
+    if (v.dataset.u !== u) { v.dataset.u = u; v.src = blob; } else { try { v.currentTime = 0; } catch (_) {} }
+    const fail = () => {
+      if (this.tok !== tok) return;
+      this.stats.fallbacks++; v.onplaying = v.onerror = null; try { v.pause(); } catch (_) {}
+      // 지금 영상은 끝까지 두고(마지막 장면에서 멈춤) 사진으로 서서히 → 잠시 뒤 다시 시도
+      const cv = this.cur >= 0 ? this.vids[this.cur] : null;
+      const left = cv && !cv.paused && cv.duration ? Math.max(0, (cv.duration - cv.currentTime) * 1000) : 0;
+      this._t("fb", left, () => { if (this.tok !== tok) return; this.toMaster(false, tok); this._t("retry", 1500, () => { if (this.tok === tok && this.state === state) this.next(state); }); });
     };
-    const wait = ivWait.get(u);
-    if (wait && v.dataset.u !== u) { this.el.classList.remove("vid-on"); wait.then(start); }   // 미리 받는 중이면 기다렸다 그 파일로 (다시 받지 않음)
-    else start();
+    this._t("ready", IV_READY, fail);
+    v.onerror = fail;
+    v.onplaying = () => {
+      if (this.tok !== tok) return;
+      v.onplaying = null; clearTimeout(this.timers.ready);
+      // 새 영상을 위로 올려 서서히 보이게 → 다 보이면 이전 영상 멈춤
+      if (old) old.classList.remove("top");
+      v.classList.remove("cut"); v.classList.add("top"); void v.offsetWidth; v.classList.add("on");
+      this.el.classList.add("vid-on"); this.cur = ni; this.stats.switches++;
+      if (old) this.fadeEnd = performance.now() + IV_FADE + 60;
+      // 새 영상이 다 보인 뒤(transitionend)에야 밑의 이전 영상을 내림 — 중간에 사진이 비치지 않게
+      const swap = () => { v.removeEventListener("transitionend", swap); clearTimeout(this.timers.swap); if (old && old !== v && this.cur === ni) { old.classList.add("cut"); old.classList.remove("on"); try { old.pause(); } catch (_) {} } };
+      v.addEventListener("transitionend", swap); this._t("swap", IV_FADE + 400, swap);
+      if (!IV_LOOP[state]) return;     // ending 등: 한 번 재생하고 마지막 장면에서 멈춤
+      const lead = () => {             // 끝나기 직전 다음 영상 (같은 상태가 길어질 때)
+        if (this.tok !== tok) return;
+        const rest = (v.duration - v.currentTime) - IV_LEAD;
+        if (!isFinite(rest) || rest > 0.05) return this._t("lead", isFinite(rest) ? rest * 1000 : 200, lead);
+        this.next(state);
+      };
+      lead();
+      v.onended = () => { if (this.tok === tok) this.next(state); };   // 시간 계산이 어긋나도 끝나면 바로
+    };
+    try { const pr = v.play(); pr?.catch?.(() => fail()); } catch (_) { fail(); }
   }
-  hideVideo() {
-    clearTimeout(this.timer);
+  // 사진으로 서서히 (now=true 면 바로)
+  toMaster(now = false, tok) {
+    if (tok == null) { this.tok++; this._clearT(); }
     this.el?.classList.remove("vid-on");
-    if (this.vid) { this.vid.dataset.want = "0"; try { this.vid.pause(); } catch (_) {} }
+    if (!this.vids) return;
+    const cur = this.cur; this.cur = -1;
+    this.vids.forEach((v) => { v.onplaying = v.onerror = v.onended = null; if (v.classList.contains("on")) { v.classList.add("out"); v.classList.remove("on"); } });
+    const stop = () => this.vids?.forEach((v) => { if (!v.classList.contains("on")) { try { v.pause(); } catch (_) {} v.classList.remove("out", "top", "cut"); } });
+    if (now || cur < 0) stop(); else { this.fadeEnd = performance.now() + IV_OUT + 40; this._t("out", IV_OUT + 30, stop); }
   }
-  pause() { this.hideVideo(); }
+  hideVideo() { this.toMaster(); }
+  pause() { this.toMaster(true); }
   resume() { if (this.state) this.show(this.state); }
+  layerCount() { return this.vids ? this.vids.length : 0; }
   destroy() {
-    clearTimeout(this.timer);
-    if (this.vid) { try { this.vid.pause(); this.vid.removeAttribute("src"); this.vid.load(); } catch (_) {} }
+    this.tok++; this._clearT();
+    if (this.vids) this.vids.forEach((v) => { try { v.onplaying = v.onerror = v.onended = null; v.pause(); v.removeAttribute("src"); v.load(); } catch (_) {} });
     if (this.el) { this.el.removeEventListener("animationend", this._onEnd); this.el.remove(); }
-    this.el = this.vid = null;
+    this.el = this.vids = null;
   }
 }
 
@@ -774,6 +854,7 @@ function splitSpeech(text) {
 class InterviewPanel {
   constructor(host) {
     this.members = []; this.turn = 0; this.utter = null; this.voices = []; this.sayToken = null;
+    this.base = "idle";      // 말이 끝난 뒤 돌아갈 상태 — 로그인·고르기·장비 점검·막힘은 idle(사진), 나머지는 listening (setPhase 가 정함)
     this.root = document.createElement("div"); this.root.className = "ivs";
     this.root.innerHTML = `<div class="ivs-cap"></div>`; host.appendChild(this.root);
     this.cap = this.root.querySelector(".ivs-cap");
@@ -808,7 +889,7 @@ class InterviewPanel {
     const token = this.sayToken = {};
     return (async () => {
       for (const chunk of splitSpeech(text)) { if (this.sayToken !== token) break; await this._utter(chunk, m); }
-      if (this.sayToken === token) { this.sayToken = null; m.setState("idle"); m.renderer.apply({ asking: false }); }
+      if (this.sayToken === token) { this.sayToken = null; m.setState(this.base); m.renderer.apply({ asking: false }); }
       return { askedBy: m.id };
     })();
   }
@@ -868,7 +949,8 @@ if (TEST) {
   window.__booth = { parsePick: (t) => parsePick(t), cmdOf: (t, a, s) => cmdOf(t, a, s), parseMin: (t) => parseMin(t), parseTypes: (t) => parseTypes(t),
     voiceFor: (ids) => { panel.setInterviewers(ids); return window.__iv(); }, left: () => leftSec(),
     keywordsOf: (t, m) => keywordsOf(t, m), questionKeys: (q, a) => questionKeys(q, a), gaze: () => gaze,
-    panel, releaseVideos, blobs: () => [...ivBlobs.values()].filter(Boolean), preload: (ls) => preloadVideos(ls) };
+    panel, releaseVideos, blobs: () => [...ivBlobs.values()].filter(Boolean), preload: (ls) => preloadVideos(ls),
+    ivList: (id, st) => ivList(id, st), waits: () => ivWait.size, manifest: () => IV_MANIFEST };
 }
 
 // ---------- 사건 (버튼·카드·받아쓰기) — 상태마다 next() 로 하나씩 받는다 ----------
@@ -893,7 +975,7 @@ function next(ms) {      // 사건 하나 → 없이 ms 가 지나면 { type: "t
   });
 }
 const nextUntil = (until) => next((until - now()) * 1000 / FAST);   // 흐름 시계로 until 까지
-function setPhase(name, keep = false) { phase = name; document.body.dataset.phase = name; if (!keep) evq.length = 0; }
+function setPhase(name, keep = false) { phase = name; document.body.dataset.phase = name; if (!keep) evq.length = 0; panel.base = IV_IDLE_PHASES.has(name) ? "idle" : "listening"; }
 const dropText = () => { for (let i = evq.length - 1; i >= 0; i--) if (evq[i].type === "text") evq.splice(i, 1); };
 document.addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-btn],[data-card]"); if (!b || b.disabled) return;
@@ -1924,7 +2006,7 @@ async function preparePhase(it, by) {
       <div class="clock-row"><span class="clock" id="clock">${fmtSec(Math.max(0, until - now()))}</span><span class="clock-s">준비 시간 남음</span></div>
       <div class="track"><i id="trk"></i></div>
       ${lstat("다 읽었으면 “다음”이라고 말하거나 다음을 누르세요. 준비하는 동안은 녹화하지 않아요")}`);
-    panel.idle(); panel.caption("준비 시간");
+    panel.all("listening"); panel.caption("준비 시간");   // 준비하는 동안 면접관은 기다리며 듣는 모습
   };
   const prompt = async () => { await say(isP ? SAY.prepPassage(min) : SAY.prepMmi(it.text, min), { by, cap: "준비 안내" }); panel.caption("준비 시간"); };
   draw(); stt.start(); await prompt();
@@ -1964,7 +2046,7 @@ async function thinkPhase(it, by, first) {
       <div><b>“다시”</b><span>질문 다시 듣기</span></div>
       <div id="cmdWait" class="${it.thinkMore ? "used" : ""}"><b>“잠시만요”</b><span>${CONFIG.thinkMore}초 더 (한 번)</span></div>
       <div><b>“다음”</b><span>바로 답변</span></div></div></div>` : ""}`);
-  panel.idle(); panel.caption("생각할 시간");
+  panel.all("listening"); panel.caption("생각할 시간");   // 생각하는 동안 면접관은 기다리며 듣는 모습
   if (first) { await say(SAY.think, { by, cap: "생각할 시간 안내" }); panel.caption("생각할 시간"); }
   const t0 = now(); let until = t0 + CONFIG.think;
   const fin = (v) => { it.thinkUsedSec = Math.round(now() - t0); return v; };
@@ -2321,7 +2403,7 @@ async function block(kind, detail = "") {
   stt.stop(); clearInterval(hdTimer); frameSink = null;
   recorders.forEach((mr) => { try { mr.stop(); } catch (_) {} }); recorders.clear();
   $("#self")?.classList.remove("recording");
-  document.body.dataset.phase = phase = "blocked";
+  document.body.dataset.phase = phase = "blocked"; panel.base = "idle";
   const [msg, help] = BLOCK[kind] || BLOCK.app;
   panel.idle(); panel.caption("잠깐 멈췄어요");
   side(`<div class="blk-i">${I_MICOFF}</div>

@@ -53,6 +53,14 @@
   .quick b { font-size: .8rem; color: var(--accent); }
   .quick p { margin: 0; line-height: 1.6; } .quick .q-praise { font-weight: 700; } .quick .q-improve { color: var(--warn); font-weight: 700; }
   .quick .q-guide { font-size: .85rem; color: var(--ink-3); }
+  .aibox { background: #fff; border: 1px solid var(--accent-line); border-radius: 14px; padding: 14px 18px; display: grid; gap: 8px; }
+  .aibox > b { font-size: .8rem; color: var(--accent); } .aibox p { margin: 0; line-height: 1.6; }
+  .aibox .ai-sum { font-weight: 700; }
+  .aibox .ai-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .aibox .ai-cols i { font-style: normal; font-size: .8rem; font-weight: 800; color: var(--ink-2); }
+  .aibox ul { margin: 4px 0 0; padding-left: 18px; line-height: 1.6; }
+  .aibox .ai-q p { font-size: .9rem; color: var(--ink-2); } .aibox .ai-q span { font-weight: 800; color: var(--accent); margin-right: 4px; }
+  @media (max-width: 900px) { .aibox .ai-cols { grid-template-columns: 1fr; } }
   .sumline.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .sumline .gz-ok { color: var(--ok); } .sumline .gz-mid { color: var(--warn); } .sumline .gz-bad { color: var(--danger); }
   .note-i .gz-li { display: block; margin-top: 6px; }
@@ -490,8 +498,13 @@ const TEST = window.__boothTest === true;
 const FAST = TEST ? Math.max(1, Math.min(60, Number(URLQ.get("fast")) || 1)) : 1;   // 시험용: 흐름 시간을 N배 빠르게 (?fast=10)
 // 측정 표시(시선 계산 시간·메모리): 시험 환경이거나 주소에 ?measure=1 일 때만 화면 왼쪽 아래에 작게. 평소 배포 화면에는 없음
 const MEASURE = TEST || URLQ.get("measure") === "1";
-// AI 스위치 — 지금은 꺼 둔다. 켜면 ai.nextFollowUp()·ai.report() 를 먼저 부르고, null 이면 규칙으로 내려간다
-const AI_ENABLED = false;
+// AI 꼬리질문·피드백 (부스 전용 Apps Script 웹 앱 → Claude API, booth-ai/). 문제가 생기면 AI_ENABLED 를 false 로
+// 주소가 비어 있으면 꺼진 것으로 본다. 실패·지연·한도여도 면접은 멈추지 않고 규칙으로 내려간다
+const AI_ENABLED = true;
+const AI_ENDPOINT = "https://script.google.com/macros/s/AKfycbwjf8A45r6UmWsRO0Ut8oNNNii1j68zGNNXm-lJHKgmTvouMmgyY3ENUP9_HvHhB9VC/exec";                 // Apps Script 웹 앱 주소 (https://script.google.com/macros/s/…/exec)
+const AI_FOLLOWUP_TIMEOUT = 6000;       // 꼬리질문은 이 안에 못 받으면 규칙 질문으로 (늦게 온 응답은 버림)
+const AI_URL = TEST && window.__aiEndpoint !== undefined ? window.__aiEndpoint : AI_ENDPOINT;
+const AI_ON = AI_ENABLED && !!AI_URL;
 // 첫 질문(자기소개·지원동기)·마지막 질문 — 시험 환경에서 __noFrame 이면 끔 (예전 흐름 시험용)
 const FRAME = !(TEST && window.__noFrame);
 const CONFIG = {
@@ -983,7 +996,9 @@ let types = [];             // 고른 면접 유형
 let items = [];             // 물은 질문 (답한 것만 저장)
 let clips = [];             // 녹화 영상 { it, which, blob, url, ext }
 let interviewers = [], planSec = 0, tStart = 0, usedTotalSec = 0, endReason = "";
-let frameQ = { opening: null, closing: null }, depts = [], ruleUsed = new Set(), quick = null;   // 첫·마지막 질문, 지원 학과, 이번 면접에서 쓴 규칙 질문, 즉석 요약
+let frameQ = { opening: null, closing: null }, depts = [], ruleUsed = new Set(), quick = null;
+let iid = "", aiReq = null;                 // iid: 면접마다 새로 만드는 무작위 값 (AI 한도용, 학생·세션과 무관) · aiReq: 피드백 요청
+const basisOf = new Map();                  // 예상질문 id → 생기부 근거. AI 요청에만 쓰고 화면·음성·기록에는 쓰지 않음   // 첫·마지막 질문, 지원 학과, 이번 면접에서 쓴 규칙 질문, 즉석 요약
 let sessionRef = null, finished = false, resetting = false, aborted = false;
 let phase = "boot", hdTimer = null, keepAlive = null;
 const recorders = new Set();
@@ -1004,7 +1019,7 @@ if (TEST) {
       if (opt.reset) ruleUsed = new Set(); if (opt.depts) depts = opt.depts; return ruleFollowUp(it, answer); },
     isExp: (item, slot) => { const it = { slot, type: item.type || "document", text: item.text || "" }; Object.defineProperty(it, "_q", { value: item, enumerable: false }); return isExperience(it); },
     summary: (its, stt = false) => { const keep = [items, sttOff]; items = its.map((x) => ({ answered: true, ...x })); sttOff = stt; try { return makeQuickSummary(); } finally { [items, sttOff] = keep; } },
-    aiCalls: () => aiCalls, frame: () => frameQ, poolBy: () => poolBy, setLeft: (sec) => { tStart -= leftSec() - sec; } };   // 시험: 남은 시간을 sec 초로
+    aiCalls: () => aiCalls, aiStat: () => aiStat, iid: () => iid, basis: () => Object.fromEntries(basisOf), frame: () => frameQ, poolBy: () => poolBy, setLeft: (sec) => { tStart -= leftSec() - sec; } };   // 시험: 남은 시간을 sec 초로
 }
 
 // ---------- 사건 (버튼·카드·받아쓰기) — 상태마다 next() 로 하나씩 받는다 ----------
@@ -1191,7 +1206,7 @@ async function stopRec(rec, keep, it, which) {
 
 // ---------- 저장 — 답한 문항이 생긴 뒤에만 sessions 에 만든다 ----------
 const ITEM_KEYS = ["source", "qid", "type", "text", "passage", "prepSec", "thinkSec", "answerSec", "followUp", "prepMemo", "answer", "usedSec",
-  "followAnswer", "followUsedSec", "m", "followM", "askedBy", "followAskedBy", "thinkUsedSec", "thinkMore", "prepUsedSec", "gaze", "followGaze", "followSource", "followRule", "slot"];
+  "followAnswer", "followUsedSec", "m", "followM", "askedBy", "followAskedBy", "thinkUsedSec", "thinkMore", "prepUsedSec", "gaze", "followGaze", "followSource", "followRule", "followModel", "slot"];
 function cleanItems() {
   return items.filter((it) => it.answered).map((it) => {
     const o = {};
@@ -1245,9 +1260,18 @@ async function submit(auto, reason) {
 // ---------- AI 자리 (V1 은 이 컴퓨터에서만 계산 — V2 에서 이 묶음만 바꾼다) ----------
 let aiCalls = 0;   // 시험용: AI 함수가 불렸는지
 const ai = {
-  // AI 자리 — 지금은 항상 null (AI_ENABLED 가 꺼져 있으면 부르지도 않음). 붙일 때 이 두 함수만 바꾼다
-  nextFollowUp(item, answer) { aiCalls++; return null; },        // → 꼬리질문 글 또는 null
-  report(session) { aiCalls++; return null; },                   // → { praise, improve } 또는 null
+  // AI 꼬리질문 → { text, model } | null (6초 안에 못 받거나 실패·한도면 null → 규칙으로)
+  async nextFollowUp(item, answer) {
+    aiCalls++;
+    const r = await aiPost("followup", { item: aiItem(item, "main"), dept: depts }, AI_FOLLOWUP_TIMEOUT);
+    return r?.ok && typeof r.followUp === "string" && r.followUp.trim() ? { text: r.followUp.trim(), model: r.model || "" } : null;
+  },
+  // AI 피드백 — Apps Script 가 sessions/{id}.aiReport 에 직접 쓴다. 기다리지 않음 (결과 화면이 열려 있으면 받는 대로 보여 줌)
+  report(sessionId) {
+    aiCalls++;
+    const done = items.filter((it) => it.answered);
+    return aiPost("report", { sessionId, dept: depts, types, planSec, usedTotalSec, items: done.map((it, i) => ({ idx: i + 1, ...aiItem(it, "all") })) }, 90000);
+  },
   analyze(frames, text) {
     const first = frames.indexOf(true), last = frames.lastIndexOf(true);
     const out = { firstSec: null, speakSec: 0, pauses: 0, cpm: null, fillers: {} };
@@ -1321,6 +1345,42 @@ function questionKeys(q, answer) {
     }
     return out;
   } catch (e) { return []; }
+}
+// AI 로 보내는 문항 — 이름·학번·uid·영상 없음. 근거(basis)는 여기서만 붙임
+// 학생이 답변 중 자기 이름·학번을 말해도 AI 로는 가려서 보냄
+function aiMask(t) {
+  let s = String(t || "");
+  const p = ctx?.profile || {};
+  for (const w of [p.name, p.name && p.name.length >= 3 ? p.name.slice(1) : "", p.studentNo].filter((x) => x && String(x).length >= 2)) s = s.split(String(w)).join("○○○");
+  return s;
+}
+function aiItem(it, which) {
+  const o = { slot: it.slot || "", type: it.type, question: it.text, basis: aiMask(basisOf.get(it.qid) || ""), answer: aiMask(it.answer),
+    keywords: keywordsOf(aiMask(it.answer)).filter((k) => !k.w.includes("○")),   // 가린 답변으로 다시 셈 m: it.m ? { cpm: it.m.cpm, pauses: it.m.pauses, firstSec: it.m.firstSec } : null,
+    usedSec: it.usedSec, answerSec: it.answerSec };
+  if (which === "all") Object.assign(o, { thinkUsedSec: it.thinkUsedSec || 0, followUp: it.followUp || "", followSource: it.followSource || "",
+    followAnswer: aiMask(it.followAnswer), followUsedSec: it.followUsedSec || 0,
+    followM: it.followM ? { cpm: it.followM.cpm, pauses: it.followM.pauses, firstSec: it.followM.firstSec } : null,
+    gaze: it.gaze ? { onPct: it.gaze.onPct, awayCount: it.gaze.awayCount } : null });
+  return o;
+}
+// Apps Script 로 보내기 — 학생 ID 토큰 + 부스 PC 키 + iid. 시간 초과·오류는 null (면접은 그대로)
+const aiStat = { last: "", ms: 0, ok: 0, fail: 0, limited: 0 };
+async function aiPost(action, data, timeoutMs) {
+  if (!AI_ON || !ctx?.user) return null;
+  const t0 = performance.now(), ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const idToken = await ctx.user.getIdToken();
+    const res = await fetch(AI_URL, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, signal: ctl.signal,
+      body: JSON.stringify({ action, idToken, boothKey: localStorage.getItem(BOOTH_KEY) || "", iid, ...data }) });
+    const j = await res.json();
+    aiStat.ms = Math.round(performance.now() - t0); aiStat.last = `${action} ${j?.ok ? "성공" : j?.limited ? "한도" : "실패(" + (j?.error || res.status) + ")"}`;
+    j?.ok ? aiStat.ok++ : j?.limited ? aiStat.limited++ : aiStat.fail++;
+    return j;
+  } catch (e) {
+    aiStat.ms = Math.round(performance.now() - t0); aiStat.last = `${action} ${e?.name === "AbortError" ? "시간 초과" : "연결 실패"}`; aiStat.fail++;
+    return null;
+  } finally { clearTimeout(timer); }
 }
 const topFillers = (f, min = 3) => Object.entries(f || {}).filter(([, n]) => n >= min).sort((a, b) => b[1] - a[1]).slice(0, 3);
 
@@ -1452,6 +1512,7 @@ if (MEASURE) {   // 측정 표시 (시험 환경·?measure=1 일 때만)
     const heap = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : "–";
     const wasm = gaze.wasmBytes();
     box.textContent = `시선 ${gaze.lm ? gaze.delegate : gaze.failed ? "꺼짐(" + gaze.failed + ")" : "준비 중"} · ${gaze.avgMs().toFixed(1)}ms · ${gaze.fps}/초 · ${gaze.run ? "재는 중" : "쉼"}
+AI ${AI_ON ? (aiStat.last || "대기") + (aiStat.ms ? " " + aiStat.ms + "ms" : "") + ` · 성공 ${aiStat.ok} 실패 ${aiStat.fail} 한도 ${aiStat.limited}` : "꺼짐"}
 잰 횟수 ${gaze.total} · JS ${heap}MB${wasm ? ` · 엔진 ${Math.round(wasm / 1048576)}MB` : ""}${gaze.base ? " · 기준 있음" : ""}${gaze.off ? " · 이번 면접 끔" : ""}`;
   }, 1000);
 }
@@ -1581,7 +1642,8 @@ function renderLogin(msg = "") {
     </form>
     <div class="grow"></div>
     <div class="note-i">${I_SPK}<span>면접관 목소리가 스피커로 나와요. 공용 컴퓨터라 끝나면 자동으로 로그아웃되고 영상은 남지 않아요.
-      <span class="gz-li">👁 답변 중 얼굴 방향으로 <b>시선 비율만</b> 계산해요. 얼굴 영상은 저장하거나 보내지 않아요.</span></span></div>`, false);
+      <span class="gz-li">👁 답변 중 얼굴 방향으로 <b>시선 비율만</b> 계산해요. 얼굴 영상은 저장하거나 보내지 않아요.</span>
+      ${AI_ON ? `<span class="gz-li">🤖 답변 글(이름·영상 제외)은 AI가 분석해 꼬리질문과 피드백을 만들어요.</span>` : ""}</span></div>`, false);
   $("#lid").focus();
   $("#loginForm").onsubmit = async (e) => {
     e.preventDefault();
@@ -1628,6 +1690,8 @@ async function startSession() {
   keepAlive = setInterval(() => window.dispatchEvent(new Event("pointerdown")), 5 * 60000);
   try {
     setPhase("prep");
+    iid = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, "0")).join(""); aiReq = null;
+    aiPost("hello", {}, 15000);          // Apps Script 를 미리 깨우고 토큰 확인을 기억시켜 첫 꼬리질문을 빠르게 (기다리지 않음)
     side(`<div class="grow"></div><div class="phase-l">면접 준비</div><h1 class="ttl">카메라와 질문을 준비하고 있어요…</h1><div class="grow"></div>`, false);
     const [okDev] = await Promise.all([openDevices(), loadPool()]);
     if (!okDev || aborted) return;
@@ -1681,8 +1745,9 @@ async function loadPool() {
     // 스튜디오 혼자 연습(interview.html)과 같은 규칙
     const bankQ = bank.filter((q) => q.text).map((q) => ({ ...q, source: "bank" }));
     // 예상질문: 선생님 질문(by 없음 = 선생님) + 선생님이 검토한 학생 질문만. 생기부 근거(basis)·학생 원문(origText)은 부스에서 쓰지 않으므로 여기서 버림
+    basisOf.clear();
     const personalQ = pq.filter((q) => q.text && (q.by !== "student" || q.reviewedAt))
-      .map(({ basis, origText, ...q }) => ({ ...q, source: "personal", type: "document" }));
+      .map(({ basis, origText, ...q }) => { if (basis && q.id) basisOf.set(q.id, String(basis)); return { ...q, source: "personal", type: "document" }; });
     // 첫 질문: 지원 학과가 있으면 자기소개·지원동기 중 무작위, 없으면 자기소개 → 예상질문 → 질문은행 → 기본 문구
     const framing = (q) => FRAME && [FRAME_Q.intro, FRAME_Q.motive, FRAME_Q.closing].some((f) => f.find.test(q.text));
     frameQ = { opening: null, closing: null };
@@ -1740,12 +1805,16 @@ function ruleFollowUp(it, answer) {
   }
   return null;
 }
-// 꼬리질문 고르기: AI → 등록 꼬리질문 → 규칙 즉석 질문 → 없음 (마지막 질문은 꼬리질문 없음)
-function pickFollowUp(it) {
+// 꼬리질문 고르기: 등록 꼬리질문 → AI(6초) → 규칙 즉석 질문 → 없음 (마지막 질문은 꼬리질문 없음)
+async function pickFollowUp(it) {
   if (it.slot === "closing") return null;
-  if (AI_ENABLED) { try { const t = ai.nextFollowUp(it, it.answer); if (t) return { text: t, source: "ai" }; } catch (e) { console.warn("ai follow", e); } }
   const fu = (it._q?.followUps || []).filter(Boolean);
   if (fu.length) return { text: fu[Math.floor(Math.random() * fu.length)], source: "teacher" };
+  const words = String(it.answer || "").split(/\s+/).filter(Boolean).length;
+  if (AI_ON && !sttOff && words >= RULE_FOLLOW.minWords) {      // AI 는 질문 유형을 가리지 않음 (전공지식 질문도)
+    try { const r = await ai.nextFollowUp(it, it.answer); if (r) return { text: r.text, source: "ai", model: r.model }; } catch (e) { console.warn("ai follow", e); }
+    if (aborted) throw new Abort();
+  }
   try { const r = ruleFollowUp(it, it.answer); if (r) return { text: r.text, source: "rule", rule: r.rule }; } catch (e) { console.warn("rule follow", e); }
   return null;
 }
@@ -2069,8 +2138,8 @@ async function runInterview(min) {
     it.answered = true; saveProgress();
     if (it.slot === "closing") { it._t1 = now(); reason = closeReason || "time"; break; }
     // 꼬리질문도 남은 시간 안에서만 (마지막 질문 몫을 남김), 본 질문을 한 사람이 묻는다
-    const fol = leftSec() >= (FRAME ? CONFIG.followMinLeft : CONFIG.minLeft) ? pickFollowUp(it) : null;
-    if (fol) { it.followUp = fol.text; it.followSource = fol.source; if (fol.rule) it.followRule = fol.rule; }
+    const fol = leftSec() >= (FRAME ? CONFIG.followMinLeft : CONFIG.minLeft) ? await pickFollowUp(it) : null;   // AI 를 기다리는 동안 면접관은 듣는 모습 그대로
+    if (fol) { it.followUp = fol.text; it.followSource = fol.source; if (fol.rule) it.followRule = fol.rule; if (fol.model) it.followModel = fol.model; saveProgress(); }   // 고른 꼬리질문도 바로 기록에
     if (it.followUp) {
       it.followAskedBy = it.askedBy;
       const f = await askPhase(it, "follow");
@@ -2081,7 +2150,7 @@ async function runInterview(min) {
   }
   await finish(reason);
 }
-function clearFollow(it) { it.followUp = ""; it.followAnswer = ""; it.followUsedSec = 0; it.followM = null; delete it.followAskedBy; delete it.followSource; delete it.followRule; }
+function clearFollow(it) { it.followUp = ""; it.followAnswer = ""; it.followUsedSec = 0; it.followM = null; delete it.followAskedBy; delete it.followSource; delete it.followRule; delete it.followModel; }
 
 // 질문 하나(또는 꼬리질문): 읽기 → (생각) → 답변. '면접 종료' → 확인 → 아니요면 그 질문부터 다시 (영상은 이어 찍음)
 async function askPhase(it, which, first = false) {
@@ -2335,6 +2404,9 @@ async function finish(reason) {
   if (!answered) return resetBooth();
   side(`<div class="grow"></div><h1 class="ttl big">수고했어요</h1><p class="sub">결과를 준비하고 있어요…</p><div class="grow"></div>`, false);
   try { quick = makeQuickSummary(); } catch (e) { console.warn("quick summary", e); quick = null; }
+  if (AI_ON) {   // AI 피드백 요청 — 기다리지 않음. Apps Script 가 기록에 직접 쓰므로 부스가 초기화돼도 완료됨
+    aiReq = storeQ.then(() => sessionRef ? ai.report(sessionRef.id) : null).catch(() => null);
+  }
   // 종료 인사 + 즉석 요약 — 면접관은 사진(ending) 그대로
   const bye = (SAY.bye[reason] || SAY.bye.asked).replace(` ${SAY.byeEnd}`, "");
   const spoken = [bye, quick?.praise, quick?.improve, SAY.byeEnd, quick?.guide].filter(Boolean).join(" ");
@@ -2422,8 +2494,7 @@ function timeChart(done) {
 }
 // 즉석 요약 (규칙) — AI 가 켜져 있고 답을 주면 그것을 먼저
 function makeQuickSummary() {
-  const guide = AI_ENABLED ? QUICK.guide.on : QUICK.guide.off;
-  if (AI_ENABLED) { try { const r = ai.report(null); if (r?.praise) return { praise: r.praise, improve: r.improve || "", guide }; } catch (e) { console.warn("ai report", e); } }
+  const guide = AI_ON ? QUICK.guide.on : QUICK.guide.off;
   const done = items.filter((it) => it.answered);
   done.forEach((it, i) => { it._n = i + 1; });
   const ms = done.flatMap((it) => [it.m, it.followM]).filter(Boolean);
@@ -2453,6 +2524,16 @@ function makeQuickSummary() {
   else if (gz && gz.gaze.onPct < QUICK.gazeLow) improve = QUICK.improve.gaze(gz._n);
   return { praise, improve, guide };
 }
+// 결과 화면이 아직 열려 있으면 AI 피드백을 보여 줌 (실패하면 칸을 조용히 숨김)
+function showAiReport(r) {
+  const box = $("#aiBox"); if (!box) return;
+  const rep = r?.ok && r.report;
+  if (!rep || !rep.summary) { box.hidden = true; return; }
+  const li = (a) => (a || []).map((x) => `<li>${esc(x)}</li>`).join("");
+  box.innerHTML = `<b>AI 피드백</b><p class="ai-sum">${esc(rep.summary)}</p>
+    <div class="ai-cols"><div><i>잘한 점</i><ul>${li(rep.strengths)}</ul></div><div><i>다음에 해 볼 것</i><ul>${li(rep.improve)}</ul></div></div>
+    ${(rep.perQuestion || []).length ? `<div class="ai-q">${rep.perQuestion.map((q) => `<p><span>Q${esc(q.idx)}</span> ${esc(q.comment)}</p>`).join("")}</div>` : ""}`;
+}
 function showResults() {
   setPhase("result");
   const done = items.filter((it) => it.answered);
@@ -2467,6 +2548,7 @@ function showResults() {
   $("#hdMid").innerHTML = `<span class="htime">면접 끝 · ${planSec / 60}분 중 ${fmtSec(Math.min(usedTotalSec, planSec + 999))} 사용</span>`;
   showFull(`<div class="results"><div class="inner">
     ${quick ? `<div class="quick" id="quick"><b>오늘 면접 한눈에</b><p class="q-praise">👍 ${esc(quick.praise)}</p>${quick.improve ? `<p class="q-improve">✏️ ${esc(quick.improve)}</p>` : ""}<p class="q-guide">${esc(quick.guide)}</p></div>` : ""}
+    ${AI_ON && aiReq ? `<div class="aibox" id="aiBox"><b>AI 피드백</b><p class="hint" id="aiWait">AI 피드백을 만들고 있어요… 면접 스튜디오에도 올라와요.</p></div>` : ""}
     <div class="rtop"><div><h1 class="ttl big">수고했어요</h1><p class="sub">질문별로 시간을 어떻게 썼는지, 말 속도·멈춘 곳·<b>${sttOff ? "" : "많이 쓴 낱말"}${sttOff || !sg ? "" : "·"}${sg ? "시선" : ""}</b>을 확인해 보세요.</p></div>
       <div class="rcount"><b id="rCount">${fmtSec(CONFIG.resultAuto)}</b><span>뒤 선생님께 자동 제출하고<br>처음 화면으로 돌아가요 · 영상 받기 누르면 1분 연장</span></div></div>
     ${clips.length ? `<div class="notice-dl">${I_CAM}<div><b>영상은 웹에 저장되지 않아요. 가져가려면 지금 받아 가세요.</b>
@@ -2500,6 +2582,7 @@ function showResults() {
     emit({ type: "card", value: "dl" });
     for (const c of clips) { download(items.indexOf(c.it), c.which); await sleepReal(600); }
   };
+  if (aiReq) aiReq.then(showAiReport);      // 결과 화면을 그린 뒤 (이미 받았으면 바로)
   resultLoop().catch((e) => { if (!(e instanceof Abort)) console.error(e); });
 }
 async function resultLoop() {

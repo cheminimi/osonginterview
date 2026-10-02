@@ -148,7 +148,12 @@ service cloud.firestore {
             && resource.data.status == 'in_progress'
             && request.resource.data.status in ['in_progress', 'submitted']
             && !request.resource.data.diff(resource.data).affectedKeys()
-                 .hasAny(['teacherFeedback', 'aiFeedback', 'reviewedAt']));
+                 .hasAny(['teacherFeedback', 'aiFeedback', 'reviewedAt']))
+        // 면접 부스 AI 피드백: 부스 기록(mode booth)의 aiReport 칸 하나만, 본인 토큰으로 (제출 뒤에도 — Apps Script 가 학생 토큰으로 씀)
+        || (signedIn()
+            && resource.data.studentUid == request.auth.uid
+            && resource.data.mode == 'booth'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['aiReport']));
       allow delete: if isStaff();
     }
 

@@ -49,6 +49,10 @@
   .gz-note { font-size: .9rem; color: var(--ink-2); background: var(--accent-faint); border-radius: 10px; padding: 10px 14px; line-height: 1.6; margin: 0; }
   .chips-m span.bad { background: var(--danger-bg); color: var(--danger); }
   .gz-tip { font-size: .8rem; color: var(--warn); margin: 6px 0 0; }
+  .quick { background: var(--accent-faint); border: 1px solid var(--accent-line); border-radius: 14px; padding: 14px 18px; display: grid; gap: 4px; }
+  .quick b { font-size: .8rem; color: var(--accent); }
+  .quick p { margin: 0; line-height: 1.6; } .quick .q-praise { font-weight: 700; } .quick .q-improve { color: var(--warn); font-weight: 700; }
+  .quick .q-guide { font-size: .85rem; color: var(--ink-3); }
   .sumline.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .sumline .gz-ok { color: var(--ok); } .sumline .gz-mid { color: var(--warn); } .sumline .gz-bad { color: var(--danger); }
   .note-i .gz-li { display: block; margin-top: 6px; }
@@ -486,9 +490,17 @@ const TEST = window.__boothTest === true;
 const FAST = TEST ? Math.max(1, Math.min(60, Number(URLQ.get("fast")) || 1)) : 1;   // 시험용: 흐름 시간을 N배 빠르게 (?fast=10)
 // 측정 표시(시선 계산 시간·메모리): 시험 환경이거나 주소에 ?measure=1 일 때만 화면 왼쪽 아래에 작게. 평소 배포 화면에는 없음
 const MEASURE = TEST || URLQ.get("measure") === "1";
+// AI 스위치 — 지금은 꺼 둔다. 켜면 ai.nextFollowUp()·ai.report() 를 먼저 부르고, null 이면 규칙으로 내려간다
+const AI_ENABLED = false;
+// 첫 질문(자기소개·지원동기)·마지막 질문 — 시험 환경에서 __noFrame 이면 끔 (예전 흐름 시험용)
+const FRAME = !(TEST && window.__noFrame);
 const CONFIG = {
   planMin: [10, 15, 20], planDefault: 15,   // 면접 시간 선택지(분), 대답이 없을 때
-  minLeft: 60,          // 남은 시간이 이보다 적으면 새 질문·꼬리질문 없이 마침
+  minLeft: 60,          // (첫·마지막 질문을 끈 시험에서만) 남은 시간이 이보다 적으면 새 질문·꼬리질문 없이 마침
+  closingAt: 90,        // 남은 시간이 이보다 적으면 새 질문 대신 마지막 질문 ("마지막으로 하고 싶은 말이 있나요?")
+  closingAnswer: 60, closingMax: 90,           // 마지막 질문 답변 기준·최대 (초)
+  followMinLeft: 150,   // 꼬리질문은 남은 시간이 이만큼(마지막 질문 1분 30초 + 꼬리 1분) 있을 때만
+  overSec: 30,          // '시간 초과' = 답변 기준 시간(꼬리질문은 1분) + 이만큼을 넘김 (결과 화면 주황 칩과 같은 기준)
   answerMax: 180,       // 답변 한 번 최대 (제시문은 아래 typeAnswerMax)
   typePrep: { passage: 300, mmi: 120 },        // 질문 전 준비 시간: 제시문 5분(제시문 읽기), MMI 2분(상황 읽기)
   typeAnswerMax: { passage: 300 },             // 제시문 답변은 5분까지
@@ -515,6 +527,41 @@ const IV_TYPES = [
   { k: "personality", label: "기본 인성·MMI", desc: "인성 질문 · MMI 상황 질문(준비 2분)" }
 ];
 const typeLabel = (k) => IV_TYPES.find((t) => t.k === k)?.label || k;
+// 첫 질문·마지막 질문 (학생 예상질문 → 질문은행 → 아래 기본 문구 순서로 찾음)
+const FRAME_Q = {
+  intro: { find: /자기\s*소개|자신을\s*소개|본인을\s*소개/, text: "1분 동안 자신을 소개해 주세요." },
+  motive: { find: /지원\s*동기|지원한\s*(이유|동기)|지원하게\s*된\s*(계기|이유)/, text: "우리 학과에 지원한 동기를 말해 주세요." },
+  closing: { find: /마지막으로/, text: "마지막으로 하고 싶은 말이 있나요?" }
+};
+// 규칙 즉석 꼬리질문 — 등록 꼬리질문이 없을 때, 경험을 묻는 질문에만. 위에서부터 답변에 처음 빠진 것 하나를 묻는다 (같은 면접에서 같은 규칙은 한 번)
+const RULE_FOLLOW = {
+  minWords: 20,          // 답변이 이보다 짧으면 묻지 않음
+  has: {                 // 답변 안에 있으면 '있음'
+    role: /제가|맡|직접|주도|담당|이끌|역할을|역할로|팀장|부장|리더|기획/,
+    evidence: /[0-9]|실험|조사|측정|결과|자료|데이터|통계|설문|분석|비교|그래프|수치|퍼센트|%|관찰|기록/,
+    limit: /아쉬|부족|한계|다시 한다면|개선|보완|실패|놓친|잘못|어려웠/
+  },
+  ask: {
+    role: () => "그 활동에서 본인이 맡은 역할을 구체적으로 말해 주세요.",
+    evidence: (k) => k ? `방금 말한 '${k}'에서 실제로 어떤 결과가 나왔는지 구체적으로 말해 주세요.` : "방금 말한 내용에서 실제로 어떤 결과가 나왔는지 구체적으로 말해 주세요.",
+    limit: () => "다시 한다면 무엇을 바꾸고 싶나요?",
+    link: (dept) => dept ? "그 경험이 지원 학과 공부와 어떻게 이어지나요?" : "앞으로 그 관심을 어떻게 이어 가고 싶나요?"
+  },
+  openingRules: ["evidence", "link"],   // 첫 질문(자기소개·지원동기)은 활동 이야기가 아닐 때가 많아 이 둘만
+  // 질문은행 학생부 질문은 글에 이 낱말이 있을 때만 경험형으로 봄 (전공지식 질문은 빼려고)
+  expWords: /경험|활동|했던|한 일|노력|계기|과정|맡은|참여/
+};
+// 즉석 요약 — 종료 인사 때 읽고 결과 화면 맨 위에. 칭찬 하나 + 고칠 점 하나 + 안내 한 줄 (위에서 처음 맞는 것)
+const QUICK = {
+  praise: { speed: "말 속도가 처음부터 끝까지 알맞았어요.", inTime: "모든 질문에 시간 안에 답했어요.", noPause: "막힘 없이 이어서 말했어요.",
+    keys: "질문의 핵심 낱말을 답변에 잘 담았어요.", done: "끝까지 모든 질문에 답했어요." },
+  improve: { over: (n) => `${n}번 질문은 시간을 넘겼어요. 결론을 먼저 말해 보세요.`, pause: (n) => `${n}번 질문에서 말이 자주 끊겼어요. 영상에서 그 부분을 확인해 보세요.`,
+    filler: (w, k) => `'${w}'${eulReul(w)} ${k}번 썼어요.`, fast: "말이 조금 빨랐어요.", slow: "말이 조금 느렸어요.",
+    first: "답을 시작하기까지 시간이 걸렸어요. 첫 문장을 미리 정해 두면 좋아요.", gaze: (n) => `${n}번 질문에서 시선이 자주 벗어났어요.` },
+  guide: { off: "선생님 피드백은 면접 스튜디오에서 확인하세요.", on: "AI 피드백은 잠시 뒤 화면과 면접 스튜디오에 올라와요." },
+  pauseQ: 2, fillerMin: 5, firstSec: 4, firstQ: 2, gazeLow: 60
+};
+const eulReul = (w) => { const c = String(w).charCodeAt(String(w).length - 1) - 0xac00; return c >= 0 && c < 11172 && c % 28 ? "을" : "를"; };
 const FILLERS = ["음", "어", "아", "그", "저", "약간", "뭔가", "이제", "좀", "막", "그냥", "진짜", "되게", "일단", "그래서", "그리고"];
 const SPEED = { low: 250, high: 330 };      // 분당 글자 수 참고 범위 (띄어쓰기 제외)
 // 시선 — 답변 중 화면 속 면접관을 보고 있었는지 (MediaPipe Face Landmarker, 이 PC 안에서만 계산 · 영상·얼굴 점은 저장하지 않음)
@@ -588,6 +635,7 @@ const SAY = {
   quit: "처음 화면으로 돌아갈까요?",
   resume: "네, 이어서 할게요.",
   noreply: "대답이 없어서 면접을 마칠게요.",
+  byeEnd: "결과는 화면에서 확인하세요.",
   bye: {
     time: "시간이 다 되어 면접을 마칠게요. 수고했어요. 결과는 화면에서 확인하세요.",
     questions: "준비한 질문을 모두 했어요. 수고했어요. 결과는 화면에서 확인하세요.",
@@ -880,16 +928,16 @@ class InterviewPanel {
   all(s) { this.members.forEach((m) => { m.setState(s); m.renderer.apply({ asking: false }); }); }
   member(id) { return this.members.find((x) => x.id === id) || this.members[0]; }
   nextSpeaker() { const m = this.members[this.turn % this.members.length]; this.turn++; return m; }
-  say(text, { by, cap } = {}) {   // → Promise<{ askedBy }>
+  say(text, { by, cap, pose } = {}) {   // → Promise<{ askedBy }> · pose 를 주면 그 상태 그대로 말함 (종료 인사: "ending" = 사진)
     const m = by ? this.member(by) : this.nextSpeaker();
     if (!m) return Promise.resolve({ askedBy: null });
     this.stop();
-    this.members.forEach((x) => { x.setState(x === m ? "speaking" : "listening"); x.renderer.apply({ asking: x === m }); });
+    this.members.forEach((x) => { x.setState(pose || (x === m ? "speaking" : "listening")); x.renderer.apply({ asking: x === m }); });
     this.caption(`${m.character.label} · ${cap || "질문하는 중"}`, "speaking");
     const token = this.sayToken = {};
     return (async () => {
       for (const chunk of splitSpeech(text)) { if (this.sayToken !== token) break; await this._utter(chunk, m); }
-      if (this.sayToken === token) { this.sayToken = null; m.setState(this.base); m.renderer.apply({ asking: false }); }
+      if (this.sayToken === token) { this.sayToken = null; if (!pose) m.setState(this.base); m.renderer.apply({ asking: false }); }
       return { askedBy: m.id };
     })();
   }
@@ -935,6 +983,7 @@ let types = [];             // 고른 면접 유형
 let items = [];             // 물은 질문 (답한 것만 저장)
 let clips = [];             // 녹화 영상 { it, which, blob, url, ext }
 let interviewers = [], planSec = 0, tStart = 0, usedTotalSec = 0, endReason = "";
+let frameQ = { opening: null, closing: null }, depts = [], ruleUsed = new Set(), quick = null;   // 첫·마지막 질문, 지원 학과, 이번 면접에서 쓴 규칙 질문, 즉석 요약
 let sessionRef = null, finished = false, resetting = false, aborted = false;
 let phase = "boot", hdTimer = null, keepAlive = null;
 const recorders = new Set();
@@ -950,7 +999,12 @@ if (TEST) {
     voiceFor: (ids) => { panel.setInterviewers(ids); return window.__iv(); }, left: () => leftSec(),
     keywordsOf: (t, m) => keywordsOf(t, m), questionKeys: (q, a) => questionKeys(q, a), gaze: () => gaze,
     panel, releaseVideos, blobs: () => [...ivBlobs.values()].filter(Boolean), preload: (ls) => preloadVideos(ls),
-    ivList: (id, st) => ivList(id, st), waits: () => ivWait.size, manifest: () => IV_MANIFEST };
+    ivList: (id, st) => ivList(id, st), waits: () => ivWait.size, manifest: () => IV_MANIFEST,
+    rule: (item, answer, opt = {}) => { const it = { slot: opt.slot, type: item.type || "document", text: item.text || "" }; Object.defineProperty(it, "_q", { value: item, enumerable: false });
+      if (opt.reset) ruleUsed = new Set(); if (opt.depts) depts = opt.depts; return ruleFollowUp(it, answer); },
+    isExp: (item, slot) => { const it = { slot, type: item.type || "document", text: item.text || "" }; Object.defineProperty(it, "_q", { value: item, enumerable: false }); return isExperience(it); },
+    summary: (its, stt = false) => { const keep = [items, sttOff]; items = its.map((x) => ({ answered: true, ...x })); sttOff = stt; try { return makeQuickSummary(); } finally { [items, sttOff] = keep; } },
+    aiCalls: () => aiCalls, frame: () => frameQ, setLeft: (sec) => { tStart -= leftSec() - sec; } };   // 시험: 남은 시간을 sec 초로
 }
 
 // ---------- 사건 (버튼·카드·받아쓰기) — 상태마다 next() 로 하나씩 받는다 ----------
@@ -1096,12 +1150,12 @@ setInterval(() => {
 const voiceOn = (ms = CONFIG.voiceOnMs) => loudRun * 100 >= ms;
 
 // ---------- 면접관이 말하기 ----------
-async function say(text, { by, cap } = {}) {
+async function say(text, { by, cap, pose } = {}) {
   if (aborted) throw new Abort();
   stt.pause(phase === "listen");        // 답변 중이면 받아쓰던 말은 답변에 넣고 끈다
   ttsBusy = true; document.body.dataset.tts = "1";
   let r = { askedBy: null };
-  try { r = await panel.say(text, { by, cap }); }
+  try { r = await panel.say(text, { by, cap, pose }); }
   finally { ttsBusy = false; ttsEnd = performance.now(); document.body.dataset.tts = "0"; }
   if (aborted) throw new Abort();
   stt.resume();
@@ -1137,7 +1191,7 @@ async function stopRec(rec, keep, it, which) {
 
 // ---------- 저장 — 답한 문항이 생긴 뒤에만 sessions 에 만든다 ----------
 const ITEM_KEYS = ["source", "qid", "type", "text", "passage", "prepSec", "thinkSec", "answerSec", "followUp", "prepMemo", "answer", "usedSec",
-  "followAnswer", "followUsedSec", "m", "followM", "askedBy", "followAskedBy", "thinkUsedSec", "thinkMore", "prepUsedSec", "gaze", "followGaze"];
+  "followAnswer", "followUsedSec", "m", "followM", "askedBy", "followAskedBy", "thinkUsedSec", "thinkMore", "prepUsedSec", "gaze", "followGaze", "followSource", "followRule", "slot"];
 function cleanItems() {
   return items.filter((it) => it.answered).map((it) => {
     const o = {};
@@ -1154,7 +1208,7 @@ function cleanItems() {
 function sessionBase() {
   const p = ctx.profile;
   return { studentUid: ctx.user.uid, studentName: p.name || "", studentNo: p.studentNo, track: p.track || "",
-    mode: "booth", modeLabel: "면접 부스", types, interviewers, planSec, ...(sttOff ? { sttOff: true } : {}), ...sessionKeywords(), ...sessionGaze() };
+    mode: "booth", modeLabel: "면접 부스", types, interviewers, planSec, ...(sttOff ? { sttOff: true } : {}), ...sessionKeywords(), ...sessionGaze(), ...(quick ? { quickSummary: { praise: quick.praise, improve: quick.improve } } : {}) };
 }
 function sessionGaze() {   // 답변 전체 평균 응시율·벗어남 합 (시선 분석을 못 했으면 gazeOff)
   const gs = items.filter((it) => it.answered).flatMap((it) => [it.gaze, it.followGaze]).filter(Boolean);
@@ -1189,8 +1243,11 @@ async function submit(auto, reason) {
 }
 
 // ---------- AI 자리 (V1 은 이 컴퓨터에서만 계산 — V2 에서 이 묶음만 바꾼다) ----------
+let aiCalls = 0;   // 시험용: AI 함수가 불렸는지
 const ai = {
-  nextFollowUp(q) { const fu = (q.followUps || []).filter(Boolean); return fu.length ? fu[Math.floor(Math.random() * fu.length)] : ""; },
+  // AI 자리 — 지금은 항상 null (AI_ENABLED 가 꺼져 있으면 부르지도 않음). 붙일 때 이 두 함수만 바꾼다
+  nextFollowUp(item, answer) { aiCalls++; return null; },        // → 꼬리질문 글 또는 null
+  report(session) { aiCalls++; return null; },                   // → { praise, improve } 또는 null
   analyze(frames, text) {
     const first = frames.indexOf(true), last = frames.lastIndexOf(true);
     const out = { firstSec: null, speakSec: 0, pauses: 0, cpm: null, fillers: {} };
@@ -1205,7 +1262,6 @@ const ai = {
     for (const w of text.split(/\s+/)) { const k = w.replace(/[.,?!~…]/g, ""); if (FILLERS.includes(k)) out.fillers[k] = (out.fillers[k] || 0) + 1; }
     return out;
   },
-  report() { return null; }
 };
 // 핵심어휘 — 낱말 하나를 줄기로 (뺄 말·움직씨면 null)
 const hasSsang = (w) => [...w].some((ch) => { const c = ch.charCodeAt(0) - 0xac00; return c >= 0 && c < 11172 && c % 28 === 20; });   // 받침 ㅆ (했·있·바꿨)
@@ -1620,13 +1676,23 @@ async function loadPool() {
       cachedCollection("questions").catch((e) => { console.warn(e); return []; }),
       loadInterviewsFor(p.studentNo).catch(() => [])
     ]);
-    const depts = ivs.map((u) => u.dept || "").filter(Boolean);
+    depts = ivs.map((u) => u.dept || "").filter(Boolean);
     const relevant = (q) => !q.majors?.length || depts.some((d) => q.majors.some((m) => d.includes(m)));
     // 스튜디오 혼자 연습(interview.html)과 같은 규칙
     const bankQ = bank.filter((q) => q.text).map((q) => ({ ...q, source: "bank" }));
+    const personalQ = pq.filter((q) => q.text).map((q) => ({ ...q, source: "personal", type: "document" }));
+    // 첫 질문: 지원 학과가 있으면 자기소개·지원동기 중 무작위, 없으면 자기소개 → 예상질문 → 질문은행 → 기본 문구
+    const framing = (q) => FRAME && [FRAME_Q.intro, FRAME_Q.motive, FRAME_Q.closing].some((f) => f.find.test(q.text));
+    frameQ = { opening: null, closing: null };
+    if (FRAME) {
+      const kind = depts.length && Math.random() < 0.5 ? "motive" : "intro";
+      const found = personalQ.find((q) => FRAME_Q[kind].find.test(q.text)) || bankQ.find((q) => q.type === "document" && relevant(q) && FRAME_Q[kind].find.test(q.text));
+      frameQ.opening = { ...(found || { source: "booth", type: "document", text: FRAME_Q[kind].text }), slot: "opening", kind };
+      frameQ.closing = { source: "booth", type: "document", text: FRAME_Q.closing.text, slot: "closing" };
+    }
     poolBy = {
-      personal: pq.filter((q) => q.text).map((q) => ({ ...q, source: "personal", type: "document" })),
-      document: bankQ.filter((q) => q.type === "document" && relevant(q)),
+      personal: personalQ.filter((q) => !framing(q)),            // 첫·마지막 질문과 겹치는 것은 중간에 내지 않음
+      document: bankQ.filter((q) => q.type === "document" && relevant(q) && !framing(q)),
       passage: bankQ.filter((q) => q.type === "passage" && q.passage),
       personality: bankQ.filter((q) => q.type === "personality" || q.type === "mmi")
     };
@@ -1636,13 +1702,50 @@ async function loadPool() {
 function makeItem(q) {
   const t = TYPES[q.type] || TYPES.document, type = q.type || "document";
   const prep = CONFIG.typePrep[type] || 0;          // 제시문 5분·MMI 2분 준비 (부스용) — 준비가 있으면 생각 시간은 없음
-  return {
+  const closing = q.slot === "closing";
+  const it = {
     source: q.source, qid: q.id || "", type, text: q.text, passage: type === "passage" ? (q.passage || "") : "",
     prepSec: prep, thinkSec: prep ? 0 : CONFIG.think,
-    answerSec: CONFIG.typeAnswerMax[type] || Math.round(q.answerSec ?? t.answer), prepUsedSec: 0,
-    followUp: ai.nextFollowUp(q), prepMemo: "", answer: "", usedSec: 0, followAnswer: "", followUsedSec: 0, m: null, followM: null,
+    answerSec: closing ? CONFIG.closingAnswer : CONFIG.typeAnswerMax[type] || Math.round(q.answerSec ?? t.answer), prepUsedSec: 0,
+    followUp: "", prepMemo: "", answer: "", usedSec: 0, followAnswer: "", followUsedSec: 0, m: null, followM: null,
     askedBy: null, thinkUsedSec: 0
   };
+  if (q.slot) it.slot = q.slot;
+  Object.defineProperty(it, "_q", { value: q, enumerable: false });   // 등록 꼬리질문·경험형 판단용 (저장 안 함)
+  return it;
+}
+// 경험을 묻는 질문인지 (규칙 꼬리질문은 여기에만): 예상질문(질문은행에서 복사한 인성·MMI·제시문 제외) · 첫 질문 · 경험 낱말이 있는 질문은행 학생부 질문
+function isExperience(it) {
+  const q = it._q || {};
+  if (it.slot === "closing") return false;
+  if (it.slot === "opening") return true;
+  if (it.type !== "document") return false;
+  if (q.source === "personal") return !/^질문은행-(기본 인성|인성|MMI|제시문)/.test(q.category || "");
+  return RULE_FOLLOW.expWords.test(it.text);
+}
+// 규칙 즉석 꼬리질문 → { text, rule } | null
+function ruleFollowUp(it, answer) {
+  if (sttOff || !isExperience(it)) return null;
+  if (String(answer || "").split(/\s+/).filter(Boolean).length < RULE_FOLLOW.minWords) return null;
+  const kw = keywordsOf(answer).find((k) => k.n >= 2)?.w || "";
+  const allow = it.slot === "opening" ? RULE_FOLLOW.openingRules : ["role", "evidence", "limit", "link"];
+  const missing = ["role", "evidence", "limit"].filter((r) => allow.includes(r) && !RULE_FOLLOW.has[r].test(answer));
+  for (const r of [...missing, ...(allow.includes("link") ? ["link"] : [])]) {
+    const key = r === "evidence" ? `evidence:${kw}` : r;        // 근거 질문은 핵심어가 다르면 다시 써도 됨
+    if (ruleUsed.has(key)) continue;
+    ruleUsed.add(key);
+    return { text: RULE_FOLLOW.ask[r](r === "link" ? depts[0] : kw), rule: r };
+  }
+  return null;
+}
+// 꼬리질문 고르기: AI → 등록 꼬리질문 → 규칙 즉석 질문 → 없음 (마지막 질문은 꼬리질문 없음)
+function pickFollowUp(it) {
+  if (it.slot === "closing") return null;
+  if (AI_ENABLED) { try { const t = ai.nextFollowUp(it, it.answer); if (t) return { text: t, source: "ai" }; } catch (e) { console.warn("ai follow", e); } }
+  const fu = (it._q?.followUps || []).filter(Boolean);
+  if (fu.length) return { text: fu[Math.floor(Math.random() * fu.length)], source: "teacher" };
+  try { const r = ruleFollowUp(it, it.answer); if (r) return { text: r.text, source: "rule", rule: r.rule }; } catch (e) { console.warn("rule follow", e); }
+  return null;
 }
 
 function showNoQuestions() {
@@ -1939,10 +2042,21 @@ const leftSec = () => planSec - (now() - tStart);
 async function runInterview(min) {
   planSec = min * 60; tStart = now();
   clearInterval(hdTimer); hdTimer = setInterval(drawHeader, 250); drawHeader();
-  let reason = "";
+  let reason = "", closingDone = false, closeReason = "";
+  ruleUsed = new Set(); quick = null;
+  if (FRAME && frameQ.opening) pool.unshift(frameQ.opening);     // 첫 질문: 자기소개 또는 지원동기
   while (!reason) {
-    if (items.length && leftSec() < CONFIG.minLeft) { reason = "time"; break; }
-    const q = pool.shift();
+    let q;
+    if (FRAME) {
+      const end = !items.length ? "" : leftSec() < CONFIG.closingAt ? "time" : !pool.length ? "questions" : "";
+      if (end) {                                   // 시간이 1분 30초 아래거나 질문을 다 썼으면 → 마지막 질문 하고 마침
+        if (closingDone || !frameQ.closing) { reason = end; break; }
+        q = frameQ.closing; closingDone = true; closeReason = end;
+      } else q = pool.shift();
+    } else {
+      if (items.length && leftSec() < CONFIG.minLeft) { reason = "time"; break; }
+      q = pool.shift();
+    }
     if (!q) { reason = "questions"; break; }
     const prepNeed = CONFIG.typePrep[q.type] || 0;
     if (prepNeed && leftSec() < prepNeed + CONFIG.prepMinAnswer) continue;   // 준비할 시간이 모자라면 이 질문은 건너뜀
@@ -1951,7 +2065,11 @@ async function runInterview(min) {
     const r = await askPhase(it, "main", items.length === 1);
     if (r !== "done") { items.pop(); reason = r === "end" ? "asked" : "noreply"; break; }
     it.answered = true; saveProgress();
-    if (it.followUp && leftSec() >= CONFIG.minLeft) {       // 꼬리질문도 남은 시간 안에서만, 본 질문을 한 사람이 묻는다
+    if (it.slot === "closing") { it._t1 = now(); reason = closeReason || "time"; break; }
+    // 꼬리질문도 남은 시간 안에서만 (마지막 질문 몫을 남김), 본 질문을 한 사람이 묻는다
+    const fol = leftSec() >= (FRAME ? CONFIG.followMinLeft : CONFIG.minLeft) ? pickFollowUp(it) : null;
+    if (fol) { it.followUp = fol.text; it.followSource = fol.source; if (fol.rule) it.followRule = fol.rule; }
+    if (it.followUp) {
       it.followAskedBy = it.askedBy;
       const f = await askPhase(it, "follow");
       if (f !== "done") { clearFollow(it); reason = f === "end" ? "asked" : "noreply"; }
@@ -1961,7 +2079,7 @@ async function runInterview(min) {
   }
   await finish(reason);
 }
-function clearFollow(it) { it.followUp = ""; it.followAnswer = ""; it.followUsedSec = 0; it.followM = null; delete it.followAskedBy; }
+function clearFollow(it) { it.followUp = ""; it.followAnswer = ""; it.followUsedSec = 0; it.followM = null; delete it.followAskedBy; delete it.followSource; delete it.followRule; }
 
 // 질문 하나(또는 꼬리질문): 읽기 → (생각) → 답변. '면접 종료' → 확인 → 아니요면 그 질문부터 다시 (영상은 이어 찍음)
 async function askPhase(it, which, first = false) {
@@ -2029,7 +2147,7 @@ async function preparePhase(it, by) {
 }
 function renderAsk(it, which) {
   const isF = which === "follow";
-  side(`<div class="phase-l" id="phaseL">${isF ? "꼬리질문" : "질문"} ${qNo(it)}${!isF && it.source === "personal" ? " · 내 예상질문" : ""}</div>
+  side(`<div class="phase-l" id="phaseL">${isF ? "꼬리질문" : "질문"} ${qNo(it)}${!isF && it.slot === "closing" ? " · 마지막 질문" : !isF && it.source === "personal" ? " · 내 예상질문" : ""}</div>
     ${isF ? `<div class="qprev">앞 질문 — ${esc(it.text)}</div>` : ""}
     <div class="qtext" id="qtext">${esc(isF ? it.followUp : it.text)}</div>
     ${!isF ? passageBox(it, false) : ""}
@@ -2084,7 +2202,7 @@ async function thinkPhase(it, by, first) {
 
 async function listenPhase(it, which, by, carry, started) {
   const isF = which === "follow", text = isF ? it.followUp : it.text, limit = isF ? 60 : it.answerSec;
-  const maxSec = !isF && CONFIG.typeAnswerMax[it.type] || CONFIG.answerMax;   // 제시문 5분, 나머지 3분
+  const maxSec = it.slot === "closing" && !isF ? CONFIG.closingMax : !isF && CONFIG.typeAnswerMax[it.type] || CONFIG.answerMax;   // 제시문 5분, 마지막 질문 1분 30초, 나머지 3분
   setPhase("listen", true);
   side(`<div class="listen" style="display:contents">
     <div class="phase-l" id="phaseL">${isF ? "꼬리질문" : "질문"} ${qNo(it)} · 답변</div>
@@ -2208,14 +2326,19 @@ async function finish(reason) {
   setPhase("closing");
   if (reason === "noreply") {      // 학생이 자리를 떠난 것으로 본다 → 답한 게 있으면 제출하고 처음으로
     side(`<div class="grow"></div><h1 class="ttl">대답이 없어서 면접을 마칠게요</h1><p class="sub">${answered ? "지금까지 답한 내용은 선생님께 제출해요." : "답한 질문이 없어 저장하지 않아요."}</p><div class="grow"></div>`, false);
-    await say(SAY.noreply, { by, cap: "마치는 중" });
+    await say(SAY.noreply, { by, cap: "마치는 중", pose: "ending" });
     if (answered) { try { await submit(true, "noreply"); } catch (e) { console.warn(e); } }
     return resetBooth();
   }
   if (!answered) return resetBooth();
   side(`<div class="grow"></div><h1 class="ttl big">수고했어요</h1><p class="sub">결과를 준비하고 있어요…</p><div class="grow"></div>`, false);
-  await say(SAY.bye[reason] || SAY.bye.asked, { by, cap: "인사하는 중" });
-  panel.end(); await sleepV(1.2);
+  try { quick = makeQuickSummary(); } catch (e) { console.warn("quick summary", e); quick = null; }
+  // 종료 인사 + 즉석 요약 — 면접관은 사진(ending) 그대로
+  const bye = (SAY.bye[reason] || SAY.bye.asked).replace(` ${SAY.byeEnd}`, "");
+  const spoken = [bye, quick?.praise, quick?.improve, SAY.byeEnd, quick?.guide].filter(Boolean).join(" ");
+  panel.end();
+  await say(spoken, { by, cap: "인사하는 중", pose: "ending" });
+  panel.caption("수고했어요", "ending"); await sleepV(1.2);
   showResults();
 }
 
@@ -2265,7 +2388,7 @@ function kwBlock(q, answer) {
     <p class="kw-hint">답변에서 많이 쓴 낱말이에요.${qk.length ? ` 질문의 핵심어가 들어 있는지 확인해 보세요.
       <span class="kw-q">질문 핵심어: ${qk.map((k) => `<span class="${k.hit ? "hit" : "miss"}">${esc(k.w)}${k.hit ? " ✓" : ""}</span>`).join(" · ")}</span>` : ""}</p></div>`;
 }
-const typeLabelOf = (it) => it.source === "personal" ? "내 생기부" : it.type === "passage" ? "제시문" : it.type === "mmi" ? "MMI" : it.type === "personality" ? "인성" : "학생부 공통";
+const typeLabelOf = (it) => it.slot === "opening" ? "첫 질문" : it.slot === "closing" ? "마지막 질문" : it.source === "personal" ? "내 생기부" : it.type === "passage" ? "제시문" : it.type === "mmi" ? "MMI" : it.type === "personality" ? "인성" : "학생부 공통";
 function timeChart(done) {
   const rows = done.map((it) => {
     const th = (it.thinkUsedSec || 0) + (it.prepUsedSec || 0), a = it.usedSec || 0, f = it.followUsedSec || 0;   // 준비 시간은 '생각·준비'에 함께
@@ -2295,6 +2418,39 @@ function timeChart(done) {
     </tbody></table>
     <p class="tnote">${why}${more.length ? ` ${more.join("·")} 의 생각 시간에는 “잠시만요” ${CONFIG.thinkMore}초가 들어 있어요.` : ""}</p></section>`;
 }
+// 즉석 요약 (규칙) — AI 가 켜져 있고 답을 주면 그것을 먼저
+function makeQuickSummary() {
+  const guide = AI_ENABLED ? QUICK.guide.on : QUICK.guide.off;
+  if (AI_ENABLED) { try { const r = ai.report(null); if (r?.praise) return { praise: r.praise, improve: r.improve || "", guide }; } catch (e) { console.warn("ai report", e); } }
+  const done = items.filter((it) => it.answered);
+  done.forEach((it, i) => { it._n = i + 1; });
+  const ms = done.flatMap((it) => [it.m, it.followM]).filter(Boolean);
+  if (!ms.some((m) => m.firstSec != null)) return { praise: QUICK.praise.done, improve: "", guide };   // 지표가 없음
+  const reg = done.filter((it) => it.slot !== "closing");                                                // 마지막 질문은 시간·핵심어 판단에서 뺌
+  const over = reg.filter((it) => it.usedSec > it.answerSec + CONFIG.overSec || (it.followUp && it.followUsedSec > 60 + CONFIG.overSec));
+  const cpms = ms.map((m) => m.cpm).filter((x) => x != null), inRange = (x) => x >= SPEED.low && x <= SPEED.high;
+  const pausesAll = ms.reduce((t, m) => t + (m.pauses || 0), 0);
+  const keyHit = sttOff ? [] : reg.map((it) => { const q = questionKeys(it.text, it.answer); return q.length ? q.some((k) => k.hit) : null; }).filter((x) => x !== null);
+  let praise = QUICK.praise.done;
+  if (cpms.length && cpms.every(inRange)) praise = QUICK.praise.speed;
+  else if (reg.length && !over.length) praise = QUICK.praise.inTime;
+  else if (pausesAll <= 1) praise = QUICK.praise.noPause;
+  else if (keyHit.length && keyHit.filter(Boolean).length * 2 >= keyHit.length) praise = QUICK.praise.keys;
+  const fill = {}; ms.forEach((m) => Object.entries(m.fillers || {}).forEach(([w, n]) => { fill[w] = (fill[w] || 0) + n; }));
+  const topF = Object.entries(fill).sort((a, b) => b[1] - a[1])[0];
+  const pauseQ = done.find((it) => [it.m, it.followM].some((m) => (m?.pauses || 0) >= QUICK.pauseQ));
+  const fast = cpms.filter((x) => x > SPEED.high).length, slow = cpms.filter((x) => x < SPEED.low).length;
+  const firstSlow = ms.filter((m) => m.firstSec != null && m.firstSec > QUICK.firstSec).length;
+  const gz = done.filter((it) => it.gaze).sort((a, b) => a.gaze.onPct - b.gaze.onPct)[0];
+  let improve = "";
+  if (over.length) improve = QUICK.improve.over(over[0]._n);
+  else if (pauseQ) improve = QUICK.improve.pause(pauseQ._n);
+  else if (!sttOff && topF && topF[1] >= QUICK.fillerMin) improve = QUICK.improve.filler(topF[0], topF[1]);
+  else if (cpms.length && (fast + slow) * 2 >= cpms.length) improve = fast >= slow ? QUICK.improve.fast : QUICK.improve.slow;
+  else if (firstSlow >= QUICK.firstQ) improve = QUICK.improve.first;
+  else if (gz && gz.gaze.onPct < QUICK.gazeLow) improve = QUICK.improve.gaze(gz._n);
+  return { praise, improve, guide };
+}
 function showResults() {
   setPhase("result");
   const done = items.filter((it) => it.answered);
@@ -2308,6 +2464,7 @@ function showResults() {
   const sg = sessionGaze().gaze;
   $("#hdMid").innerHTML = `<span class="htime">면접 끝 · ${planSec / 60}분 중 ${fmtSec(Math.min(usedTotalSec, planSec + 999))} 사용</span>`;
   showFull(`<div class="results"><div class="inner">
+    ${quick ? `<div class="quick" id="quick"><b>오늘 면접 한눈에</b><p class="q-praise">👍 ${esc(quick.praise)}</p>${quick.improve ? `<p class="q-improve">✏️ ${esc(quick.improve)}</p>` : ""}<p class="q-guide">${esc(quick.guide)}</p></div>` : ""}
     <div class="rtop"><div><h1 class="ttl big">수고했어요</h1><p class="sub">질문별로 시간을 어떻게 썼는지, 말 속도·멈춘 곳·<b>${sttOff ? "" : "많이 쓴 낱말"}${sttOff || !sg ? "" : "·"}${sg ? "시선" : ""}</b>을 확인해 보세요.</p></div>
       <div class="rcount"><b id="rCount">${fmtSec(CONFIG.resultAuto)}</b><span>뒤 선생님께 자동 제출하고<br>처음 화면으로 돌아가요 · 영상 받기 누르면 1분 연장</span></div></div>
     ${clips.length ? `<div class="notice-dl">${I_CAM}<div><b>영상은 웹에 저장되지 않아요. 가져가려면 지금 받아 가세요.</b>

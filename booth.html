@@ -1004,7 +1004,7 @@ if (TEST) {
       if (opt.reset) ruleUsed = new Set(); if (opt.depts) depts = opt.depts; return ruleFollowUp(it, answer); },
     isExp: (item, slot) => { const it = { slot, type: item.type || "document", text: item.text || "" }; Object.defineProperty(it, "_q", { value: item, enumerable: false }); return isExperience(it); },
     summary: (its, stt = false) => { const keep = [items, sttOff]; items = its.map((x) => ({ answered: true, ...x })); sttOff = stt; try { return makeQuickSummary(); } finally { [items, sttOff] = keep; } },
-    aiCalls: () => aiCalls, frame: () => frameQ, setLeft: (sec) => { tStart -= leftSec() - sec; } };   // 시험: 남은 시간을 sec 초로
+    aiCalls: () => aiCalls, frame: () => frameQ, poolBy: () => poolBy, setLeft: (sec) => { tStart -= leftSec() - sec; } };   // 시험: 남은 시간을 sec 초로
 }
 
 // ---------- 사건 (버튼·카드·받아쓰기) — 상태마다 next() 로 하나씩 받는다 ----------
@@ -1680,7 +1680,9 @@ async function loadPool() {
     const relevant = (q) => !q.majors?.length || depts.some((d) => q.majors.some((m) => d.includes(m)));
     // 스튜디오 혼자 연습(interview.html)과 같은 규칙
     const bankQ = bank.filter((q) => q.text).map((q) => ({ ...q, source: "bank" }));
-    const personalQ = pq.filter((q) => q.text).map((q) => ({ ...q, source: "personal", type: "document" }));
+    // 예상질문: 선생님 질문(by 없음 = 선생님) + 선생님이 검토한 학생 질문만. 생기부 근거(basis)·학생 원문(origText)은 부스에서 쓰지 않으므로 여기서 버림
+    const personalQ = pq.filter((q) => q.text && (q.by !== "student" || q.reviewedAt))
+      .map(({ basis, origText, ...q }) => ({ ...q, source: "personal", type: "document" }));
     // 첫 질문: 지원 학과가 있으면 자기소개·지원동기 중 무작위, 없으면 자기소개 → 예상질문 → 질문은행 → 기본 문구
     const framing = (q) => FRAME && [FRAME_Q.intro, FRAME_Q.motive, FRAME_Q.closing].some((f) => f.find.test(q.text));
     frameQ = { opening: null, closing: null };

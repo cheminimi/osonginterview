@@ -1,6 +1,22 @@
 {
-  "professor_male_senior": { "master": "master.jpg" },
-  "professor_male_young": { "master": "master.jpg" },
-  "professor_female_senior": { "master": "master.jpg" },
-  "professor_female_young": { "master": "master.jpg" }
+  "professor_male_senior": {
+    "master": "master.jpg",
+    "speaking": ["speaking_01.mp4", "speaking_02.mp4", "speaking_03.mp4", "speaking_04.mp4", "speaking_05.mp4"],
+    "listening": ["listening_01.mp4"]
+  },
+  "professor_male_young": {
+    "master": "master.jpg",
+    "speaking": ["speaking_01.mp4", "speaking_02.mp4"],
+    "listening": ["listening_01.mp4", "listening_02.mp4"]
+  },
+  "professor_female_senior": {
+    "master": "master.jpg",
+    "speaking": ["speaking_01.mp4"],
+    "listening": ["listening_01.mp4"]
+  },
+  "professor_female_young": {
+    "master": "master.jpg",
+    "speaking": ["speaking_01.mp4", "speaking_02.mp4"],
+    "listening": ["listening_01.mp4"]
+  }
 }

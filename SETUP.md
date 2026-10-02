@@ -17,6 +17,9 @@
 | `teacher.html` + `t-*.js` | 선생님 화면 (대시보드·일정·학생·대면 기록·예상질문·질문은행·연습 리뷰·관리) |
 | `schedule.js` | 모의면접 일정 달력 (학생·교사 화면 공용) |
 | `common.js`, `sync.js`, `importers.js`, `prompts.js`, `seed-questions.js` | 공통 기능, 시트 동기화, 시트 표 읽기, Claude 프롬프트, 기본 질문 34개 |
+| `push.js`, `notify.js` | 휴대폰 알림 켜기·끄기와 토큰 보관, 알림 대기열 (실제 발송은 Apps Script — 9번 참고) |
+| `pwa.js`, `sw.js`, `offline.html`, `manifest.json`, `icons/` | 홈 화면에 앱으로 추가(PWA) · 인터넷이 끊겼을 때 안내 화면 |
+| `firebase.json`, `firestore.indexes.json` | Firebase CLI로 배포할 때 쓰는 설정 (GitHub Pages만 쓰면 필요 없음) |
 | `firebase-config.js` | **Firebase 설정값 · 최고 관리자 이메일 (직접 수정)** |
 | `firestore.rules` | **보안 규칙 (관리자 이메일 직접 수정)** |
 | `apps-script/Code.gs` | **수요조사 스프레드시트에 붙일 쌍방 동기화 스크립트** (GitHub에 올리지 않아도 됨) |

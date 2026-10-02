@@ -42,6 +42,10 @@
   .opt input[type=checkbox] { width: 18px; height: 18px; flex: none; }
   .opt .grow { flex: 1; }
   .opt select { width: auto; }
+  /* 생기부 근거: 답을 다 한 뒤 확인 화면에서만 */
+  .basis-box { display: flex; gap: 8px; align-items: flex-start; background: #f0f5fa; border: 1px dashed #bccee5; border-radius: 10px; padding: 9px 12px; margin: 6px 0 8px; font-size: .9rem; color: #41639b; }
+  .basis-box svg { flex: none; margin-top: 2px; }
+  .basis-box b { font-weight: 700; }
 </style>
 <script>
 /* 새 버전 확인 (수정 금지 · 모든 화면 공통)
@@ -190,7 +194,7 @@
 <script type="app-module">
 import {
   db, requireRole, collection, doc, getDocs, addDoc, updateDoc, serverTimestamp, loadInterviewsFor, cachedCollection,
-  esc, $, toast, showError, TYPES, typeBadge, fmtSec, shuffle
+  esc, $, toast, showError, TYPES, typeBadge, fmtSec, shuffle, icon
 } from "./common.js";
 
 const { user, profile } = await requireRole("student");
@@ -458,6 +462,8 @@ function answerPhase(it, which) {
   };
 }
 
+// 생기부 근거 — 연습 기록에는 남기지 않고, 불러온 예상질문에서 찾아 확인 화면에만 보여 준다
+const basisOf = (it) => (mode === "personal" && pool.find((q) => q.id === it.qid)?.basis) || "";
 function reviewPhase() {
   app.innerHTML = `${progressBar()}
     <div class="card stack">
@@ -467,9 +473,11 @@ function reviewPhase() {
         <div class="q-item">
           <div class="row">${typeBadge(it.type)} <span class="muted">Q${i + 1} · ${it.usedSec}초 / ${it.answerSec}초 ${it.usedSec > it.answerSec ? '<span class="badge badge-red">시간 초과</span>' : ""}</span></div>
           <div class="q-text" style="margin:6px 0">${esc(it.text)}</div>
+          ${basisOf(it) ? `<div class="basis-box">${icon("note", 17)}<span><b>생기부 근거</b> · ${esc(basisOf(it))}</span></div>` : ""}
           <textarea data-i="${i}" data-f="answer">${esc(it.answer)}</textarea>
           ${it.followUp ? `<div style="margin:8px 0 4px"><b>꼬리질문</b> ${esc(it.followUp)}</div><textarea data-i="${i}" data-f="followAnswer">${esc(it.followAnswer)}</textarea>` : ""}
         </div>`).join("")}
+      ${items.some(basisOf) ? '<p class="muted" style="margin:0">근거는 답을 다 한 뒤에만 보여요. 내 답이 생기부 내용을 잘 담았는지 비교해 보세요.</p>' : ""}
       <div class="grid grid-2">
         <div><label>잘한 점</label><textarea id="good" placeholder="예: 두괄식으로 결론부터 말했다"></textarea></div>
         <div><label>아쉬운 점</label><textarea id="improve" placeholder="예: 실험 수치를 구체적으로 말하지 못했다"></textarea></div>

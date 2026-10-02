@@ -134,11 +134,12 @@ export const TOP_TABS = [
   { key: "home", label: "오늘", ic: "home", dot: "todayDot" },
   { key: "students", label: "학생", ic: "users" },
   { key: "schedule", label: "일정", ic: "calendar", dot: "scDot" },
-  { key: "questions", label: "질문", ic: "note" }
+  { key: "questions", label: "질문", ic: "note", dot: "qDot" }
 ];
 // 탭에 없는 화면은 어느 탭에 딸린 것으로 볼지 + 위에 뜨는 되돌아가기 줄
 const SUB = {
   bank: { parent: "questions", title: "" },
+  pqreview: { parent: "questions", title: "" },
   meetings: { parent: "students", title: "대면 기록 전체", back: "students", backLabel: "학생" },
   reviews: { parent: "students", title: "대학 면접 후기", back: "students", backLabel: "학생" },
   review: { parent: "home", title: "연습 리뷰", back: "home", backLabel: "오늘" },
@@ -153,14 +154,32 @@ export function mountTabs() {
   wireRailMe();
   $$("#tabs button[data-tab], #qSub button").forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
   applyHead("home");
+  register("pqdots", updatePqDots);
+}
+S.onShow = {};
+
+// ---- 학생이 넣은 예상질문 검토 대기 (students 문서의 pqPending 으로 센다 — 추가 읽기 없음)
+// 범위는 '내 담당' 학생, 이름을 정하지 않은 관리자는 전체
+export function pqWaitStudents() {
+  const me = myName();
+  const scope = me ? S.students.filter((s) => myRoles(s, me).length) : S.students;
+  return scope.filter((s) => (Number(s.pqPending) || 0) > 0);
+}
+export const pqWaitCount = () => pqWaitStudents().reduce((n, s) => n + (Number(s.pqPending) || 0), 0);
+export function updatePqDots() {
+  const n = pqWaitCount();
+  setDot("#qDot", n);
+  setDot("#pqSubN", n);
 }
 // ---- 머리줄: 탭마다 제목. '오늘'은 t-home 이 S.homeHead 로 채운다 (이름·날짜·승인 요청 수)
 const HEADS = {
   students: () => ["학생", window.matchMedia("(min-width: 1000px)").matches ? "이름을 누르면 오른쪽에 바로 열려요." : "이름을 누르면 자세히 보여요."],
   schedule: () => ["일정", "학생들과 모의 면접 일정을 잡아주세요."],
   questions: () => ["질문", "학생별 예상질문을 넣고, 질문은행을 관리해요."],
-  bank: () => ["질문", "학생별 예상질문을 넣고, 질문은행을 관리해요."]
+  bank: () => ["질문", "학생별 예상질문을 넣고, 질문은행을 관리해요."],
+  pqreview: () => ["질문", "학생별 예상질문을 넣고, 질문은행을 관리해요."]
 };
+const Q_TABS = ["questions", "pqreview", "bank"];
 S.curTab = "home";
 export function askPill() {
   const n = (S.needMine || []).length;
@@ -173,7 +192,7 @@ export function applyHead(tab = S.curTab) {
   else if (HEADS[tab]) h = HEADS[tab]();
   else if (sub?.title) h = [sub.title, ""];
   else h = ["", ""];
-  setHead(h[0], h[1], tab === "questions" || tab === "bank" ? "" : askPill());
+  setHead(h[0], h[1], Q_TABS.includes(tab) ? "" : askPill());
   const p = document.getElementById("askPill");
   if (p) p.onclick = () => switchTab("schedule");
 }
@@ -187,7 +206,7 @@ export function switchTab(tab) {
   $$("[data-panel]").forEach((p) => p.hidden = p.dataset.panel !== tab);
   const qs = $("#qSub");
   if (qs) {
-    qs.hidden = !(tab === "questions" || tab === "bank");
+    qs.hidden = !Q_TABS.includes(tab);
     $$("#qSub button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   }
   const bar = $("#subBar");
@@ -200,6 +219,7 @@ export function switchTab(tab) {
   }
   applyHead(tab);
   if (tab === "students") { try { S.renderers.students?.(); } catch (e) { showError(e, "학생 목록"); } }
+  try { S.onShow?.[tab]?.(); } catch (e) { showError(e, "화면 열기"); }
   try { sessionStorage.setItem("teacherTab", tab); } catch (_) {}
   window.scrollTo({ top: 0, behavior: "instant" });
 }

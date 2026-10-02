@@ -8,7 +8,7 @@
 // 한 번에 한 쪽만 DOM에 들어가므로 id 가 겹치지 않는다.
 // 너비가 바뀌면 matchMedia 로 한 번만 다시 그린다(리스너는 모듈당 1개, 구독은 건드리지 않음).
 import { $, $$, esc, icon, isoDay, fmtDay, fmtDate, dday, nextInterview, toDate, initials } from "./common.js";
-import { S, register, rerender, myName, myRoles, switchTab, setDot, opt, applyHead } from "./t-core.js";
+import { S, register, rerender, myName, myRoles, switchTab, setDot, opt, applyHead, pqWaitStudents } from "./t-core.js";
 import { openStudent } from "./t-students.js";
 import { openMeetingForm, recordWrittenFor } from "./t-meetings.js";
 import { openBookingRecord, gotoSchedule, quickBooking } from "./t-schedule.js";
@@ -76,7 +76,16 @@ function collect() {
   const todayAll = (S.bookings || [])
     .filter((b) => b.date === today && ACTIVE(b.status) && (!me || (b.teachers || []).includes(me)))
     .sort((a, b) => a.start.localeCompare(b.start));
-  return { me, today, now, mine, scope, mineToday, todayAll, noRecord, pending, need, missing };
+  // 학생이 넣은 예상질문 검토 대기 (내 담당, 이름 없는 관리자는 전체)
+  const pqWait = pqWaitStudents();
+  return { me, today, now, mine, scope, mineToday, todayAll, noRecord, pending, need, missing, pqWait };
+}
+// 할 일: 학생이 넣은 예상질문 검토 (점선 줄). wide 는 1 이상일 때만
+function pqRowHtml(pqWait) {
+  const n = pqWait.reduce((a, s) => a + (Number(s.pqPending) || 0), 0);
+  const who = pqWait.slice(0, 4).map((s) => `${esc(s.name || s.studentNo)} ${Number(s.pqPending) || 0}`).join(" · ") + (pqWait.length > 4 ? ` 외 ${pqWait.length - 4}명` : "");
+  return todoRow("list", n, "l", "학생이 넣은 예상질문 검토",
+    n ? `${who} — 검토해야 면접 부스에도 나와요` : "밀린 검토가 없어요", "검토", "pqreview", "", "pq-todo");
 }
 
 const noticeHtml = (me) => !S.ctx.profile ? `<div class="notice row">
@@ -149,7 +158,7 @@ function askHtml(need, phone) {
 }
 
 // ================= 컴퓨터 화면 (721px 이상) =================
-function wideHtml({ me, now, mine, scope, todayAll, noRecord, pending, need, missing }) {
+function wideHtml({ me, now, mine, scope, todayAll, noRecord, pending, need, missing, pqWait }) {
   const nowHm = hm(now);
   const left = todayAll.filter((b) => !recorded(b) && b.status === "confirmed");
   const next = left.find((b) => b.end >= nowHm);
@@ -226,6 +235,8 @@ function wideHtml({ me, now, mine, scope, todayAll, noRecord, pending, need, mis
         <div class="bignum"><b>${doneN}</b><small>/ ${inStage.length}명</small></div>
       </section>
     </div>
+
+    ${pqWait.length ? `<section class="p-card todo-t pq-band" id="pqBand">${pqRowHtml(pqWait)}</section>` : ""}
 
     <div class="t-row2">
       <section class="h-card fb ask-w">
@@ -354,7 +365,7 @@ function renderRows(scope) {
 }
 
 // ================= 휴대폰 화면 (720px 이하) =================
-function narrowHtml({ me, now, todayAll, noRecord, pending, need, missing }) {
+function narrowHtml({ me, now, todayAll, noRecord, pending, need, missing, pqWait }) {
   const missBy = BOOK_STAGES.map((sg) => `${sg.short} ${missing.filter((x) => x.sg.key === sg.key).length}`).join(", ");
   const soon = soonList();
   return `
@@ -386,6 +397,7 @@ function narrowHtml({ me, now, todayAll, noRecord, pending, need, missing }) {
       ${todoRow("mic", pending.length, "w", "검토를 기다리는 연습 답변",
         pending.length ? "한 줄 피드백만 써도 학생에게 바로 보여요" : "밀린 검토가 없어요",
         "보기", "review", "pendingDot")}
+      ${pqRowHtml(pqWait)}
       ${todoRow("calendar", missing.length, "b", "일정을 아직 안 잡은 차수",
         missing.length ? missBy : "모두 잡혔어요", "잡기", "schedule")}
     </section>
@@ -400,8 +412,8 @@ function narrowHtml({ me, now, todayAll, noRecord, pending, need, missing }) {
 
 function bindNarrow() { /* 휴대폰 화면의 클릭은 모두 bindCommon 이 처리한다 */ }
 
-function todoRow(ic, n, tone, title, desc, cta, go, id = "") {
-  return `<div class="row3">
+function todoRow(ic, n, tone, title, desc, cta, go, id = "", cls = "") {
+  return `<div class="row3 ${cls}">
     <span class="ic3 ${n ? tone : ""}">${icon(ic, 18)}</span>
     <span class="n ${n ? tone : ""}"${id ? ` id="${id}"` : ""}>${n}</span>
     <span class="tt"><b>${esc(title)}</b><small>${desc}</small></span>

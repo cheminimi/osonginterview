@@ -1,8 +1,9 @@
 import {
-  db, collection, doc, getDocs, deleteDoc, updateDoc, writeBatch, serverTimestamp,
-  $, $$, esc, toast, showError, copyText, parseLooseJSON
+  db, collection, doc, getDocs, updateDoc, writeBatch, serverTimestamp,
+  $, $$, esc, toast, showError, copyText, parseLooseJSON, pqStats
 } from "./common.js";
-import { S, register, rerender, openModal, closeModal, readForm, lines, studentOptions, studentByNo, myName } from "./t-core.js";
+import { S, register, rerender, readForm, lines, opt, studentByNo, myName } from "./t-core.js";
+import { loadList, listOf, pqCardHtml, bindPqActions } from "./t-pqreview.js";
 import { personalQuestionPrompt } from "./prompts.js";
 import { importSheetQuestions } from "./importers.js";
 
@@ -84,7 +85,7 @@ export function init(el) {
           <div id="qPreview"></div>
         </div>
         <div class="card"><h3>저장된 예상질문 <span class="muted" id="qCount"></span></h3>
-          <p class="muted" style="margin-top:0">학생의 '내 생기부 면접' 말하기 연습에 무작위로 출제됩니다.</p>
+          <p class="muted" style="margin-top:0">'내 생기부 면접' 연습에 모두 나와요. 면접 부스에는 선생님 질문과 검토한 학생 질문만 나와요.</p>
           <div id="qExisting"><div class="empty">학생을 선택하세요.</div></div></div>
       </div>
     </div>`;
@@ -121,9 +122,11 @@ export function init(el) {
   register("questions", renderSelect);
 }
 
+// 학생 선택: 학생이 넣은 질문 중 검토 대기가 있으면 옆에 표시
 function renderSelect() {
   const cur = $("#qStudent", root).value;
-  $("#qStudent", root).innerHTML = studentOptions(cur);
+  $("#qStudent", root).innerHTML = opt(S.students.map((s) => [s.studentNo,
+    `${s.studentNo} ${s.name}${Number(s.pqPending) > 0 ? ` · 학생 질문 대기 ${s.pqPending}` : ""}`]), cur, "— 학생 선택 —");
 }
 export function selectStudentForQuestions(no) {
   renderSelect();
@@ -142,26 +145,23 @@ async function onStudent() {
 }
 
 async function loadExisting(no) {
-  try {
-    const snap = await getDocs(collection(db, "students", no, "personalQuestions"));
-    existing = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
-  } catch (e) { showError(e, "예상질문 불러오기"); existing = []; }
-  $("#qCount", root).textContent = `(${existing.length})`;
-  $("#qExisting", root).innerHTML = existing.length ? existing.map((q, i) => `
-    <div class="q-item"><div class="q-text">${i + 1}. ${esc(q.text)}</div>
-      <div class="q-meta">${esc(q.category || "")}${q.basis ? ` · ${esc(q.basis)}` : ""}${q.addedBy ? ` · ${esc(q.addedBy)}` : ""}</div>
-      ${q.followUps?.length ? `<ul class="follow">${q.followUps.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
-      <div class="q-actions"><button class="btn-sm btn-danger" data-del="${q.id}">삭제</button></div></div>`).join("")
+  try { existing = await loadList(no); }
+  catch (e) { showError(e, "예상질문 불러오기"); existing = []; }
+  renderExisting(no);
+}
+function renderExisting(no) {
+  if ($("#qStudent", root).value !== no) return;
+  // 학생 질문(검토 대기 → 검토함) 먼저, 그다음 선생님 질문 — 각각 넣은 순서
+  const rank = (q) => (q.by === "student" ? (q.reviewedAt ? 1 : 0) : 2);
+  existing = [...listOf(no)].sort((a, b) => rank(a) - rank(b) || (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+  const st = pqStats(existing);
+  $("#qCount", root).textContent = st.pqMine
+    ? `${st.pqCount}개 · 선생님 ${st.pqCount - st.pqMine} · 학생 ${st.pqMine}${st.pqPending ? ` (검토 대기 ${st.pqPending})` : ""}`
+    : `(${st.pqCount})`;
+  const box = $("#qExisting", root);
+  box.innerHTML = existing.length ? existing.map((q, i) => pqCardHtml(no, q, { num: i + 1, showStatus: true })).join("")
     : `<div class="empty">아직 없습니다.</div>`;
-  $$("[data-del]", $("#qExisting", root)).forEach((b) => b.onclick = async () => {
-    try {
-      await deleteDoc(doc(db, "students", no, "personalQuestions", b.dataset.del));
-      const n = existing.length - 1;
-      await updateDoc(doc(db, "students", no), { pqCount: n });
-      const st = studentByNo(no); if (st) st.pqCount = n;
-      loadExisting(no); rerender("students");
-    } catch (e) { showError(e, "삭제"); }
-  });
+  bindPqActions(box, () => { renderExisting(no); renderSelect(); rerender("students"); });
 }
 
 async function saveRecord() {
@@ -212,13 +212,14 @@ function renderPreview() {
 export async function savePersonal(no, qs, quiet = false) {
   try {
     const col = collection(db, "students", no, "personalQuestions");
-    const count = (await getDocs(col)).size;
+    const cur = (await getDocs(col)).docs.map((d) => ({ id: d.id, ...d.data() }));
     const batch = writeBatch(db);
     const by = myName() || S.ctx.user.email;
-    qs.forEach((q) => batch.set(doc(col), { type: "document", ...q, addedBy: by, createdAt: serverTimestamp() }));
-    batch.update(doc(db, "students", no), { pqCount: count + qs.length });
+    qs.forEach((q) => batch.set(doc(col), { type: "document", ...q, by: "teacher", addedBy: by, createdAt: serverTimestamp() }));
+    const stats = pqStats([...cur, ...qs.map((q) => ({ ...q, by: "teacher" }))]);
+    batch.update(doc(db, "students", no), stats);
     await batch.commit();
-    const st = studentByNo(no); if (st) st.pqCount = count + qs.length;
+    const st = studentByNo(no); if (st) Object.assign(st, stats);
     if (!quiet) toast(`${st?.name || ""} 학생에게 ${qs.length}개 저장했습니다.`);
     rerender("students");
     if ($("#qStudent", root).value === no) loadExisting(no);

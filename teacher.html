@@ -182,7 +182,8 @@
   <div class="apphead"><div class="ah-tx"><b id="ahTitle"></b><span id="ahSub"></span></div>
     <div class="ah-pill" id="ahPill"></div>
     <div class="tabs sub" id="qSub" hidden>
-      <button class="active" data-tab="questions">학생별 예상질문</button>
+      <button class="active" data-tab="questions">학생별 관리</button>
+      <button data-tab="pqreview">학생이 넣은 질문 <span class="pq-n" id="pqSubN"></span></button>
       <button data-tab="bank">질문은행</button>
     </div>
     <div class="row" id="acct"></div></div>
@@ -194,6 +195,7 @@
   <section data-panel="meetings" hidden></section>
   <section data-panel="reviews" hidden></section>
   <section data-panel="questions" hidden></section>
+  <section data-panel="pqreview" hidden></section>
   <section data-panel="bank" hidden></section>
   <section data-panel="review" hidden></section>
   <section data-panel="admin" hidden></section>
@@ -216,6 +218,7 @@ import * as meetings from "./t-meetings.js";
 import * as reviews from "./t-reviews.js";
 import * as questions from "./t-questions.js";
 import * as bank from "./t-bank.js";
+import * as pqreview from "./t-pqreview.js";
 import * as review from "./t-review.js";
 import * as admin from "./t-admin.js";
 
@@ -267,6 +270,7 @@ meetings.init(panel("meetings"));
 reviews.init(panel("reviews"));
 questions.init(panel("questions"));
 bank.init(panel("bank"));
+pqreview.init(panel("pqreview"));
 review.init(panel("review"));
 if (S.ctx.isAdmin) admin.init(panel("admin"));
 

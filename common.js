@@ -202,6 +202,7 @@ export function requireRole(want) {
           return;
         }
         const ctx = { user, account, profile, isAdmin: account.role === "admin", isStaff };
+        bumpAsStudent = !isStaff;
         if (profile?.mustChangePw) await forcePasswordChange(ctx);
         startIdleLogout();
         resolve(ctx);
@@ -339,6 +340,7 @@ export const ICONS = {
   arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
   down: '<path d="m6 9 6 6 6-6"/>',
   x: '<path d="M6 6l12 12M18 6 6 18"/>',
+  info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.8h.01"/>',
   book: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5Z"/><path d="M4 20.5A2.5 2.5 0 0 1 6.5 18H20v3H6.5"/>',
   heart: '<path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.5 4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10Z"/>',
   history: '<path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.5"/><path d="M4 4v4.5h4.5M12 8v4l3 2"/>',
@@ -455,6 +457,8 @@ const CACHE_TTL = 12 * 3600 * 1000;
 let metaPromise = null;
 const pendingBump = new Set();
 let bumpTimer = null;
+// 학생 계정: 규칙상 학생 목록(students) '바뀜' 표시 하나만, 서버 시각으로만 쓸 수 있다 (예상질문 개수 때문)
+let bumpAsStudent = false;
 
 function topCollection(path) { return String(path || "").split("/")[0]; }
 const pendingDeleted = {};
@@ -462,9 +466,13 @@ function flushBumps() {
   if (!pendingBump.size) return;
   const now = Date.now();
   const patch = {};
-  pendingBump.forEach((c) => { patch[c] = now; });
+  if (bumpAsStudent) {
+    if (pendingBump.has("students")) patch.students = serverTimestamp();
+    for (const k in pendingDeleted) delete pendingDeleted[k];
+  } else pendingBump.forEach((c) => { patch[c] = now; });
   pendingBump.clear();
-  if (Object.keys(pendingDeleted).length) { patch.deleted = { ...pendingDeleted }; for (const k in pendingDeleted) delete pendingDeleted[k]; }
+  if (!bumpAsStudent && Object.keys(pendingDeleted).length) { patch.deleted = { ...pendingDeleted }; for (const k in pendingDeleted) delete pendingDeleted[k]; }
+  if (!Object.keys(patch).length) return;
   fsSetDoc(doc(db, "meta", "versions"), patch, { merge: true }).catch((e) => {
     if (e?.code !== "permission-denied") console.warn("meta bump", e);   // 학생 계정은 표시 권한 없음 (영향 없음)
   });
@@ -538,10 +546,14 @@ export function getMetaVersions(force = false) {
 }
 export const readStats = { server: {}, cache: {} };
 /** 목록 전체를 캐시 우선으로 읽기. force: 서버에서 다시 받기 */
+// '바뀜' 표시 값: 보통 숫자(ms), 학생 계정이 쓴 것은 서버 시각(Timestamp) → 둘 다 ms 숫자로
+const verOf = (x) => (x && typeof x === "object"
+  ? (typeof x.toMillis === "function" ? x.toMillis() : (Number(x.seconds) || 0) * 1000 + Math.floor((Number(x.nanoseconds) || 0) / 1e6))
+  : x || 0);
 export async function cachedCollection(name, { force = false } = {}) {
   const meta = await getMetaVersions();
   // 앱에서 바뀐 표시(name) + 시트 동기화가 바꾼 표시(s_name). null = 표시 문서를 못 읽음(규칙 미반영) → 캐시 안 씀
-  const ver = meta ? `${meta[name] || 0}:${meta["s_" + name] || 0}` : null;
+  const ver = meta ? `${verOf(meta[name])}:${verOf(meta["s_" + name])}` : null;
   const store = cacheStore(name), key = cacheKey(name);
   const save = (rows, at) => {
     if (ver === null || !store) return;
@@ -573,6 +585,13 @@ export async function cachedCollection(name, { force = false } = {}) {
   readStats.server[name] = rows.length;
   save(rows, Date.now());
   return rows;
+}
+
+// ---- 예상질문 개수 (students/{학번} 의 pqCount·pqMine·pqPending). 학생 질문 = by:"student", 검토 전 = reviewedAt 없음
+export const isStudentPq = (q) => q?.by === "student";
+export function pqStats(list) {
+  const mine = (list || []).filter(isStudentPq);
+  return { pqCount: (list || []).length, pqMine: mine.length, pqPending: mine.filter((q) => !q.reviewedAt).length };
 }
 
 // ================= UI 도우미 =================

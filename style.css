@@ -1286,3 +1286,103 @@ body.nd input[type="checkbox"], body.nd input[type="radio"] { accent-color: var(
 #homeBody .nrow.more { justify-content: flex-end; font-size: .78rem; font-weight: 700; color: var(--blue-deep); background: none; }
 #homeBody .vsteps .stp { display: block; width: 100%; } #homeBody .vsteps .stp:hover b { color: var(--blue-deep); }
 #homeBody .nx .m .late { color: #c0584b; font-weight: 700; }
+
+/* ======================================================================
+   학생이 넣은 예상질문 (2026-10-02) — 학생 '내 예상질문'·추가 창, 선생님 검토
+   ====================================================================== */
+/* 작성자·상태 표시 */
+body.nd .pq-tags, body.nd .pq-tline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
+body.nd .pq-tline .muted { font-size: .8rem; }
+body.nd .pq-tag { display: inline-flex; align-items: center; gap: 4px; font-size: .76rem; font-weight: 700; padding: 3px 10px; border-radius: 99px; background: var(--chip); color: var(--ink-2); white-space: nowrap; }
+body.nd .pq-tag.mine { background: var(--lime-soft); color: #5d6a14; border: 1px solid var(--lime-line); }
+body.nd .pq-tag.teacher, body.nd .pq-tag.wait { background: var(--blue-soft); color: var(--blue-deep); }
+body.nd .pq-tag.ok { background: var(--ok-bg); color: var(--ok); }
+body.nd .pq-tag.edited { background: var(--chip); color: var(--ink-2); }
+body.nd .pq-tag.wait2 { background: var(--warn-bg); color: var(--warn); }
+
+/* 학생: 내 예상질문 */
+body.nd .pq-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+body.nd .pq-add { background: var(--black); border-color: var(--black); color: #fff; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; padding: 10px 18px; }
+body.nd .pq-add:hover { background: #000; border-color: #000; }
+body.nd .pq-sw { margin: 0 0 12px; font-size: .88rem; color: var(--ink-2); }
+body.nd .pq-card { padding: 16px 18px; }
+body.nd .pq-card .q-text { font-size: 1.02rem; font-weight: 700; }
+body.nd .pq-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+body.nd .pq-del { color: var(--danger); border-color: #efc9c4; }
+body.nd .pq-del:hover { background: var(--danger-bg); border-color: #e3b0aa; }
+body.nd .pq-lock { font-size: .8rem; color: var(--ink-3); margin-top: 8px; }
+/* 연습 탭 안 단추는 기본 모양이 지워져 있어(위 [data-panel="practice"] button) 새 단추는 모양을 직접 준다 */
+body.nd [data-panel="practice"] .pq-add { display: inline-flex; align-items: center; gap: 6px; background: var(--black); color: #fff; border-radius: 99px; padding: 11px 18px; font-weight: 600; font-size: .92rem; white-space: nowrap; cursor: pointer; }
+body.nd [data-panel="practice"] .pq-filter { display: inline-flex; gap: 2px; background: #fff; border-radius: 99px; padding: 4px; margin: 2px 0 12px; max-width: 100%; overflow-x: auto; }
+body.nd [data-panel="practice"] .pq-filter button { flex: none; padding: 8px 14px; border-radius: 99px; color: var(--ink-2); font-size: .9rem; white-space: nowrap; cursor: pointer; }
+body.nd [data-panel="practice"] .pq-filter button.on { background: var(--black); color: #fff; font-weight: 600; }
+body.nd [data-panel="practice"] .pq-acts button { border: 1px solid var(--line); border-radius: 99px; padding: 8px 18px; font-size: .9rem; cursor: pointer; background: #fff; }
+body.nd [data-panel="practice"] .pq-acts .pq-del { color: var(--danger); border-color: #efc9c4; }
+
+/* 학생: 질문 추가 창 — 휴대폰은 아래에서, 컴퓨터는 가운데 */
+body.nd .pq-sheet-bg { position: fixed; inset: 0; z-index: 70; background: rgba(15, 20, 30, 0); display: flex; align-items: flex-end; justify-content: center; transition: background .2s; }
+body.nd .pq-sheet-bg.on { background: rgba(15, 20, 30, .42); }
+body.nd .pq-sheet { background: #fff; width: 100%; max-width: 560px; max-height: 92vh; overflow-y: auto; border-radius: 26px 26px 0 0; padding: 12px 18px 18px;
+  transform: translateY(24px); opacity: 0; transition: transform .2s, opacity .2s; }
+body.nd .pq-sheet-bg.on .pq-sheet { transform: none; opacity: 1; }
+body.nd .pq-grip { width: 40px; height: 4px; border-radius: 99px; background: var(--line); margin: 0 auto 12px; }
+body.nd .pq-sh-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+body.nd .pq-sh-head h3 { margin: 0; flex: 1; font-size: 1.2rem; font-weight: 700; }
+body.nd .pq-x { width: 40px; height: 40px; padding: 0; display: grid; place-items: center; }
+body.nd .pq-l { display: block; font-size: .9rem; font-weight: 700; margin: 12px 0 6px; }
+body.nd .pq-l em { color: var(--danger); font-style: normal; }
+body.nd .pq-l span { font-weight: 400; color: var(--ink-3); }
+body.nd .pq-sheet textarea { min-height: 84px; }
+body.nd .pq-sheet textarea.sm { min-height: 64px; }
+body.nd .pq-hint { font-size: .8rem; color: var(--ink-3); margin-top: 6px; line-height: 1.5; }
+body.nd .pq-info { display: flex; gap: 10px; align-items: flex-start; background: var(--accent-faint); border-radius: 16px; padding: 12px 14px; margin: 16px 0 14px; font-size: .86rem; color: var(--ink-2); line-height: 1.55; }
+body.nd .pq-info svg { flex: none; color: var(--accent); margin-top: 1px; }
+body.nd .pq-info b { color: var(--accent); }
+body.nd .pq-btns { display: grid; grid-template-columns: 1fr 2fr; gap: 8px; }
+body.nd .pq-btns button { min-height: 48px; font-weight: 600; justify-content: center; }
+@media (min-width: 721px) {
+  body.nd .pq-sheet-bg { align-items: center; padding: 16px; }
+  body.nd .pq-sheet { border-radius: 26px; padding: 18px 22px 20px; }
+  body.nd .pq-grip { display: none; }
+}
+
+/* 선생님: 질문 탭 */
+body.nd #qSub .pq-n:not(:empty) { display: inline-block; min-width: 20px; margin-left: 4px; padding: 0 6px; border-radius: 99px; background: var(--lime); color: var(--black); font-size: .74rem; font-weight: 700; text-align: center; }
+body.nd .pq-top { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+body.nd .pq-desc { flex: 1 1 320px; margin: 0; font-size: .88rem; color: var(--ink-2); line-height: 1.55; }
+body.nd .pq-view { display: inline-flex; align-items: center; gap: 8px; font-size: .86rem; color: var(--ink-3); margin: 0; }
+body.nd .pq-view select { width: auto; min-width: 150px; }
+body.nd .pq-group { padding: 18px; }
+body.nd .pq-gh { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+body.nd .pq-gh b { font-size: 1.1rem; }
+body.nd .pq-gh span { font-size: .84rem; color: var(--ink-3); }
+body.nd .pq-tcard.wait { background: var(--lime-soft); border-color: var(--lime-line); }
+body.nd .pq-row { display: flex; gap: 12px; align-items: flex-start; }
+body.nd .pq-main { flex: 1; min-width: 0; }
+body.nd .pq-tcard .q-text { font-weight: 700; overflow-wrap: anywhere; }
+body.nd .pq-bl { color: var(--accent); font-weight: 700; }
+body.nd .pq-btns2 { display: flex; gap: 6px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
+body.nd .pq-btns2.end { margin-top: 10px; }
+body.nd .pq-editing { border: 2px solid var(--black); }
+body.nd .pq-edit { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+body.nd .pq-edit label { display: block; font-size: .86rem; font-weight: 700; margin: 0 0 6px; }
+body.nd .pq-edit label + textarea, body.nd .pq-edit input + label { margin-top: 0; }
+body.nd .pq-edit input + label { margin-top: 12px; }
+body.nd .pq-edit textarea { min-height: 96px; }
+body.nd .pq-edit textarea.sm { min-height: 70px; }
+body.nd .pq-orig { font-size: .8rem; color: var(--ink-3); margin-top: 6px; overflow-wrap: anywhere; }
+body.nd .pq-note { font-size: .78rem; color: var(--ink-3); text-align: right; margin-top: 8px; }
+@media (max-width: 720px) {
+  body.nd .pq-row { flex-direction: column; }
+  body.nd .pq-btns2 { justify-content: flex-start; }
+  body.nd .pq-edit { grid-template-columns: 1fr; }
+}
+
+/* 선생님 오늘: 할 일 '학생이 넣은 예상질문 검토' 점선 줄 */
+#homeBody .row3.pq-todo { border: 2px dashed var(--olive); border-radius: 16px; background: var(--lime-soft); padding: 10px 12px; margin: 6px -4px; }
+#homeBody .row3.pq-todo + .row3 { border-top: 0; }
+#homeBody .ic3.l { background: var(--lime); color: var(--black); }
+#homeBody .row3 .n.l { color: var(--black); font-weight: 600; }
+#homeBody .row3.pq-todo .btn2 { background: var(--black); border-color: var(--black); color: #fff; }
+#homeBody .pq-band { padding: 8px 14px; }
+#homeBody .pq-band .row3.pq-todo { margin: 0; }

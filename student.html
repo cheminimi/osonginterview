@@ -175,12 +175,10 @@
       </div>
     </div>
     <div id="pracMine" hidden>
-      <div class="sub-head"><button class="btn-sm btn-back" data-back="1"></button><h2 style="margin:0">내 예상질문</h2></div>
-      <div class="row" style="margin-bottom:12px">
-        <span class="muted">실전 연습 전에 꼬리질문을 먼저 보면 연습 효과가 떨어져요.</span>
-        <div class="spacer"></div>
-        <label class="sw-l"><input type="checkbox" id="showIntent"><i></i>꼬리질문 보기</label>
-      </div>
+      <div class="sub-head pq-head"><button class="btn-sm btn-back" data-back="1"></button><h2 style="margin:0">내 예상질문</h2>
+        <div class="spacer"></div><button type="button" class="pq-add" id="pqAdd"></button></div>
+      <div class="chips pq-filter" id="pqFilter"></div>
+      <label class="sw-l pq-sw"><input type="checkbox" id="showIntent"><i></i>꼬리질문 보기 (실전 연습 전엔 가려 두기)</label>
       <div id="mine"></div>
     </div>
     <div id="pracHist" hidden>
@@ -202,7 +200,7 @@
 import {
   db, requireRole, mountAccountMenu, collection, doc, setDoc, getDocs, query, where, onSnapshot, esc, $, $$, toast, showError, loadInterviewsFor, cachedCollection,
   CRITERIA, STAGES, TYPES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes, icon, isoDay, initials,
-  railHead, railFoot, tabButton, wireRailMe, setHead
+  railHead, railFoot, tabButton, wireRailMe, setHead, writeBatch, serverTimestamp, confirmBox, pqStats, isStudentPq
 } from "./common.js";
 import { mountSchedule, BOOK_STAGES, stageTeachers, ACTIVE, DONE, STATUS } from "./schedule.js";
 import { registerSW, mountInstallTip, showInstallTipAgain, isStandalone } from "./pwa.js";
@@ -270,7 +268,7 @@ onPushOpen((url) => {
 const relevant = (q) => !q.majors?.length || (me.universities || []).some((u) => q.majors.some((m) => (u.dept || "").includes(m)));
 const rec = recommendedModes(me);
 const modes = [
-  { mode: "personal", title: "내 생기부 면접", desc: "선생님이 준비한 나만의 예상질문", n: personal.length, badge: "document" },
+  { mode: "personal", title: "내 생기부 면접", desc: "선생님이 준비한 질문과 내가 만든 질문", n: personal.length, badge: "document" },
   { mode: "document", title: "학생부 공통 질문", desc: "지원동기·학업계획·활동 질문", n: bank.filter((q) => q.type === "document" && relevant(q)).length, badge: "document" },
   { mode: "passage", title: "제시문 면접", desc: "준비시간 동안 제시문 읽고 답변", n: bank.filter((q) => q.type === "passage").length, badge: "passage" },
   { mode: "personality", title: "기본 인성 · MMI", desc: "가치관·경험·상황 판단 질문", n: bank.filter((q) => q.type === "personality" || q.type === "mmi").length, badge: "personality" }
@@ -282,16 +280,23 @@ const MODE_TIME = {
   passage: `준비 ${secTxt(TYPES.passage.prep)} · 답변 ${secTxt(TYPES.passage.answer)}`,
   personality: `답변 ${secTxt(TYPES.personality.answer)} · MMI 준비 ${secTxt(TYPES.mmi.prep)}`
 };
-const featMode = (modes.find((m) => m.mode === "personal" && m.n) || modes.find((m) => m.n))?.mode;
+// 선생님이 넣은 예상질문 (학생이 만든 것 제외)
+const teacherPq = () => personal.filter((q) => !isStudentPq(q));
+let featMode = "";
+function renderModes() {
+modes.find((m) => m.mode === "personal").n = personal.length;
+featMode = (modes.find((m) => m.mode === "personal" && m.n) || modes.find((m) => m.n))?.mode;
 $("#modes").innerHTML = [...modes].sort((a, b) => (b.mode === featMode) - (a.mode === featMode)).map((m) => `
   <button type="button" class="mode ${m.mode === featMode ? "feat" : ""} ${m.n ? "" : "dim disabled"}" data-mode="${m.mode}" ${m.n ? "" : "disabled"}>
     <span class="mi2">${icon(MODE_IC[m.mode], 20)}</span>
-    ${m.mode === "personal" && m.n ? '<span class="by">선생님이 준비</span>' : rec.includes(m.mode) ? '<span class="by">내 트랙 추천</span>' : ""}
+    ${m.mode === "personal" && teacherPq().length ? '<span class="by">선생님이 준비</span>' : rec.includes(m.mode) ? '<span class="by">내 트랙 추천</span>' : ""}
     <h4>${m.title}</h4><p>${m.desc}</p>
     <span class="tm">${m.n ? MODE_TIME[m.mode] : "아직 질문이 없어요"}</span>
     <span class="mf"><span class="cnt">${m.n}<small>문항</small></span><span class="sp"></span><span class="go2">${icon("arrow", 16)}</span></span>
   </button>`).join("");
 $$("#modes .mode").forEach((el) => el.onclick = () => location.href = `interview.html?mode=${el.dataset.mode}`);
+}
+renderModes();
 
 // 연습 탭 아래 줄: 내 예상질문 · 지난 연습 기록 (같은 탭 안 하위 화면) + AI 연습 (앱 밖)
 // 바깥 주소는 관리자가 config/schedule 의 aiUrl 로 바꿀 수 있다. 비어 있으면 아래 기본값.
@@ -697,7 +702,7 @@ function homeWide({ today, up }) {
     <div class="h-row1">
       <section class="h-hero">
         <h2>오늘의 면접 연습,<br>여기서 시작해요!</h2>
-        <p class="sub">${personal.length ? `선생님이 보내준 질문 ${personal.length}개가 기다리고 있어요.` : best ? `${esc(best.title)} 질문 ${best.n}개로 연습해 보세요.` : "아직 준비된 질문이 없어요. 선생님께 예상질문을 부탁해 보세요."}</p>
+        <p class="sub">${teacherPq().length ? `선생님이 보내준 질문 ${teacherPq().length}개가 기다리고 있어요.` : best ? `${esc(best.title)} 질문 ${best.n}개로 연습해 보세요.` : "아직 준비된 질문이 없어요. 선생님께 예상질문을 부탁해 보세요."}</p>
         ${HERO_ART}
         <div class="foot">
           <div><small>추천 유형</small><div class="chips3">${rec.map((k) => `<span>${REC_LABEL[k] || k}</span>`).join("")}</div></div>
@@ -947,18 +952,108 @@ function openSession(s) {
 $("#mClose").onclick = () => $("#modal").hidden = true;
 $("#modal").onclick = (e) => { if (e.target.id === "modal") $("#modal").hidden = true; };
 
-// ---- 내 예상질문
+// ---- 내 예상질문 (선생님이 준비 + 내가 만든 질문). 내가 만든 질문은 검토 전(reviewedAt 없음)에만 고치기·지우기
+let pqFilter = "all";
+const pqLocked = (q) => !isStudentPq(q) || !!q.reviewedAt;
+const pqSort = (a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0);   // 최근에 넣은 것부터
 function renderMine() {
   const show = $("#showIntent").checked;
-  if (!personal.length) { $("#mine").innerHTML = `<div class="card empty">아직 선생님이 예상질문을 올리지 않았어요.</div>`; return; }
-  $("#mine").innerHTML = personal.map((q, i) => `
-    <div class="q-item">
-      <div class="q-text pre">${i + 1}. ${esc(q.text)}</div>
-      <div class="q-meta">${esc(q.category || "")}${q.basis ? ` · ${esc(q.basis)}` : ""}</div>
+  const mineN = personal.filter(isStudentPq).length;
+  $("#pqAdd").innerHTML = `${icon("plus", 17)} 질문 추가`;
+  $("#pqFilter").innerHTML = [["all", "전체", personal.length], ["teacher", "선생님", personal.length - mineN], ["mine", "내가 만든", mineN]]
+    .map(([k, t, n]) => `<button type="button" class="${pqFilter === k ? "on" : ""}" data-pqf="${k}">${t} ${n}</button>`).join("");
+  $$("#pqFilter [data-pqf]").forEach((b) => b.onclick = () => { pqFilter = b.dataset.pqf; renderMine(); });
+  const list = [...personal].sort(pqSort).filter((q) => pqFilter === "all" || (pqFilter === "mine") === isStudentPq(q));
+  if (!personal.length) { $("#mine").innerHTML = `<div class="card empty">아직 예상질문이 없어요. 생기부를 보며 직접 추가해 보세요.</div>`; return; }
+  if (!list.length) { $("#mine").innerHTML = `<div class="card empty">${pqFilter === "mine" ? "아직 내가 만든 질문이 없어요." : "선생님이 준비한 질문이 아직 없어요."}</div>`; return; }
+  $("#mine").innerHTML = list.map((q) => {
+    const me2 = isStudentPq(q);
+    const tags = me2
+      ? `<span class="pq-tag mine">내가 만든 질문</span>${!q.reviewedAt ? '<span class="pq-tag wait">새로 넣음 · 검토 대기</span>'
+        : q.editedByTeacher ? `<span class="pq-tag edited">${icon("lock", 13)} 선생님이 다듬음</span>` : `<span class="pq-tag ok">${icon("lock", 13)} 선생님 확인</span>`}`
+      : '<span class="pq-tag teacher">선생님이 준비</span>';
+    const meta = me2 ? (q.basis ? `생기부 근거 · ${esc(q.basis)}` : "") : [q.category, q.basis].filter(Boolean).map(esc).join(" · ");
+    return `<div class="q-item pq-card" data-qid="${esc(q.id)}">
+      <div class="pq-tags">${tags}</div>
+      <div class="q-text pre">${esc(q.text)}</div>
+      ${meta ? `<div class="q-meta">${meta}</div>` : ""}
       ${show && q.followUps?.length ? `<ul class="follow">${q.followUps.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
-    </div>`).join("");
+      ${me2 && !q.reviewedAt ? `<div class="pq-acts"><button type="button" class="btn-sm" data-pqe="${esc(q.id)}">고치기</button><button type="button" class="btn-sm pq-del" data-pqd="${esc(q.id)}">지우기</button></div>`
+        : me2 ? '<div class="pq-lock">선생님이 확인한 질문은 고치거나 지울 수 없어요.</div>' : ""}
+    </div>`;
+  }).join("");
+  $$("#mine [data-pqe]").forEach((b) => b.onclick = () => openPqSheet(personal.find((q) => q.id === b.dataset.pqe)));
+  $$("#mine [data-pqd]").forEach((b) => b.onclick = () => deletePq(personal.find((q) => q.id === b.dataset.pqd)));
 }
 $("#showIntent").onchange = renderMine;
+$("#pqAdd").onclick = () => openPqSheet(null);
+
+// 질문 추가·고치기 창 (아래에서 올라옴, 컴퓨터는 가운데)
+function openPqSheet(q) {
+  if (q && pqLocked(q)) { toast("선생님이 확인한 질문은 고치거나 지울 수 없어요.", "error"); return; }
+  document.getElementById("pqSheet")?.remove();
+  document.body.insertAdjacentHTML("beforeend", `<div class="pq-sheet-bg" id="pqSheet"><form class="pq-sheet" role="dialog" aria-modal="true" aria-labelledby="pqT" novalidate>
+    <div class="pq-grip"></div>
+    <div class="pq-sh-head"><h3 id="pqT">${q ? "질문 고치기" : "질문 추가"}</h3><button type="button" class="pq-x" id="pqX" aria-label="닫기">${icon("x", 18)}</button></div>
+    <label class="pq-l" for="pqText">면접에서 나올 것 같은 질문 <em>*</em></label>
+    <textarea id="pqText" maxlength="300">${esc(q?.text || "")}</textarea>
+    <label class="pq-l" for="pqBasis">생기부 근거 <em>*</em></label>
+    <input id="pqBasis" maxlength="200" value="${esc(q?.basis || "")}">
+    <div class="pq-hint">이 질문이 생기부의 어디에서 나올지 짧게 적어요.<br>예) 2학년 화학Ⅱ 세특 – 촉매 실험 보고서</div>
+    <label class="pq-l" for="pqFollow">꼬리질문 <span>(선택 · 한 줄에 하나)</span></label>
+    <textarea id="pqFollow" class="sm">${esc((q?.followUps || []).join("\n"))}</textarea>
+    <div class="pq-info">${icon("info", 18)}<span>넣자마자 <b>'내 생기부 면접'</b> 연습에 나와요. 선생님이 확인하면 <b>면접 부스</b>에서도 나와요. 선생님이 확인한 뒤에는 고치거나 지울 수 없어요.</span></div>
+    <div class="pq-btns"><button type="button" id="pqCancel">취소</button><button type="submit" class="btn-primary" id="pqSave">${q ? "저장하기" : "추가하기"}</button></div>
+  </form></div>`);
+  const bg = $("#pqSheet");
+  requestAnimationFrame(() => bg.classList.add("on"));
+  const close = () => { bg.remove(); document.removeEventListener("keydown", onKey, true); };
+  const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  document.addEventListener("keydown", onKey, true);
+  bg.onclick = (e) => { if (e.target === bg) close(); };
+  $("#pqX").onclick = close; $("#pqCancel").onclick = close;
+  $("#pqText").focus();
+  $(".pq-sheet", bg).onsubmit = async (e) => {
+    e.preventDefault();
+    const text = $("#pqText").value.trim(), basis = $("#pqBasis").value.trim();
+    const followUps = $("#pqFollow").value.split("\n").map((x) => x.trim()).filter(Boolean).slice(0, 10);
+    if (!text) { toast("질문을 적어 주세요.", "error"); $("#pqText").focus(); return; }
+    if (!basis) { toast("생기부 근거를 적어 주세요. 이 질문이 생기부의 어디에서 나올지 짧게 적으면 돼요.", "error", 5000); $("#pqBasis").focus(); return; }
+    $("#pqSave").disabled = true;
+    try { await savePq(q, { text, basis, followUps }); close(); toast(q ? "고쳤어요." : "추가했어요. '내 생기부 면접' 연습에 바로 나와요."); }
+    catch (err) { $("#pqSave").disabled = false; showError(err, q ? "질문 고치기" : "질문 추가"); }
+  };
+}
+// 질문 저장과 개수(pqCount·pqMine·pqPending) 갱신을 한 번에
+async function savePq(q, data) {
+  const col = collection(db, "students", me.studentNo, "personalQuestions");
+  const ref = q ? doc(col, q.id) : doc(col);
+  const row = q ? { ...q, ...data } : { id: ref.id, ...data, category: "", type: "document", by: "student", addedBy: me.name || "", source: "student", createdAt: { seconds: Date.now() / 1000 } };
+  const next = q ? personal.map((x) => (x.id === q.id ? row : x)) : [...personal, row];
+  const b = writeBatch(db);
+  if (q) b.update(ref, data);
+  else b.set(ref, { ...data, category: "", type: "document", by: "student", addedBy: me.name || "", source: "student", createdAt: serverTimestamp() });
+  b.update(doc(db, "students", me.studentNo), pqStats(next));
+  await b.commit();
+  personal = next;
+  afterPqChange();
+}
+async function deletePq(q) {
+  if (!q || pqLocked(q)) return;
+  const ok = await confirmBox({ title: "이 질문을 지울까요?", what: `<b>${esc(q.text)}</b>`, note: "지우면 연습에도 더 나오지 않아요.", yes: "지우기" });
+  if (!ok) return;
+  const next = personal.filter((x) => x.id !== q.id);
+  try {
+    const b = writeBatch(db);
+    b.delete(doc(db, "students", me.studentNo, "personalQuestions", q.id));
+    b.update(doc(db, "students", me.studentNo), pqStats(next));
+    await b.commit();
+    personal = next;
+    afterPqChange();
+    toast("지웠어요.");
+  } catch (e) { showError(e, "질문 지우기"); }
+}
+function afterPqChange() { renderMine(); renderModes(); renderPracLinks(); renderHome(); }
 renderMine();
 </script>
 </body>

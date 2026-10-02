@@ -27,6 +27,20 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['mustChangePw', 'initialPw', 'pwChangedAt']);
     }
+    // 학생이 자기 예상질문을 넣고·고치고·지울 때 함께 바꾸는 개수 3개만 (0 이상 정수, 대기 ≤ 학생 작성 ≤ 전체)
+    function onlyPqCountFields() {
+      let d = request.resource.data;
+      return d.diff(resource.data).affectedKeys().hasOnly(['pqCount', 'pqMine', 'pqPending'])
+        && d.get('pqCount', 0) is int && d.get('pqMine', 0) is int && d.get('pqPending', 0) is int
+        && d.get('pqPending', 0) >= 0 && d.get('pqPending', 0) <= d.get('pqMine', 0)
+        && d.get('pqMine', 0) <= d.get('pqCount', 0);
+    }
+    // 학생이 쓰는 예상질문 글: 질문·생기부 근거는 빈칸 안 됨, 꼬리질문은 목록(10개까지)
+    function pqTextOk(d) {
+      return d.text is string && d.text.trim().size() > 0 && d.text.size() <= 300
+        && d.basis is string && d.basis.trim().size() > 0 && d.basis.size() <= 200
+        && (!('followUps' in d) || (d.followUps is list && d.followUps.size() <= 10));
+    }
 
     // uid → 역할(admin/teacher/student/sync)과 키(staffId/학번). 관리자만 쓰기
     // sync = 구글 시트 Apps Script 가 쓰는 동기화 전용 계정 (교사 화면에는 로그인 불가)
@@ -52,11 +66,22 @@ service cloud.firestore {
     match /students/{no} {
       allow read: if isStaff() || isStudent(no);
       allow create, delete: if isStaff();
-      allow update: if isStaff() || (isStudent(no) && onlyPwFields());
+      allow update: if isStaff() || (isStudent(no) && (onlyPwFields() || onlyPqCountFields()));
 
+      // 예상질문: 교사는 전부. 학생은 자기 학번 아래 by:"student" 로만 만들고,
+      // 자기가 만든 것 중 검토 전(reviewedAt 없음)만 고치기·지우기. 검토 칸(by·reviewedAt·reviewedBy·editedByTeacher·origText)은 못 씀
       match /personalQuestions/{qid} {
         allow read: if isStaff() || isStudent(no);
         allow write: if isStaff();
+        allow create: if isStudent(no) && request.resource.data.by == 'student'
+          && request.resource.data.keys().hasAll(['text', 'basis', 'by', 'createdAt'])
+          && request.resource.data.keys().hasOnly(['text', 'basis', 'followUps', 'category', 'type', 'by', 'addedBy', 'source', 'createdAt'])
+          && request.resource.data.createdAt == request.time
+          && pqTextOk(request.resource.data);
+        allow update: if isStudent(no) && resource.data.get('by', '') == 'student' && resource.data.get('reviewedAt', null) == null
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'basis', 'followUps'])
+          && pqTextOk(request.resource.data);
+        allow delete: if isStudent(no) && resource.data.get('by', '') == 'student' && resource.data.get('reviewedAt', null) == null;
       }
     }
 
@@ -177,6 +202,10 @@ service cloud.firestore {
     match /meta/{docId} {
       allow read: if hasAcct() || isAdmin();
       allow write: if isStaff();
+      // 학생: 예상질문·비밀번호를 바꿀 때 학생 목록 '바뀜' 표시(students 칸 하나)만, 서버 시각으로만
+      allow update: if docId == 'versions' && hasAcct() && acct().role == 'student'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['students'])
+        && request.resource.data.students == request.time;
     }
 
     // 백업(시트 Apps Script)용: 모든 학생의 예상질문을 한 번에 읽기 — 교사·동기화 계정만

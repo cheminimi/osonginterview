@@ -305,6 +305,77 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ===== 면접 부스·셀프 연습 예약 (booth-booking.js) =====
+    // 선착순 바로 확정. 칸 문서(boothSlots)는 그 칸을 잡은 예약 id 만 담는다(학번·이름 없음 → 학생은 'n/정원'만 앎).
+    // 학생은 자기 예약 하나를 칸 문서와 함께 한 번에 넣고·빼며, 정원은 config/schedule.boothCaps(없으면 아래 기본값).
+    // 막힌 칸(closed)·매주 막는 시간·날짜 범위·이어진 칸 2개 한도는 화면에서 막고, 교사는 언제든 지울 수 있다.
+    function boothCaps() {
+      let p = /databases/$(database)/documents/config/schedule;
+      return exists(p) ? get(p).data.get('boothCaps', {'booth1': 1, 'booth2': 1, 'self': 4}) : {'booth1': 1, 'booth2': 1, 'self': 4};
+    }
+    function bbPath(id) { return /databases/$(database)/documents/boothBookings/$(id); }
+    function bsPath(id) { return /databases/$(database)/documents/boothSlots/$(id); }
+    // 예약이 가리키는 칸 문서가 이 예약 id 를 담고 같은 날짜·자리인지
+    function bbSlotOk(sid, bid, d) {
+      let s = getAfter(bsPath(sid)).data;
+      return s.ids.hasAny([bid]) && s.date == d.date && s.res == d.res;
+    }
+    match /boothBookings/{bid} {
+      allow read: if isStaff() || isStudent(resource.data.studentNo);
+      allow create: if isStaff()
+        || (isStudent(request.resource.data.studentNo)
+            && request.resource.data.keys().hasOnly(['studentNo', 'studentName', 'res', 'date', 'start', 'end', 'slots', 'createdBy', 'createdAt'])
+            && request.resource.data.createdBy == 'student'
+            && request.resource.data.createdAt == request.time
+            && request.resource.data.res in boothCaps()
+            && request.resource.data.slots is list
+            && request.resource.data.slots.size() >= 1 && request.resource.data.slots.size() <= 2
+            && bbSlotOk(request.resource.data.slots[0], bid, request.resource.data)
+            && (request.resource.data.slots.size() == 1 || bbSlotOk(request.resource.data.slots[1], bid, request.resource.data)));
+      allow update: if isStaff();
+      // 학생 취소: 칸 문서에서도 함께 빠져야 함
+      allow delete: if isStaff()
+        || (isStudent(resource.data.studentNo)
+            && !getAfter(bsPath(resource.data.slots[0])).data.ids.hasAny([bid])
+            && (resource.data.slots.size() == 1 || !getAfter(bsPath(resource.data.slots[1])).data.ids.hasAny([bid])));
+    }
+    // 학생이 칸 문서에 넣거나 뺄 때: last = 이번에 넣거나 뺀 예약 id (그 예약 문서가 내 것이어야 함)
+    function bsAddOk(sid, last) {
+      let b = getAfter(bbPath(last)).data;
+      return b.studentNo == acct().key && b.slots.hasAny([sid]);
+    }
+    function bsRemoveOk(last) {
+      return !existsAfter(bbPath(last)) && get(bbPath(last)).data.studentNo == acct().key;
+    }
+    match /boothSlots/{sid} {
+      allow read: if hasAcct() || isAdmin();
+      allow delete: if isStaff();
+      allow create: if isStaff()
+        || (hasAcct() && acct().role == 'student'
+            && request.resource.data.keys().hasOnly(['date', 'res', 'start', 'end', 'ids', 'last'])
+            && request.resource.data.res in boothCaps()
+            && sid == request.resource.data.date + '_' + request.resource.data.res + '_' + request.resource.data.start.replace(':', '')
+            && request.resource.data.ids == [request.resource.data.last]
+            && bsAddOk(sid, request.resource.data.last));
+      allow update: if isStaff()
+        || (hasAcct() && acct().role == 'student'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ids', 'last'])
+            && (
+              // 넣기: 막히지 않은 칸 · 정원 안 · 내 예약 하나만 더함
+              (resource.data.get('closed', false) == false
+                && !resource.data.ids.hasAny([request.resource.data.last])
+                && request.resource.data.ids.size() == resource.data.ids.size() + 1
+                && request.resource.data.ids.toSet() == resource.data.ids.toSet().union([request.resource.data.last].toSet())
+                && request.resource.data.ids.size() <= boothCaps()[resource.data.res]
+                && bsAddOk(sid, request.resource.data.last))
+              // 빼기: 내 예약 하나만 뺌 (예약 문서도 함께 지워짐)
+              || (resource.data.ids.hasAny([request.resource.data.last])
+                && request.resource.data.ids.size() == resource.data.ids.size() - 1
+                && request.resource.data.ids.toSet() == resource.data.ids.toSet().difference([request.resource.data.last].toSet())
+                && bsRemoveOk(request.resource.data.last))
+            ));
+    }
+
     // 일정 변경 로그 (시트 '면접 기록' 탭으로 옮겨짐). 추가만 가능
     match /bookingLogs/{lid} {
       allow read: if isStaff();

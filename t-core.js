@@ -174,12 +174,14 @@ export function updatePqDots() {
 // ---- 머리줄: 탭마다 제목. '오늘'은 t-home 이 S.homeHead 로 채운다 (이름·날짜·승인 요청 수)
 const HEADS = {
   students: () => ["학생", window.matchMedia("(min-width: 1000px)").matches ? "이름을 누르면 오른쪽에 바로 열려요." : "이름을 누르면 자세히 보여요."],
-  schedule: () => ["일정", "학생들과 모의 면접 일정을 잡아주세요."],
+  schedule: () => S.scView === "booth" ? ["일정", "AI 부스·셀프 연습 예약을 보고 관리해요."] : ["일정", "학생들과 모의 면접 일정을 잡아주세요."],
   questions: () => ["질문", "학생별 예상질문을 넣고, 질문은행을 관리해요."],
   bank: () => ["질문", "학생별 예상질문을 넣고, 질문은행을 관리해요."],
   pqreview: () => ["질문", "학생별 예상질문을 넣고, 질문은행을 관리해요."]
 };
 const Q_TABS = ["questions", "pqreview", "bank"];
+// 일정 탭 안의 화면: "interview"(면접 일정) | "booth"(부스 예약) — 머리줄 알약(#scSub, t-schedule.js)이 바꾼다
+S.scView = (() => { try { return sessionStorage.getItem("scView") === "booth" ? "booth" : "interview"; } catch (_) { return "interview"; } })();
 S.curTab = "home";
 export function askPill() {
   const n = (S.needMine || []).length;
@@ -209,6 +211,8 @@ export function switchTab(tab) {
     qs.hidden = !Q_TABS.includes(tab);
     $$("#qSub button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   }
+  const ss = $("#scSub");
+  if (ss) ss.hidden = tab !== "schedule";
   const bar = $("#subBar");
   if (bar) {
     bar.hidden = !(sub && sub.title);

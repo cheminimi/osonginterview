@@ -161,12 +161,6 @@
   .live-h i { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
   .live p { margin: 0; line-height: 1.65; color: var(--ink-2); max-height: 8.3em; overflow: hidden; }
   .live p span { color: var(--ink-3); }
-  .hush { background: var(--warn-bg); border-radius: 14px; padding: 18px 20px; display: grid; gap: 10px; }
-  .hush > b { font-size: 1.35rem; line-height: 1.45; }
-  .hush-n { display: flex; gap: 12px; align-items: center; color: var(--warn); }
-  .hush-n span { font-size: 2.2rem; font-weight: 800; }
-  .hush-n p { margin: 0; font-size: .9rem; line-height: 1.5; }
-  .listen.hushing .clock { font-size: 2.2rem; color: var(--ink-3); }
 
   /* 종료 확인·막힘 */
   .ccards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
@@ -520,15 +514,16 @@ const CONFIG = {
   prepMinAnswer: 120,   // 준비가 있는 질문은 '준비 + 이만큼' 남아 있을 때만 냄 (아니면 건너뜀)
   think: 10,            // 생각 시간 (꼬리질문은 생각 시간 없이 바로 답변)
   thinkMore: 20,        // '잠시만요' 연장 — 질문마다 한 번
-  hushAsk: 5,           // 말을 시작한 뒤 이만큼 조용하면 "다음이라고 말해 주세요"
-  hushNext: 5,          // 그 안내 뒤 이만큼 더 조용하면 다음으로
+  silenceAdvanceMs: 5000,   // 답변 소리가 처음 난 뒤 이만큼(ms) 조용하면 바로 다음으로 (재촉 안내 없음)
   preSilence: 15,       // 답변 시작 전 무음 → "다시 들려드릴까요?" (noReplyMax 번째면 마침)
   noReply: 15, noReplyMax: 3,   // 대답 기다리는 시간, 무응답 허용 횟수
   confirm: 10,          // '면접 종료' 확인 — 대답 없으면 종료
-  resultAuto: 60, resultExtend: 60, resultMax: 300,   // 결과 화면 자동 제출, 영상 받기 누르면 연장, 최대
+  resultAuto: 300,      // 결과 화면: 이만큼(초) 뒤 자동 제출·처음 화면. [영상 받기]를 누르면 남은 시간을 다시 이만큼으로
+  resultMax: 600,       // 결과 화면 전체는 최대 이만큼(초)까지만
   blockedBack: 30,      // 막혔을 때 처음 화면으로
   doneBack: 20,         // 제출한 뒤 처음 화면으로
   checkQuiet: 2, checkVoice: 8,   // 장비 점검 (실제 초 — 빠르게 하지 않음)
+  checkEchoMs: 500,     // 장비 점검: 면접관이 말하는 동안과 끝난 뒤 이만큼(ms) 들어온 말·소리는 통과 판정에서 뺌
   voiceOnMs: 500,       // 이만큼 이어서 소리가 나면 '말을 시작함' (받아쓰기가 없을 때)
   reloadHours: 4        // 대기 화면에서 이만큼 지나면 새로고침 (면접 중엔 안 함)
 };
@@ -575,6 +570,17 @@ const QUICK = {
   pauseQ: 2, fillerMin: 5, firstSec: 4, firstQ: 2, gazeLow: 60
 };
 const eulReul = (w) => { const c = String(w).charCodeAt(String(w).length - 1) - 0xac00; return c >= 0 && c < 11172 && c % 28 ? "을" : "를"; };
+// 답변 끝내기 말 — 받아쓴 글의 '맨 끝'에 있을 때만 인정 ('이상합니다'·'이상한'·문장 중간의 '이상'은 아님)
+const DONE_TAILS = ["입니다요", "입니다", "이에요", "임다"];     // '이상' + 이것 (띄어쓰기 상관없음): 이상입니다·이상 입니다·이상이에요·이상입니다요·이상임다
+const DONE_RE = new RegExp(`(^|\\s)이상\\s*(${DONE_TAILS.join("|")})[\\s.,!?~…]*$`);
+// → { text: 끝말을 뺀 글, done } — '기대 이상입니다'처럼 앞말과 이어진 경우는 아님 (앞 낱말이 '~다/~요/~죠/~까'로 끝나거나 끝말만 따로일 때만)
+function doneOf(text) {
+  const t = String(text || "").trim(), m = t.match(DONE_RE);
+  if (!m) return { text: t, done: false };
+  const before = t.slice(0, m.index).trim();
+  if (before && !/[다요죠까][.,!?~…]*$/.test(before)) return { text: t, done: false };
+  return { text: before, done: true };
+}
 const FILLERS = ["음", "어", "아", "그", "저", "약간", "뭔가", "이제", "좀", "막", "그냥", "진짜", "되게", "일단", "그래서", "그리고"];
 const SPEED = { low: 250, high: 330 };      // 분당 글자 수 참고 범위 (띄어쓰기 제외)
 // 시선 — 답변 중 화면 속 면접관을 보고 있었는지 (MediaPipe Face Landmarker, 이 PC 안에서만 계산 · 영상·얼굴 점은 저장하지 않음)
@@ -628,7 +634,8 @@ const SAY = {
   pick: "오늘 면접관을 골라 주세요. 한 명 또는 두 명을 말하거나 눌러 주세요.",
   greet: (n) => `${n ? n + " 학생, " : ""}반가워요. 면접을 시작할까요?`,
   greetAgain: "면접을 시작할까요? '네' 또는 '아니요'라고 말해 주세요.",
-  check: "화면에 얼굴이 보이는지 확인하고, '안녕하세요'라고 말해 보세요.",
+  check: "장비를 점검할게요. 화면에 얼굴이 보이는지 확인해 주세요.",
+  checkHello: "지금 '안녕하세요'라고 말해 보세요.",
   checkAgain: "잘 들리지 않았어요. 한 번 더 '안녕하세요'라고 말해 보세요.",
   gaze: "마지막으로 화면 속 면접관을 3초 동안 편하게 바라봐 주세요.",
   gazeAgain: "얼굴이 잘 보이지 않아요. 카메라에 얼굴이 보이게 앉아서 다시 면접관을 바라봐 주세요.",
@@ -636,14 +643,13 @@ const SAY = {
   noStt: "받아쓰기 없이 진행할게요.",
   types: "어떤 면접을 볼까요? 내 생기부, 학생부 공통, 제시문, 기본 인성 중에서 골라 주세요. 여러 개를 골라도 돼요.",
   typesDone: (ls) => `${ls.join(", ")} 순서로 할게요.`,
-  prepPassage: (min) => `제시문을 읽고 ${min}분 동안 준비해 주세요. 다 읽었으면 '다음'이라고 말해 주세요.`,
-  prepMmi: (q, min) => `${q} ${min}분 동안 생각을 정리해 주세요. 준비가 되면 '다음'이라고 말해 주세요.`,
+  prepPassage: (min) => `제시문을 읽고 ${min}분 동안 준비해 주세요. 다 읽었으면 '다 읽었어요'라고 말해 주세요.`,
+  prepMmi: (q, min) => `${q} ${min}분 동안 생각을 정리해 주세요. 준비가 되면 '준비됐어요'라고 말해 주세요.`,
   time: "면접을 몇 분 동안 볼까요? 10분, 15분, 20분 중에서 말해 주세요.",
   timeDefault: `${CONFIG.planDefault}분으로 시작할게요.`,
-  think: `${CONFIG.think}초 생각할 시간을 드릴게요.`,
+  think: `${CONFIG.think}초 생각할 시간을 드릴게요. 생각이 끝나면 바로 답변을 시작해도 됩니다.`,
   thinkMore: `네, ${CONFIG.thinkMore}초 더 드릴게요.`,
   preSilence: "질문을 다시 들려드릴까요? '다시'라고 말하거나 바로 답해 주세요.",
-  hush: "더 하실 말씀이 없으면 '다음'이라고 말해 주세요.",
   confirm: "면접을 끝낼까요?",
   quit: "처음 화면으로 돌아갈까요?",
   resume: "네, 이어서 할게요.",
@@ -1019,7 +1025,7 @@ if (TEST) {
       if (opt.reset) ruleUsed = new Set(); if (opt.depts) depts = opt.depts; return ruleFollowUp(it, answer); },
     isExp: (item, slot) => { const it = { slot, type: item.type || "document", text: item.text || "" }; Object.defineProperty(it, "_q", { value: item, enumerable: false }); return isExperience(it); },
     summary: (its, stt = false) => { const keep = [items, sttOff]; items = its.map((x) => ({ answered: true, ...x })); sttOff = stt; try { return makeQuickSummary(); } finally { [items, sttOff] = keep; } },
-    aiCalls: () => aiCalls, aiStat: () => aiStat, iid: () => iid, basis: () => Object.fromEntries(basisOf), frame: () => frameQ, poolBy: () => poolBy, setLeft: (sec) => { tStart -= leftSec() - sec; } };   // 시험: 남은 시간을 sec 초로
+    done: (t) => doneOf(t), aiCalls: () => aiCalls, aiStat: () => aiStat, iid: () => iid, basis: () => Object.fromEntries(basisOf), frame: () => frameQ, poolBy: () => poolBy, setLeft: (sec) => { tStart -= leftSec() - sec; } };   // 시험: 남은 시간을 sec 초로
 }
 
 // ---------- 사건 (버튼·카드·받아쓰기) — 상태마다 next() 로 하나씩 받는다 ----------
@@ -1057,7 +1063,7 @@ const CMDS = {
   no: ["아니에요", "아니요", "아니오", "아뇨", "아니", "계속할게요", "이어서할게요", "이어서"],
   again: ["다시말해주세요", "다시들려주세요", "질문다시", "다시한번", "다시요", "다시", "한번더"],
   wait: ["잠시만기다려주세요", "잠시만요", "잠깐만요", "잠시만", "잠깐만", "잠깐"],
-  next: ["다음질문", "다음이요", "다음요", "다음", "넘어갈게요", "넘어가요", "다했습니다", "다했어요", "이상입니다", "다읽었어요", "다읽었습니다", "준비됐어요", "준비됐습니다", "준비다됐어요"],
+  next: ["다음질문", "다음이요", "다음요", "다음", "넘어갈게요", "넘어가요", "다했습니다", "다했어요", "다읽었어요", "다읽었습니다", "준비됐어요", "준비됐습니다", "준비다됐어요"],
   yes: ["면접시작", "시작하겠습니다", "시작할게요", "시작", "좋아요", "네", "예", "넵", "응"],
   random: ["상관없습니다", "상관없어요", "상관없", "아무나", "아무거나", "누구든", "누구나", "랜덤", "무작위", "알아서"]
 };
@@ -1212,11 +1218,15 @@ function cleanItems() {
     const o = {};
     for (const k of ITEM_KEYS) if (it[k] !== undefined && it[k] !== false && !(k === "followAskedBy" && !it[k])) o[k] = it[k];
     for (const k of ["gaze", "followGaze"]) { if (o[k]) o[k] = gazeOut(o[k]); else delete o[k]; }   // 숫자 4개만
-    if (!sttOff) {   // 많이 쓴 낱말 (받아쓰기가 없으면 칸 없음)
+    if (!sttOff) {   // 많이 쓴 낱말 · 질문 핵심어(답변에 나왔는지) — 받아쓰기가 없으면 칸 없음
       const k1 = it.answer ? keywordsOf(it.answer) : [], k2 = it.followAnswer ? keywordsOf(it.followAnswer) : [];
       if (k1.length) o.keywords = k1;
       if (k2.length) o.followKeywords = k2;
+      const q1 = it.answer ? questionKeys(it.text, it.answer) : [], q2 = it.followUp && it.followAnswer ? questionKeys(it.followUp, it.followAnswer) : [];
+      if (q1.length) o.questionKeys = q1;
+      if (q2.length) o.followQuestionKeys = q2;
     }
+    if (it._t0 != null && it._t1 != null) o.spanSec = Math.max(0, Math.round(it._t1 - it._t0));   // 질문을 읽기 시작해서 그 문항이 끝날 때까지 (결과 화면 '질문 읽기 등' 계산용)
     return o;
   });
 }
@@ -1522,11 +1532,12 @@ AI ${AI_ON ? (aiStat.last || "대기") + (aiStat.ms ? " " + aiStat.ms + "ms" : "
 // =====================================================================
 function showRoom() { $("#room").hidden = false; $("#full").hidden = true; }
 function showFull(html) { $("#room").hidden = true; const f = $("#full"); f.hidden = false; f.innerHTML = html; f.scrollTop = 0; }
-const acts = () => `<div class="acts3">
+// [다음] 버튼 아래 작은 말: 답변 중 “이상입니다”, 준비 중 “다 읽었어요”, 처음 정하는 화면 “네” — 음성 '다음'은 안내하지 않음
+const acts = (nextSay = "") => `<div class="acts3">
   <div><button type="button" data-btn="again">다시 듣기</button><span>“다시”</span></div>
-  <div><button type="button" class="btn-primary" data-btn="next">다음</button><span>“다음”</span></div>
+  <div><button type="button" class="btn-primary" data-btn="next">다음</button><span id="nextSay">${nextSay ? `“${nextSay}”` : ""}</span></div>
   <div><button type="button" class="end" data-btn="end">종료</button><span>“면접 종료”</span></div></div>`;
-function side(html, buttons = true) { showRoom(); $("#side").innerHTML = html + (buttons ? `<div class="grow"></div>${acts()}` : ""); $("#side").scrollTop = 0; }
+function side(html, buttons = true, nextSay = "") { showRoom(); $("#side").innerHTML = html + (buttons ? `<div class="grow"></div>${acts(nextSay)}` : ""); $("#side").scrollTop = 0; }
 const lstat = (t, ok = true) => `<p class="lstat"><i class="${ok ? "ok" : ""}"></i>${esc(t)}</p>`;
 const label = (id) => CHARACTERS[id]?.label || id;
 const qNo = (it) => items.indexOf(it) + 1;
@@ -1633,7 +1644,7 @@ function renderLogin(msg = "") {
   panel.setInterviewers([Object.keys(CHARACTERS)[Math.floor(Math.random() * 4)]]); panel.idle();
   side(`<div class="grow"></div>
     <div><h1 class="ttl big">면접을 시작해 볼까요?</h1>
-      <p class="sub" style="margin-top:10px">학번과 비밀번호로 시작하세요.<br>그다음부터는 버튼 없이 말로 진행돼요.</p></div>
+      <p class="sub" style="margin-top:10px">학번과 비밀번호로 시작하세요.<br>그다음부터는 버튼 없이 말로 진행돼요. 답변을 마치면 <b>‘이상입니다’</b>라고 말하거나 <b>[다음]</b>을 누르세요.</p></div>
     <form class="form" id="loginForm" autocomplete="off">
       <div class="field"><label for="lid">학번</label><input id="lid" inputmode="numeric" autocomplete="off" required></div>
       <div class="field"><label for="lpw">비밀번호</label><input id="lpw" type="password" autocomplete="off" required></div>
@@ -1849,7 +1860,7 @@ async function pickPhase() {
       return `<button type="button" class="pcard ${k >= 0 ? "on" : ""}" data-card="${id}"><span class="pimg"><img src="${masterUrl(id)}" alt="${label(id)}"></span>
         <span class="pbody"><b>${label(id)}${k >= 0 ? `<em>${k ? "두 번째" : "첫 번째"}</em>` : ""}</b><small>${CHARACTERS[id].desc}</small></span></button>`;
     }).join("")}</div>
-    <div class="pick-foot">${lstat(`${sel.length ? sel.map(label).join(" · ") + "을 골랐어요. " : ""}두 명이면 번갈아 질문해요 · 대답이 없으면 두 명을 무작위로 정해요`)}${acts()}</div></div>`);
+    <div class="pick-foot">${lstat(`${sel.length ? sel.map(label).join(" · ") + "을 골랐어요 · ‘네’라고 하면 시작해요. " : ""}두 명이면 번갈아 질문해요 · 대답이 없으면 두 명을 무작위로 정해요`)}${acts("네")}</div></div>`);
   draw();
   stt.start();
   const prompt = async () => { await say(SAY.pick, { cap: "면접관 고르기" }); panel.idle(); };
@@ -1867,7 +1878,8 @@ async function pickPhase() {
       const p = parsePick(e.text);
       if (p === "random") return [];
       if (p.length) { sel = p; draw(); await sleepV(1.2); return sel; }
-      c = cmdOf(e.text, ["next", "again", "end"], false);
+      c = cmdOf(e.text, ["next", "yes", "again", "end"], false);
+      if (c === "yes") c = "next";          // '네'·'좋아요'가 주 안내 ('다음'도 동작은 함)
     }
     if (c === "next") return sel;
     if (c === "again") { await prompt(); until = now() + CONFIG.noReply; }
@@ -1951,8 +1963,8 @@ async function gazeCheck() {
       if (g.face) got.push(g);
       if (lb) lb.textContent = g.face ? "● 얼굴을 찾았어요" : "● 얼굴을 찾고 있어요";
       const c = $("#gzN"); if (c) c.textContent = Math.max(1, Math.ceil(GAZE.calibSec - (now() - t0)));
-    }, (e) => e.final && cmdOf(e.text, ["next", "end", "again"], true));
-    if (r === "next") return off("건너뜀 · 시선 분석 없이", false);
+    }, (e) => e.final && cmdOf(e.text, ["end", "again"], true));
+    if (r === "next") return off("건너뜀 · 시선 분석 없이", false);   // [다음] 버튼만
     if (r === "end") { await quitConfirm(by); return off("건너뜀 · 시선 분석 없이", false); }   // "아니요" → 기준 없이 이어서
     if (r === "again") { attempt--; continue; }
     if (n && got.length >= Math.max(GAZE.minSamples, n * GAZE.calibMinFace)) {
@@ -1969,7 +1981,7 @@ async function checkMedia() {
   const by = panel.members[0].id, name = ctx.profile.name || "○○○";
   const draw = () => {
     setPhase("check");
-    side(`<div class="phase-l">장비 점검</div><h1 class="ttl">화면에 얼굴이 보이는지 확인하고<br>“안녕하세요”라고 말해 보세요</h1>
+    side(`<div class="phase-l">장비 점검</div><h1 class="ttl" id="ckTtl">장비를 점검하고 있어요<br><small>화면에 얼굴이 보이는지 확인해 주세요</small></h1>
       <ol class="ck" id="ck">
         <li data-s="cam"><span class="n"><span>1</span></span><b>카메라</b><span class="d"></span></li>
         <li data-s="quiet"><span class="n"><span>2</span></span><b>주변 소리</b><span class="d"></span></li>
@@ -1977,7 +1989,7 @@ async function checkMedia() {
         <li data-s="gaze"><span class="n"><span>4</span></span><b>시선 기준 잡기</b><span class="d"></span></li></ol>
       <div class="meter"><i id="lvl"></i></div>
       <div class="heard" id="heard">“안녕하세요, 저는 ${esc(name)}입니다”</div>
-      <p class="hint" id="ckMsg">확인되면 저절로 다음으로 넘어가요. 두 번 안 되면 “받아쓰기 없이 진행할게요” 하고 계속해요.</p>`);
+      <p class="hint" id="ckMsg">확인되면 저절로 넘어가요. 지금 “안녕하세요”라고 먼저 말해도 돼요. 면접에서는 답변을 마치면 ‘이상입니다’라고 말하거나 [다음]을 누르세요.</p>`);
   };
   const mark = (s, st, d) => { const li = $(`#ck li[data-s="${s}"]`); if (!li) return; li.className = st; li.querySelector(".d").textContent = d; };
   draw();
@@ -1989,16 +2001,32 @@ async function checkMedia() {
     await say(SAY.check, { by, cap: "장비 점검" }); panel.caption("장비 점검", "listening");
     const needStt = !!(SR && sttOk);
     let anyVoice = false;
+    // 면접관(TTS)이 말하는 동안과 끝난 직후 0.5초 동안 들어온 받아쓰기·소리는 통과 판정에서 뺌 (면접관 목소리로 통과되지 않게)
+    const echo = () => ttsBusy || performance.now() - ttsEnd < CONFIG.checkEchoMs;
     for (let attempt = 1; attempt <= 2; attempt++) {
       mark("quiet", "now", "2초 동안 조용히 있어 주세요"); mark("voice", "", "");
       const quiet = [];
-      let r = await sample(CONFIG.checkQuiet * 1000, () => quiet.push(meter ? meter.level() : 0), (e) => e.final && cmdOf(e.text, ["next", "end", "again"], true));
+      let early = "";
+      // 1·2단계(주변 소리)부터 받아쓰기를 켜 둠 — 이때 학생 말이 받아써지면 소리 점검은 통과
+      let r = await sample(CONFIG.checkQuiet * 1000, () => { if (!echo()) quiet.push(meter ? meter.level() : 0); }, (e) => {
+        const c = e.final && cmdOf(e.text, ["end", "again"], true); if (c) return c;
+        if (needStt && !echo() && norm(e.text).length >= 2 && !maybeCmd(e.text)) { early = e.text; $("#heard").textContent = `“${e.text}”`; if (e.final) return "early"; }
+      });
       let loud = [], said = "";
+      if (r === "early" || (r === "time" && early)) {     // 먼저 '안녕하세요'를 함 → 통과 (말소리가 기준을 높이지 않게 조용했던 쪽으로 기준)
+        const floor = pct(quiet, 0.2), voice = Math.max(pct(quiet, 0.95), floor * 2, 0.012);
+        threshold = Math.max(0.006, floor * 1.6, floor + (voice - floor) * 0.22);
+        mark("quiet", "ok", "확인했어요"); mark("voice", "ok", "잘 들려요");
+        await sleepV(0.6); return;
+      }
       const floor = pct(quiet, 0.6);
       if (r === "time") {
         mark("quiet", "ok", "조용해요"); mark("voice", "now", "듣고 있어요");
-        r = await sample(CONFIG.checkVoice * 1000, () => loud.push(meter ? meter.level() : 0), (e) => {
-          const c = e.final && cmdOf(e.text, ["next", "end", "again"], true); if (c) return c;
+        const tt = $("#ckTtl"); if (tt) tt.innerHTML = "지금 “안녕하세요”라고<br>말해 보세요";
+        await say(SAY.checkHello, { by, cap: "장비 점검" }); panel.caption("장비 점검", "listening");
+        r = await sample(CONFIG.checkVoice * 1000, () => { if (!echo()) loud.push(meter ? meter.level() : 0); }, (e) => {
+          const c = e.final && cmdOf(e.text, ["end", "again"], true); if (c) return c;
+          if (echo()) return;
           said = e.text; $("#heard").textContent = `“${e.text}”`;
           const v = pct(loud, 0.9);
           if (e.final && norm(said).length >= 4 && v > floor * 1.8 && v > 0.01) return "heard";
@@ -2042,7 +2070,7 @@ async function typesPhase() {
       <div class="ycards">${IV_TYPES.map((t) => `<button type="button" class="ycard ${sel.includes(t.k) ? "on" : ""}" data-card="${t.k}" ${n(t.k) ? "" : "disabled"}>
         <b>${t.label}${recd.includes(t.k) ? `<em>추천</em>` : ""}</b><span>${n(t.k) ? `${t.desc} · ${n(t.k)}개` : "아직 질문이 없어요"}</span></button>`).join("")}</div>
       <div class="info"><p>고른 유형을 <b>위 순서대로 차례로</b> 물어봐요. 제시문을 고르면 면접 시간은 20분을 권해요.</p></div>
-      ${lstat(sel.length ? `${sel.map(typeLabel).join(" · ")} 골랐어요 · ‘다음’이라고 하면 시작` : `듣는 중 · 대답이 없으면 추천(${fallback.map(typeLabel).join(" · ")})으로 해요`)}`);
+      ${lstat(sel.length ? `${sel.map(typeLabel).join(" · ")} 골랐어요 · ‘네’라고 하면 시작` : `듣는 중 · 대답이 없으면 추천(${fallback.map(typeLabel).join(" · ")})으로 해요`)}`);
   };
   const done = async (ks) => {
     ks = IV_TYPES.map((t) => t.k).filter((k) => ks.includes(k) && n(k) > 0);
@@ -2068,7 +2096,8 @@ async function typesPhase() {
       if (t === "all") return done(avail);
       if (t === "rec") return done(fallback);
       if (t.length) return done(t);
-      c = cmdOf(e.text, ["next", "again", "end"], false);
+      c = cmdOf(e.text, ["next", "yes", "again", "end"], false);
+      if (c === "yes") c = "next";          // '네'·'좋아요'가 주 안내 ('다음'도 동작은 함)
     }
     if (c === "next") return done(sel.length ? sel : fallback);
     if (c === "again") { await say(SAY.types, { by, cap: "면접 유형 정하기" }); until = now() + CONFIG.noReply; }
@@ -2100,7 +2129,8 @@ async function timePhase() {
     if (e.type === "text" && e.final) {
       const m = parseMin(e.text);
       if (m) { sel = m; draw(); await sleepV(0.8); return m; }
-      c = cmdOf(e.text, ["next", "again", "end"], false);
+      c = cmdOf(e.text, ["next", "yes", "again", "end"], false);
+      if (c === "yes") c = "next";          // '네'·'좋아요'가 주 안내 ('다음'도 동작은 함)
     }
     if (c === "next") return sel;
     if (c === "again") { await say(SAY.time, { by, cap: "면접 시간 정하기" }); until = now() + CONFIG.noReply; }
@@ -2194,7 +2224,7 @@ async function preparePhase(it, by) {
       <div class="qtext sm" id="qtext">${esc(it.text)}</div>
       <div class="clock-row"><span class="clock" id="clock">${fmtSec(Math.max(0, until - now()))}</span><span class="clock-s">준비 시간 남음</span></div>
       <div class="track"><i id="trk"></i></div>
-      ${lstat("다 읽었으면 “다음”이라고 말하거나 다음을 누르세요. 준비하는 동안은 녹화하지 않아요")}`);
+      ${lstat(`${isP ? "다 읽었으면 “다 읽었어요”" : "준비가 되면 “준비됐어요”"}라고 말하거나 [다음]을 누르세요. 준비하는 동안은 녹화하지 않아요`)}`, true, isP ? "다 읽었어요" : "준비됐어요");
     panel.all("listening"); panel.caption("준비 시간");   // 준비하는 동안 면접관은 기다리며 듣는 모습
   };
   const prompt = async () => { await say(isP ? SAY.prepPassage(min) : SAY.prepMmi(it.text, min), { by, cap: "준비 안내" }); panel.caption("준비 시간"); };
@@ -2229,12 +2259,11 @@ async function thinkPhase(it, by, first) {
   setPhase("think", true);
   side(`<div class="phase-l" id="phaseL">질문 ${qNo(it)} · 생각할 시간</div>
     <div class="qtext sm">${esc(it.text)}</div>
-    <div class="clock-row"><span class="clock" id="clock">${fmtSec(CONFIG.think)}</span><span class="clock-s">남음 · 말을 시작하면 바로 답변으로</span></div>
+    <div class="clock-row"><span class="clock" id="clock">${fmtSec(CONFIG.think)}</span><span class="clock-s">남음 · <b>바로 답변을 시작해도 돼요</b></span></div>
     <div class="track"><i id="trk"></i></div>
     ${sttOk ? `<div class="cmds"><div class="cmds-h">이렇게 말해도 돼요</div><div class="cmds-g">
       <div><b>“다시”</b><span>질문 다시 듣기</span></div>
-      <div id="cmdWait" class="${it.thinkMore ? "used" : ""}"><b>“잠시만요”</b><span>${CONFIG.thinkMore}초 더 (한 번)</span></div>
-      <div><b>“다음”</b><span>바로 답변</span></div></div></div>` : ""}`);
+      <div id="cmdWait" class="${it.thinkMore ? "used" : ""}"><b>“잠시만요”</b><span>${CONFIG.thinkMore}초 더 (한 번)</span></div></div></div>` : ""}`);
   panel.all("listening"); panel.caption("생각할 시간");   // 생각하는 동안 면접관은 기다리며 듣는 모습
   if (first) { await say(SAY.think, { by, cap: "생각할 시간 안내" }); panel.caption("생각할 시간"); }
   const t0 = now(); let until = t0 + CONFIG.think;
@@ -2253,11 +2282,11 @@ async function thinkPhase(it, by, first) {
       if (e.name === "end") return fin("end");
     }
     if (e.type === "text") {
-      const c = cmdOf(e.text, ["again", "wait", "next", "end"], true);
+      if (cmdOf(e.text, ["next"], true)) continue;          // 음성 '다음'은 듣지 않음 ([다음] 버튼은 그대로)
+      const c = cmdOf(e.text, ["again", "wait", "end"], true);
       if (c) {
         if (!e.final) continue;
         if (c === "again") return fin("again");
-        if (c === "next") return fin({ go: "listen" });
         if (c === "end") return fin("end");
         if (c === "wait" && !it.thinkMore) {
           it.thinkMore = true; $("#cmdWait")?.classList.add("used");
@@ -2279,24 +2308,22 @@ async function listenPhase(it, which, by, carry, started) {
     <div class="phase-l" id="phaseL">${isF ? "꼬리질문" : "질문"} ${qNo(it)} · 답변</div>
     <div class="qtext sm" id="qtext">${esc(text)}</div>
     ${!isF ? passageBox(it, false) : ""}
-    <div id="hush" class="hush" hidden><b>더 하실 말씀이 없으면<br>“다음”이라고 말해 주세요</b>
-      <div class="hush-n"><span id="hushN">${CONFIG.hushNext}</span><p>초 뒤 다음 질문으로 넘어가요.<br>이어서 말하면 그대로 계속 들어요.</p></div></div>
     <div class="clock-row"><span class="clock" id="clock">0:00</span><span class="clock-s">답변한 시간</span></div>
     <div id="ansTrack"><div class="track"><i id="trk"></i></div>
       <div class="track-l"><span>0:00</span><span>보통 ${fmtSec(limit)} 안팎</span><span>${fmtSec(maxSec)} 최대</span></div></div>
     ${sttOk ? `<div class="live" id="live"><div class="live-h" id="sttS"><i></i>받아쓰는 중</div><p id="liveT"></p></div>
-      <p class="hint" id="lhint">다 말했으면 “다음”이라고 따로 짧게 말해 주세요. 문장 속 ‘다음’은 명령으로 듣지 않아요.</p>`
-      : `<p class="hint" id="lhint">받아쓰기 없이 진행하고 있어요. 다 말했으면 <b>다음</b>을 눌러 주세요.</p>`}</div>`);
+      <p class="hint" id="lhint">답변을 마치면 <b>‘이상입니다’</b>라고 말하거나 <b>[다음]</b>을 누르세요. ${CONFIG.silenceAdvanceMs / 1000}초 동안 조용해도 다음으로 넘어가요.</p>`
+      : `<p class="hint" id="lhint">받아쓰기 없이 진행하고 있어요. 답변을 마치면 <b>[다음]</b>을 누르세요. ${CONFIG.silenceAdvanceMs / 1000}초 동안 조용해도 다음으로 넘어가요.</p>`}</div>`, true, sttOk ? "이상입니다" : "");
   panel.listen();
   const parts = [...carry], frames = [];
   frameSink = (b) => frames.push(b);
   gaze.start();
   const t0 = now();
-  let first = started || parts.length > 0, lastSound = now(), quietFrom = now(), misses = 0, hush = null, seenLoud = lastLoud, out = "done", el = 0;
+  let first = started || parts.length > 0, lastSound = now(), quietFrom = now(), misses = 0, seenLoud = lastLoud, out = "done", el = 0, doneAlone = false;
   const live = (interim = "") => { const p = $("#liveT"); if (p) { p.innerHTML = `<span style="color:inherit">${esc(parts.join(" "))}</span>${interim ? ` <span>${esc(interim)}</span>` : ""}`; p.scrollTop = p.scrollHeight; } };
-  const hushOff = () => { hush = null; const h = $("#hush"); if (h) h.hidden = true; $(".listen")?.classList.remove("hushing"); $("#qtext")?.classList.remove("dim"); panel.listen(); };
-  const sound = () => { first = true; lastSound = now(); if (hush) hushOff(); };
-  const reread = async () => { if (hush) hushOff(); await say(text, { by, cap: "질문하는 중" }); panel.listen(); quietFrom = lastSound = now(); misses = 0; seenLoud = lastLoud; };
+  let lastSoundMs = performance.now();            // 조용함 판정은 실제 시간 (시험의 ?fast 와 상관없이 5초)
+  const sound = () => { first = true; lastSound = now(); lastSoundMs = performance.now(); };
+  const reread = async () => { await say(text, { by, cap: "질문하는 중" }); panel.listen(); quietFrom = lastSound = now(); lastSoundMs = performance.now(); misses = 0; seenLoud = lastLoud; };
   live();
   try {
     while (true) {
@@ -2311,17 +2338,7 @@ async function listenPhase(it, which, by, carry, started) {
           await say(SAY.preSilence, { by, cap: "다시 들려드릴까요?" }); panel.listen();
           quietFrom = now(); seenLoud = lastLoud; continue;
         }
-      } else if (!hush && now() - lastSound >= CONFIG.hushAsk) {
-        const h = $("#hush"); if (h) h.hidden = false;
-        $(".listen")?.classList.add("hushing"); $("#qtext")?.classList.add("dim");
-        await say(SAY.hush, { by, cap: "더 하실 말씀 있나요?" });
-        panel.all("listening"); panel.caption(`${label(by)} · 더 하실 말씀 있나요?`, "speaking");
-        hush = { until: now() + CONFIG.hushNext }; seenLoud = lastLoud; lastSound = now();
-        continue;
-      } else if (hush) {
-        const n = $("#hushN"); if (n) n.textContent = Math.max(0, Math.ceil(hush.until - now()));
-        if (now() >= hush.until) break;
-      }
+      } else if (performance.now() - lastSoundMs >= CONFIG.silenceAdvanceMs) break;   // 첫 소리 뒤 5초 조용 → 바로 다음 (재촉 안내 없음)
       const e = await next(100);
       if (e.type === "btn") {
         if (e.name === "next") break;
@@ -2330,14 +2347,18 @@ async function listenPhase(it, which, by, carry, started) {
         continue;
       }
       if (e.type === "text") {
-        const c = cmdOf(e.text, first ? ["next", "end"] : ["next", "end", "again"], true);
+        if (cmdOf(e.text, ["next"], true)) continue;   // 음성 '다음'은 답변 중에 듣지 않음 (넘어가지도, 답변에 넣지도 않음)
+        const c = cmdOf(e.text, first ? ["end"] : ["end", "again"], true);
         if (c) {
           if (!e.final) continue;
-          if (c === "next") break;
           if (c === "end") { out = "end"; break; }
           if (c === "again") { await reread(); continue; }
         }
-        if (e.final) parts.push(e.text);
+        if (e.final) {
+          const d = doneOf(e.text);                        // 끝에 '이상입니다' → 그 말은 빼고 답변 끝
+          if (d.done) { if (d.text) parts.push(d.text); else doneAlone = true; live(); break; }
+          parts.push(e.text);
+        }
         live(e.final ? "" : e.text); sound();
       }
     }
@@ -2348,9 +2369,15 @@ async function listenPhase(it, which, by, carry, started) {
   // 마지막 말이 받아쓰기에 들어올 시간을 조금 준다
   if (sttOk) { await sleepReal(700); if (aborted) throw new Abort(); }
   const isCmd = (t) => cmdOf(t, ["next", "end", "again"], true);
-  for (const e of evq.splice(0)) if (e.type === "text" && e.final && !isCmd(e.text)) parts.push(e.text);
+  for (const e of evq.splice(0)) if (e.type === "text" && e.final && !isCmd(e.text)) { const d = doneOf(e.text); if (d.text) parts.push(d.text); }
   const pend = stt.interim.trim(); stt.interim = "";
-  if (pend && !isCmd(pend)) parts.push(pend);
+  if (pend && !isCmd(pend)) { const d = doneOf(pend); if (d.text) parts.push(d.text); }
+  // '이상입니다'를 따로 말했으면 마지막 짧은 소리 덩어리(2초 이하, 앞에 0.3초 이상 쉼)는 그 말로 보고 말하기 지표에서 뺌
+  if (doneAlone) {
+    const end = frames.lastIndexOf(true); let i = end;
+    while (i > 0 && (frames[i - 1] || frames[i - 2] || frames[i - 3])) i--;   // 덩어리 시작 (3칸=0.3초 쉼까지 같은 덩어리)
+    if (end >= 0 && end - i + 1 <= 20 && frames.slice(0, i).includes(true)) for (let k = i; k <= end; k++) frames[k] = false;   // 앞에 답변 소리가 있을 때만
+  }
   const answer = parts.join(" ").trim(), m = ai.analyze(frames, answer);
   if (isF) { it.followAnswer = answer; it.followUsedSec = used; it.followM = m; if (g) it.followGaze = g; else delete it.followGaze; }
   else { it.answer = answer; it.usedSec = used; it.m = m; if (g) it.gaze = g; else delete it.gaze; }
@@ -2377,9 +2404,9 @@ async function confirmPhase({ pre = false, by, n = 0, qn = "" }) {
     if (left <= 0) return "yes";
     const e = await next(Math.min(100, left * 1000 / FAST));
     const c = e.type === "btn" ? (e.name === "again" ? "again" : "yes") : e.type === "card" ? e.value
-      : e.type === "text" && e.final ? cmdOf(e.text, ["end", "no", "again", "next", "yes"], false) : null;
+      : e.type === "text" && e.final ? cmdOf(e.text, ["end", "no", "again", "yes"], false) : null;
     if (c === "no") return "no";
-    if (c === "yes" || c === "end" || c === "next") return "yes";
+    if (c === "yes" || c === "end" || c === "next") return "yes";   // next = [다음] 버튼
     if (c === "again") { await ask(); until = now() + CONFIG.confirm; }
   }
 }
@@ -2550,7 +2577,7 @@ function showResults() {
     ${quick ? `<div class="quick" id="quick"><b>오늘 면접 한눈에</b><p class="q-praise">👍 ${esc(quick.praise)}</p>${quick.improve ? `<p class="q-improve">✏️ ${esc(quick.improve)}</p>` : ""}<p class="q-guide">${esc(quick.guide)}</p></div>` : ""}
     ${AI_ON && aiReq ? `<div class="aibox" id="aiBox"><b>AI 피드백</b><p class="hint" id="aiWait">AI 피드백을 만들고 있어요… 면접 스튜디오에도 올라와요.</p></div>` : ""}
     <div class="rtop"><div><h1 class="ttl big">수고했어요</h1><p class="sub">질문별로 시간을 어떻게 썼는지, 말 속도·멈춘 곳·<b>${sttOff ? "" : "많이 쓴 낱말"}${sttOff || !sg ? "" : "·"}${sg ? "시선" : ""}</b>을 확인해 보세요.</p></div>
-      <div class="rcount"><b id="rCount">${fmtSec(CONFIG.resultAuto)}</b><span>뒤 선생님께 자동 제출하고<br>처음 화면으로 돌아가요 · 영상 받기 누르면 1분 연장</span></div></div>
+      <div class="rcount"><b id="rCount">${fmtSec(CONFIG.resultAuto)}</b><span>뒤 선생님께 자동 제출하고 처음 화면으로 돌아가요<br>영상 받기를 누르면 다시 ${CONFIG.resultAuto / 60}분 (최대 ${CONFIG.resultMax / 60}분)</span></div></div>
     ${clips.length ? `<div class="notice-dl">${I_CAM}<div><b>영상은 웹에 저장되지 않아요. 가져가려면 지금 받아 가세요.</b>
       <p>‘이 영상 받기’로 이 컴퓨터에 내려받은 뒤 <b>내 메일로 보내거나 USB에 담아 가세요.</b> 선생님께는 받아쓴 답변과 말하기 기록만 제출돼요.<br>
       다 옮겼으면 이 컴퓨터의 다운로드 폴더에서 지워 주세요. 다음 학생이 볼 수 있어요.</p></div>
@@ -2574,7 +2601,7 @@ function showResults() {
           ${chips(it.followM, it.followUsedSec, 60, it.followGaze)}
           <div class="ans">${it.followAnswer ? esc(it.followAnswer) : `<span class="hint">받아쓴 답변이 없어요</span>`}</div>${kwBlock(it.followUp, it.followAnswer)}${gzTip(it.followGaze)}</div></div>` : ""}
     </article>`).join("")}
-    <div class="foot-r"><button type="button" class="btn-primary btn-lg" id="submitR" data-btn="submit">지금 제출하고 마치기</button>
+    <div class="foot-r"><button type="button" class="btn-primary btn-lg" id="submitR" data-btn="submit">제출하고 끝내기</button>
       <span class="hint">“면접 종료”라고 말해도 바로 제출해요 · 영상은 제출되지 않아요</span></div>
   </div></div>`);
   $$("[data-dl]").forEach((b) => b.onclick = () => { const [i, w] = b.dataset.dl.split(":"); download(Number(i), w); emit({ type: "card", value: "dl" }); });
@@ -2583,17 +2610,19 @@ function showResults() {
     for (const c of clips) { download(items.indexOf(c.it), c.which); await sleepReal(600); }
   };
   if (aiReq) aiReq.then(showAiReport);      // 결과 화면을 그린 뒤 (이미 받았으면 바로)
+  resultT0 = now();
   resultLoop().catch((e) => { if (!(e instanceof Abort)) console.error(e); });
 }
+let resultT0 = 0;   // 결과 화면을 연 때 (전체 최대 resultMax)
 async function resultLoop() {
   stt.start();
-  let until = now() + CONFIG.resultAuto;
+  let until = Math.min(resultT0 + CONFIG.resultMax, Math.max(now(), resultT0) + CONFIG.resultAuto);
   while (true) {
     const left = until - now();
     const c1 = $("#rCount"); if (c1) c1.textContent = fmtSec(Math.max(0, Math.ceil(left)));
     if (left <= 0) return submitAndLeave(true);
     const e = await next(Math.min(250, left * 1000 / FAST));
-    if (e.type === "card" && e.value === "dl") until = Math.min(now() + CONFIG.resultMax, until + CONFIG.resultExtend);
+    if (e.type === "card" && e.value === "dl") until = Math.min(resultT0 + CONFIG.resultMax, now() + CONFIG.resultAuto);   // 영상 받기 → 다시 5분 (최대 10분)
     if (e.type === "btn" && e.name === "submit") return submitAndLeave(false);
     if (e.type === "text" && e.final && cmdOf(e.text, ["end"], true)) return submitAndLeave(false);
   }

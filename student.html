@@ -203,6 +203,7 @@ import {
   railHead, railFoot, tabButton, wireRailMe, setHead, writeBatch, serverTimestamp, confirmBox, pqStats, isStudentPq
 } from "./common.js";
 import { mountSchedule, BOOK_STAGES, stageTeachers, ACTIVE, DONE, STATUS } from "./schedule.js";
+import { isBoothSession, boothViewHtml, aiReportState, replaceAiReport } from "./booth-view.js";
 import { registerSW, mountInstallTip, showInstallTipAgain, isStandalone } from "./pwa.js";
 import { pushState, pushOn, enablePush, disablePush, refreshPush, wasAsked, markAsked, onPushOpen } from "./push.js";
 
@@ -912,6 +913,9 @@ renderHistory();
 renderFeedback();
 homeReady = true; renderHome();
 
+// 열려 있는 기록 (부스 기록의 AI 피드백이 실시간으로 오면 그 자리만 바꾸려고)
+let openSid = null;
+
 // ---- 새로고침 없이 피드백 반영 (선생님이 공개하면 바로 뜸)
 {
   let firstS = true, firstM = true;
@@ -921,6 +925,12 @@ homeReady = true; renderHome();
     sessions = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.startedAt?.seconds || 0) - (a.startedAt?.seconds || 0));
     if (!firstS && sessions.some((x) => x.reviewedAt && !before.has(x.id))) notify();
     firstS = false; renderHistory(); renderFeedback(); renderPracLinks(); renderHome();
+    // 열려 있는 부스 기록의 AI 피드백이 준비 중 → 완료로 바뀌면 그 상자만 다시 그림
+    const cur = openSid && !$("#modal").hidden ? sessions.find((x) => x.id === openSid) : null;
+    if (cur && isBoothSession(cur)) {
+      const box = $("#bvAi");
+      if (box && (box.dataset.st || "") !== aiReportState(cur)) replaceAiReport($("#mBody"), cur);
+    }
   }, (e) => console.warn("연습 피드백 실시간", e));
   onSnapshot(query(collection(db, "meetings"), where("studentUid", "==", user.uid), where("shared", "==", true)), (snap) => {
     const before = new Set(meetings.map((x) => x.id));
@@ -931,10 +941,26 @@ homeReady = true; renderHome();
 }
 
 function openSession(s) {
+  if (!s) return;
+  openSid = s.id;
   $("#mTitle").textContent = `${s.modeLabel || s.mode} · ${fmtDate(s.startedAt)}`;
   const fb = s.reviewedAt ? (s.teacherFeedback || {}) : {};
   const scores = fb.scores ? `<div class="grid grid-4" style="margin:6px 0 4px">${CRITERIA.map((c) =>
       `<div><div class="muted">${c.label}</div><div class="stat">${fb.scores[c.key] ?? "-"}<span class="muted">/5</span></div></div>`).join("")}</div>` : "";
+  $("#modal .modal").classList.toggle("bv-wide", isBoothSession(s));
+  if (isBoothSession(s)) {
+    // 면접 부스 기록: 부스 결과 화면과 같은 내용(영상 제외). 선생님 피드백은 맨 위, 문항별 선생님 코멘트는 각 문항 카드 맨 아래
+    const top = s.reviewedAt
+      ? `<div class="fb-box" style="margin:0"><h3>선생님 피드백</h3>${scores}${fb.comment ? `<div class="pre">${esc(fb.comment)}</div>` : ""}</div>
+        ${s.aiFeedback ? `<div class="fb-box" style="margin:0;background:#f8f5ff;border-color:#e6dcfb"><h3>선생님이 보낸 AI 피드백</h3><div class="pre">${esc(s.aiFeedback)}</div></div>` : ""}`
+      : `<div class="bv-status"><span class="badge ${s.status === "submitted" ? "badge-orange" : "badge-gray"}">${s.status === "submitted" ? "선생님 검토 대기" : "완료되지 않은 기록"}</span></div>`;
+    $("#mBody").innerHTML = boothViewHtml(s, {
+      top,
+      itemExtra: (i) => fb.itemComments?.[i] ? `<div class="bv-tc"><div class="fb-box"><b>선생님</b> <span class="pre">${esc(fb.itemComments[i])}</span></div></div>` : ""
+    });
+    $("#modal").hidden = false;
+    return;
+  }
   $("#mBody").innerHTML = `
     ${s.reviewedAt ? `<div class="fb-box"><h3>선생님 피드백</h3>${scores}${fb.comment ? `<div class="pre">${esc(fb.comment)}</div>` : ""}</div>` : `<p class="muted">${s.status === "submitted" ? "선생님 검토를 기다리는 중이에요." : "완료되지 않은 연습입니다."}</p>`}
     ${s.reviewedAt && s.aiFeedback ? `<div class="fb-box" style="background:#f8f5ff;border-color:#e6dcfb"><h3>AI 피드백</h3><div class="pre">${esc(s.aiFeedback)}</div></div>` : ""}
@@ -949,8 +975,9 @@ function openSession(s) {
     ${s.reflection ? `<div class="q-item" style="margin-top:12px"><b>나의 돌아보기</b><div class="pre muted">잘한 점: ${esc(s.reflection.good)}\n아쉬운 점: ${esc(s.reflection.improve)}</div></div>` : ""}`;
   $("#modal").hidden = false;
 }
-$("#mClose").onclick = () => $("#modal").hidden = true;
-$("#modal").onclick = (e) => { if (e.target.id === "modal") $("#modal").hidden = true; };
+const closeSession = () => { $("#modal").hidden = true; openSid = null; };
+$("#mClose").onclick = closeSession;
+$("#modal").onclick = (e) => { if (e.target.id === "modal") closeSession(); };
 
 // ---- 내 예상질문 (선생님이 준비 + 내가 만든 질문). 내가 만든 질문은 검토 전(reviewedAt 없음)에만 고치기·지우기
 let pqFilter = "all";

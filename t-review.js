@@ -4,6 +4,7 @@ import {
 import { S, register, rerender, openModal, closeModal, opt, myRoles, loadAllSessions, RECENT_DAYS, setDot } from "./t-core.js";
 import { feedbackPrompt } from "./prompts.js";
 import { queueNotify } from "./notify.js";
+import { isBoothSession, boothViewHtml, refreshAiReport, aiReportMaybeComing, replaceAiReport } from "./booth-view.js";
 
 let root;
 export function init(el) {
@@ -39,7 +40,7 @@ function render() {
   $("#rBody", root).innerHTML = list.map((s) => {
     const over = (s.items || []).filter((i) => i.usedSec > i.answerSec).length;
     return `<tr class="clickable" data-id="${s.id}"><td class="nowrap">${fmtDate(s.submittedAt || s.startedAt)}</td>
-      <td class="nowrap">${esc(s.studentNo)} <b>${esc(s.studentName)}</b></td><td>${esc(s.modeLabel)}</td>
+      <td class="nowrap">${esc(s.studentNo)} <b>${esc(s.studentName)}</b></td><td>${isBoothSession(s) ? '<span class="badge badge-blue">부스</span> ' : ""}${esc(s.modeLabel)}</td>
       <td>${(s.items || []).filter((i) => i.answer).length}/${(s.items || []).length}</td><td>${over || "-"}</td>
       <td>${s.status !== "submitted" ? '<span class="badge badge-gray">미완료</span>' : s.reviewedAt ? '<span class="badge badge-green">검토 완료</span>' : '<span class="badge badge-orange">검토 대기</span>'}</td>
       <td class="muted">${esc(s.reviewedBy || "")}</td></tr>`;
@@ -51,9 +52,12 @@ export function openReview(id) {
   const s = S.sessions.find((x) => x.id === id);
   if (!s) return;
   const fb = s.teacherFeedback || {};
-  const body = openModal(`${s.studentName} · ${s.modeLabel}`, `
-    <div class="muted">${fmtDate(s.startedAt)} 시작${s.submittedAt ? ` · ${fmtDate(s.submittedAt)} 제출` : " · 미완료"}${s.reviewedBy ? ` · 검토: ${esc(s.reviewedBy)}` : ""}</div>
-    ${(s.items || []).map((it, i) => `
+  const booth = isBoothSession(s);
+  const commentBox = (i) => `<textarea data-ic="${i}" placeholder="이 문항 코멘트 (선택)" style="min-height:56px">${esc(fb.itemComments?.[i] || "")}</textarea>`;
+  // 면접 부스 기록: 부스 결과 화면과 같은 내용(영상 제외) + 문항마다 코멘트 칸. 그 아래 평가 양식은 다른 기록과 같음
+  const itemsHtml = booth
+    ? `<div style="margin-top:12px">${boothViewHtml(s, { teacher: true, itemExtra: (i) => `<div class="bv-tc">${commentBox(i)}</div>` })}</div>`
+    : (s.items || []).map((it, i) => `
       <div class="q-item" style="margin-top:12px">
         <div class="row">${typeBadge(it.type)} <span class="muted">Q${i + 1} · ${it.usedSec}초 / ${it.answerSec}초</span>${it.usedSec > it.answerSec ? ' <span class="badge badge-red">초과</span>' : ""}</div>
         <div class="q-text pre" style="margin-top:6px">${esc(it.text)}</div>
@@ -61,19 +65,25 @@ export function openReview(id) {
         ${it.prepMemo ? `<details><summary class="muted">학생 메모</summary><div class="ans">${esc(it.prepMemo)}</div></details>` : ""}
         <div class="ans">${esc(it.answer) || '<span class="muted">(답변 없음)</span>'}</div>
         ${it.followUp ? `<div><b>꼬리질문</b> ${esc(it.followUp)} <span class="muted">(${it.followUsedSec}초)</span></div><div class="ans">${esc(it.followAnswer) || '<span class="muted">(답변 없음)</span>'}</div>` : ""}
-        <textarea data-ic="${i}" placeholder="이 문항 코멘트 (선택)" style="min-height:56px">${esc(fb.itemComments?.[i] || "")}</textarea>
-      </div>`).join("")}
+        ${commentBox(i)}
+      </div>`).join("");
+  const body = openModal(`${s.studentName} · ${s.modeLabel}`, `
+    <div class="muted">${fmtDate(s.startedAt)} 시작${s.submittedAt ? ` · ${fmtDate(s.submittedAt)} 제출` : " · 미완료"}${s.reviewedBy ? ` · 검토: ${esc(s.reviewedBy)}` : ""}</div>
+    ${itemsHtml}
     ${s.reflection ? `<div class="q-item" style="margin-top:12px"><b>학생 돌아보기</b><div class="pre muted">잘한 점: ${esc(s.reflection.good)}\n아쉬운 점: ${esc(s.reflection.improve)}</div></div>` : ""}
     <h3 style="margin-top:20px">평가</h3>
     ${CRITERIA.map((c) => `<div class="score-row"><div><b>${c.label}</b><div class="muted" style="font-size:.75rem">${c.hint}</div></div>
       <input type="range" min="1" max="5" step="1" data-score="${c.key}" value="${fb.scores?.[c.key] ?? 3}"><b data-sv="${c.key}">${fb.scores?.[c.key] ?? 3}</b></div>`).join("")}
     <div class="field"><label>총평</label><textarea id="rComment">${esc(fb.comment || "")}</textarea></div>
     <div class="field">
-      <div class="row" style="margin-bottom:4px"><label style="margin:0">AI 피드백</label><div class="spacer"></div><button class="btn-sm" id="rPrompt">AI 피드백 프롬프트 복사</button></div>
+      <div class="row" style="margin-bottom:4px"><label style="margin:0">${booth ? "선생님 AI 피드백" : "AI 피드백"}</label><div class="spacer"></div><button class="btn-sm" id="rPrompt">AI 피드백 프롬프트 복사</button></div>
+      ${booth ? '<div class="muted" style="font-size:.8rem;margin-bottom:4px">선생님이 붙여 넣어 학생에게 공개하는 칸이에요. 위의 ‘부스에서 자동으로 만든 AI 피드백’과는 따로 저장돼요.</div>' : ""}
       <textarea id="rAi" placeholder="Claude 결과를 붙여넣고 필요하면 다듬으세요." style="min-height:140px">${esc(s.aiFeedback || "")}</textarea>
     </div>
     <div class="row"><button id="rDraft">임시 저장</button><button class="btn-primary" id="rPublish">${s.reviewedAt ? "수정 내용 공개" : "저장하고 학생에게 공개"}</button>
-      <div class="spacer"></div><button class="btn-sm btn-danger" id="rDelete">기록 삭제</button></div>`);
+      <div class="spacer"></div><button class="btn-sm btn-danger" id="rDelete">기록 삭제</button></div>`, booth);
+  // 부스 AI 피드백이 준비 중이거나 막 끝난 기록이면 열 때마다 그 기록 하나만 다시 읽어 그 자리만 바꿈
+  if (booth && aiReportMaybeComing(s)) refreshAiReport(s).then((changed) => { if (changed && !$("#modal").hidden) replaceAiReport(body, s); }).catch((e) => console.warn("AI 피드백 다시 읽기", e));
   $$("[data-score]", body).forEach((r) => r.oninput = () => { $(`[data-sv="${r.dataset.score}"]`, body).textContent = r.value; });
   $("#rPrompt", body).onclick = () => copyText(feedbackPrompt(s));
   const persist = async (publish) => {

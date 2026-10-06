@@ -129,9 +129,9 @@
   .ycard.on { border: 2px solid var(--accent-fill); background: var(--accent-faint); color: var(--accent); }
   .ycard:disabled, .ycard.dis { opacity: .45; }
   /* 제시문 · MMI 묶음 카드 (안의 두 단추 중 하나만) */
-  .ycard.ypm { cursor: pointer; align-content: start; }
+  .ycard.ypm { cursor: pointer; align-content: start; border: 1px solid var(--line); }   /* div 라서 단추 기본 테두리가 없음 → 직접 */
   .ysub { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 4px; }
-  .ysub button { border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 6px 8px; text-align: left; display: grid; gap: 1px; min-height: 0; min-width: 0; }
+  .ysub button { border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 6px 8px; text-align: left; display: grid; gap: 1px; min-height: 0; min-width: 0; white-space: normal; align-content: start; }
   .ysub button b { font-size: .92rem; } .ysub button span { font-size: .72rem; color: var(--ink-3); }
   .ysub button.on { border: 2px solid var(--accent-fill); background: #fff; color: var(--accent); }
   .ysub button:disabled { opacity: .45; }
@@ -2089,7 +2089,7 @@ async function typesPhase() {
     return `<div class="ycard ypm ${on ? "on" : ""} ${n("pm") ? "" : "dis"}" data-card="pm" role="button" tabindex="0">
       <b>제시문 · MMI${PM.some((k) => recd.includes(k)) ? `<em>추천</em>` : ""}</b>
       <div class="ysub">${PM.map((k) => { const t = IV_TYPES.find((x) => x.k === k);
-        return `<button type="button" class="${on === k ? "on" : ""}" data-card="${k}" ${n(k) ? "" : "disabled"}><b>${k === "mmi" ? "MMI" : "제시문"}</b><span>${n(k) ? `${t.desc} · ${n(k)}개` : "질문 없음"}</span></button>`; }).join("")}</div></div>`;
+        return `<button type="button" class="${on === k ? "on" : ""}" data-card="${k}" ${n(k) ? "" : "disabled"}><b>${k === "mmi" ? "MMI" : "제시문"}</b><span>${n(k) ? `${t.desc.replace(/^.*?(준비)/, "$1")}<br>${n(k)}개` : "질문 없음"}</span></button>`; }).join("")}</div></div>`;
   };
   const draw = () => {
     setPhase("types", true);

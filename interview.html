@@ -46,6 +46,15 @@
   .basis-box { display: flex; gap: 8px; align-items: flex-start; background: #f0f5fa; border: 1px dashed #bccee5; border-radius: 10px; padding: 9px 12px; margin: 6px 0 8px; font-size: .9rem; color: #41639b; }
   .basis-box svg { flex: none; margin-top: 2px; }
   .basis-box b { font-weight: 700; }
+  /* 제시문 · MMI: 둘 중 하나 고르기 */
+  .kind-pick { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0 4px; }
+  .kind-pick button { font: inherit; text-align: left; border: 1.5px solid var(--line); background: #fff; border-radius: 16px; padding: 12px 14px; display: grid; gap: 3px; cursor: pointer; min-width: 0; color: var(--ink); }
+  .kind-pick button b { font-size: 1rem; } .kind-pick button span { font-size: .78rem; color: var(--ink-3); font-weight: 400; }
+  .kind-pick button em { font-style: normal; font-size: .74rem; font-weight: 700; justify-self: start; border-radius: 99px; padding: 1px 8px; }
+  .kind-pick .k-passage { background: #efe9f4; color: #6a4e86; } .kind-pick .k-mmi { background: var(--warn-bg); color: var(--warn); }
+  .kind-pick button.on { border-color: var(--black, var(--accent-fill)); background: var(--accent-faint); box-shadow: inset 0 0 0 1px var(--black, var(--accent-fill)); }
+  .kind-pick button:disabled { opacity: .45; cursor: default; }
+  .kind-pick .rec { font-size: .68rem; font-weight: 700; background: var(--lime, var(--ok-bg)); color: var(--black, var(--ok)); border-radius: 99px; padding: 1px 7px; vertical-align: 2px; }
 </style>
 <script>
 /* 새 버전 확인 (수정 금지 · 모든 화면 공통)
@@ -194,7 +203,7 @@
 <script type="app-module">
 import {
   db, requireRole, collection, doc, getDocs, addDoc, updateDoc, serverTimestamp, loadInterviewsFor, cachedCollection,
-  esc, $, toast, showError, TYPES, typeBadge, fmtSec, shuffle, icon
+  esc, $, toast, showError, TYPES, typeBadge, fmtSec, shuffle, icon, pmKindOf
 } from "./common.js";
 
 const { user, profile } = await requireRole("student");
@@ -203,9 +212,14 @@ document.getElementById("logoutBtn").onclick = async () => {
 };
 let depts = [];
 try { depts = (await loadInterviewsFor(profile.studentNo)).map((u) => u.dept || "").filter(Boolean); } catch (e) { console.warn(e); }
-const mode = new URLSearchParams(location.search).get("mode") || "document";
-const MODE_LABEL = { personal: "내 생기부 면접", document: "학생부 공통 질문", passage: "제시문 면접", personality: "기본 인성·MMI" };
-$("#modeLabel").textContent = MODE_LABEL[mode] || mode;
+// mode: personal · document · pm(제시문 · MMI — 들어와서 kind 로 둘 중 하나) · personality(기본 인성만)
+// 예전 주소 mode=passage / mode=mmi 는 pm 으로 열고 그쪽을 고른 상태로
+const modeParam = new URLSearchParams(location.search).get("mode") || "document";
+const isPm = ["pm", "passage", "mmi"].includes(modeParam);
+let mode = isPm ? "passage" : modeParam;          // 기록에 남는 실제 유형 (pm 이면 고른 쪽)
+let kind = modeParam === "mmi" ? "mmi" : modeParam === "passage" ? "passage" : pmKindOf(profile);
+const MODE_LABEL = { personal: "내 생기부 면접", document: "학생부 공통 질문", passage: "제시문 면접", mmi: "MMI 면접", personality: "기본 인성", pm: "제시문 · MMI" };
+$("#modeLabel").textContent = MODE_LABEL[isPm ? "pm" : mode] || mode;
 const app = $("#app");
 
 // ---------- 음성 기능 지원 여부
@@ -214,6 +228,7 @@ const hasTTS = "speechSynthesis" in window;
 
 // ---------- 질문 불러오기
 let pool = [];
+const pmPools = { passage: [], mmi: [] };      // 제시문 · MMI: 둘을 따로 담아 두고 고른 쪽을 pool 로
 try {
   if (mode === "personal") {
     const snap = await getDocs(collection(db, "students", profile.studentNo, "personalQuestions"));
@@ -221,9 +236,14 @@ try {
   } else {
     const all = await cachedCollection("questions");   // 질문은행: 바뀌었을 때만 서버에서 받음
     const relevant = (q) => !q.majors?.length || depts.some((d) => q.majors.some((m) => d.includes(m)));
-    pool = all.map((q) => ({ ...q, source: "bank" })).filter((q) => {
-      if (mode === "personality") return q.type === "personality" || q.type === "mmi";
-      if (mode === "passage") return q.type === "passage";
+    const bankQ = all.map((q) => ({ ...q, source: "bank" }));
+    if (isPm) {
+      pmPools.passage = bankQ.filter((q) => q.type === "passage");
+      pmPools.mmi = bankQ.filter((q) => q.type === "mmi");
+      if (!pmPools[kind].length) kind = kind === "mmi" ? "passage" : "mmi";   // 고른 쪽에 질문이 없으면 다른 쪽
+      mode = kind; pool = pmPools[kind];
+    } else pool = bankQ.filter((q) => {
+      if (mode === "personality") return q.type === "personality";        // 기본 인성만 (MMI 는 제시문 · MMI 쪽으로)
       return q.type === mode && relevant(q);
     });
   }
@@ -234,23 +254,40 @@ if (!pool.length) {
   throw new Error("no questions");
 }
 
-// ---------- 설정 화면
+// ---------- 설정 화면 (제시문 · MMI 는 맨 위에서 둘 중 하나를 고르고, 고르면 다시 그린다)
 const settings = { count: Math.min(5, pool.length), follow: true, tts: hasTTS, stt: !!SR, timeScale: 1 };
-const isPassage = mode === "passage";
+const KIND = {
+  passage: { title: "제시문 면접", time: `제시문 읽고 준비 ${TYPES.passage.prep / 60}분 · 답변 ${TYPES.passage.answer / 60}분` },
+  mmi: { title: "MMI", time: `상황 읽고 준비 ${TYPES.mmi.prep / 60}분 · 답변 ${TYPES.mmi.answer / 60}분` }
+};
+const kindPick = () => !isPm ? "" : `<div class="kind-pick">${["passage", "mmi"].map((k) => `
+  <button type="button" class="${k === kind ? "on" : ""}" data-kind="${k}" ${pmPools[k].length ? "" : "disabled"}>
+    <b>${KIND[k].title}${k === pmKindOf(profile) && (profile.special || "").match(/제시문|MMI/) ? ' <span class="rec">내 트랙</span>' : ""}</b>
+    <span>${pmPools[k].length ? KIND[k].time : "아직 질문이 없어요"}</span><em class="k-${k}">${pmPools[k].length}문항</em></button>`).join("")}</div>`;
+function renderSetup() {
+const timeText = mode === "passage" ? `준비 ${TYPES.passage.prep / 60}분 · 답변 ${TYPES.passage.answer / 60}분 기본 (문항별 설정 우선)`
+  : mode === "mmi" ? `준비 ${TYPES.mmi.prep / 60}분 · 답변 ${TYPES.mmi.answer / 60}분 기본 (문항별 설정 우선)` : "유형별 기본 답변시간 사용";
 app.innerHTML = `
   <div class="card">
-    <h1>${esc(MODE_LABEL[mode])}</h1>
-    <p class="muted">질문 ${pool.length}개 중에서 무작위로 출제됩니다. 실제 면접처럼 소리 내어 답해 보세요.</p>
+    <h1>${esc(MODE_LABEL[isPm ? "pm" : mode])}</h1>
+    ${isPm ? `<p class="muted" style="margin:0">무엇을 연습할지 고르세요.</p>${kindPick()}` : ""}
+    <p class="muted">${isPm ? `${esc(KIND[kind].title)} ` : ""}질문 ${pool.length}개 중에서 무작위로 출제됩니다. 실제 면접처럼 소리 내어 답해 보세요.</p>
     <div class="opt"><div class="grow"><b>문항 수</b></div>
       <select id="optCount">${[...new Set([1, 3, 5, 7, 10].filter((n) => n < pool.length).concat(pool.length))]
         .map((n) => `<option value="${n}" ${n === settings.count ? "selected" : ""}>${n === pool.length ? `전체 (${n})` : n}</option>`).join("")}</select></div>
-    <div class="opt"><div class="grow"><b>시간</b><div class="muted">${isPassage ? "준비 10분 · 답변 7분 기본 (문항별 설정 우선)" : "유형별 기본 답변시간 사용"}</div></div>
+    <div class="opt"><div class="grow"><b>시간</b><div class="muted">${timeText}</div></div>
       <select id="optTime"><option value="1">기본</option><option value="0.7">빡빡하게 (70%)</option><option value="1.5">여유 있게 (150%)</option></select></div>
     <div class="opt"><input type="checkbox" id="optFollow" checked><div class="grow"><b>꼬리질문</b><div class="muted">답변 뒤 이어지는 질문 1개 (60초)</div></div></div>
     <div class="opt"><input type="checkbox" id="optTts" ${hasTTS ? "checked" : "disabled"}><div class="grow"><b>질문 읽어주기</b><div class="muted">${hasTTS ? "면접관처럼 질문을 소리로 들려줍니다" : "이 브라우저는 지원하지 않아요"}</div></div></div>
     <div class="opt"><input type="checkbox" id="optStt" ${SR ? "checked" : "disabled"}><div class="grow"><b>음성 받아쓰기</b><div class="muted">${SR ? "말한 내용이 자동으로 답변란에 기록됩니다 (마이크 권한 필요)" : "크롬/엣지에서만 지원돼요. 답변은 직접 입력하세요"}</div></div></div>
-    <div style="margin-top:18px"><button class="btn-primary btn-lg" id="start">면접 시작</button></div>
+    <div style="margin-top:18px"><button class="btn-primary btn-lg" id="start">${isPm ? (kind === "mmi" ? "MMI 면접 시작" : "제시문 면접 시작") : "면접 시작"}</button></div>
   </div>`;
+document.querySelectorAll("[data-kind]").forEach((b) => b.onclick = () => {
+  if (b.dataset.kind === kind || !pmPools[b.dataset.kind].length) return;
+  kind = mode = b.dataset.kind; pool = pmPools[kind];
+  settings.count = Math.min(5, pool.length);
+  renderSetup();
+});
 
 $("#start").onclick = async () => {
   settings.count = Number($("#optCount").value);
@@ -261,6 +298,8 @@ $("#start").onclick = async () => {
   $("#start").disabled = true;
   await begin();
 };
+}
+renderSetup();
 
 // ---------- 세션
 let sessionRef = null;

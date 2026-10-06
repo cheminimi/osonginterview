@@ -10,7 +10,7 @@ const KW = { strong: 3, mid: 2 };                              // 낱말 칩 진
 const FOLLOW_SEC = 60;                                         // 꼬리질문 답변 기준 시간 (부스와 같음)
 const AI_PENDING_MAX = 30 * 60 * 1000;                         // 이보다 오래 '준비 중'이면 멈춘 것으로 보고 숨김
 const IV_LABEL = { A: "A 교수", B: "B 교수", C: "C 교수", D: "D 교수" };
-const TYPE_LABEL = { personal: "내 생기부 면접", document: "학생부 공통 질문", passage: "제시문 면접", personality: "기본 인성·MMI" };
+const TYPE_LABEL = { personal: "내 생기부 면접", document: "학생부 공통 질문", passage: "제시문 면접", mmi: "MMI 면접", personality: "기본 인성" };
 const RULE_LABEL = { role: "역할", evidence: "근거", limit: "아쉬운 점", link: "학과 연결" };
 
 export const isBoothSession = (s) => s?.mode === "booth";

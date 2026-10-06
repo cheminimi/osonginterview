@@ -721,10 +721,14 @@ export function recommendedModes(st) {
   const out = [];
   if (t.includes("학생부")) out.push("personal", "document");
   if (t.includes("인성") || t.includes("담임")) out.push("personality");
-  if (sp.includes("제시문")) out.push("passage");
-  if (sp.includes("MMI")) out.push("personality");
+  if (sp.includes("제시문") || sp.includes("MMI")) out.push("pm");     // 제시문 · MMI 묶음 (2026-10-06: 기본 인성과 MMI 를 나눔)
   if (!out.length) out.push("document", "personality");
   return [...new Set(out)];
+}
+/** '제시문 · MMI' 에서 먼저 고를 쪽: 특별 트랙이 MMI 만이면 "mmi", 아니면 "passage" */
+export function pmKindOf(st) {
+  const sp = st?.special || "";
+  return sp.includes("MMI") && !sp.includes("제시문") ? "mmi" : "passage";
 }
 
 // AI 답변 붙여넣기 파서: 코드블록·앞뒤 설명·요청문이 섞여 있어도 질문 목록(JSON)만 뽑아낸다.

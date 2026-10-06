@@ -127,7 +127,14 @@
   .ycard em { font-style: normal; font-size: .72rem; background: var(--ok-bg); color: var(--ok); border-radius: 999px; padding: 2px 8px; }
   .ycard span { font-size: .82rem; color: var(--ink-3); font-weight: 400; }
   .ycard.on { border: 2px solid var(--accent-fill); background: var(--accent-faint); color: var(--accent); }
-  .ycard:disabled { opacity: .45; }
+  .ycard:disabled, .ycard.dis { opacity: .45; }
+  /* 제시문 · MMI 묶음 카드 (안의 두 단추 중 하나만) */
+  .ycard.ypm { cursor: pointer; align-content: start; }
+  .ysub { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 4px; }
+  .ysub button { border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 6px 8px; text-align: left; display: grid; gap: 1px; min-height: 0; min-width: 0; }
+  .ysub button b { font-size: .92rem; } .ysub button span { font-size: .72rem; color: var(--ink-3); }
+  .ysub button.on { border: 2px solid var(--accent-fill); background: #fff; color: var(--accent); }
+  .ysub button:disabled { opacity: .45; }
   /* 제시문 */
   .psg { border: 1px solid #ebe6d6; background: #fbfaf6; border-radius: 10px; padding: 10px 14px; }
   .psg summary { cursor: pointer; font-size: .88rem; font-weight: 700; color: var(--ink-2); }
@@ -479,7 +486,7 @@
 import {
   auth, db, signIn, signOut, resolveLoginEmail, requireRole, clearDataCache,
   collection, doc, getDoc, getDocs, addDoc, updateDoc, setDoc, serverTimestamp, cachedCollection, loadInterviewsFor,
-  recommendedModes, esc, $, $$, toast, showError, TYPES, fmtSec, shuffle, isAdminEmail
+  recommendedModes, pmKindOf, esc, $, $$, toast, showError, TYPES, fmtSec, shuffle, isAdminEmail
 } from "./common.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
@@ -531,9 +538,12 @@ const CONFIG = {
 const IV_TYPES = [
   { k: "personal", label: "내 생기부 면접", desc: "내 예상질문" },
   { k: "document", label: "학생부 공통 질문", desc: "지원 학과에 맞는 학생부 질문" },
-  { k: "passage", label: "제시문 면접", desc: "제시문 읽고 준비 5분 · 답변 5분" },
-  { k: "personality", label: "기본 인성·MMI", desc: "인성 질문 · MMI 상황 질문(준비 2분)" }
+  // 제시문 · MMI 는 한 카드로 묶고 그 안에서 하나만 고른다 (둘을 함께 고르지 않음 · 2026-10-06)
+  { k: "passage", group: "pm", label: "제시문 면접", desc: "읽고 준비 5분 · 답변 5분" },
+  { k: "mmi", group: "pm", label: "MMI 면접", desc: "상황 읽고 준비 2분 · 답변 3분" },
+  { k: "personality", label: "기본 인성", desc: "가치관·경험·대인관계 질문" }
 ];
+const PM = ["passage", "mmi"];
 const typeLabel = (k) => IV_TYPES.find((t) => t.k === k)?.label || k;
 // 첫 질문·마지막 질문 (학생 예상질문 → 질문은행 → 아래 기본 문구 순서로 찾음)
 const FRAME_Q = {
@@ -641,7 +651,7 @@ const SAY = {
   gazeAgain: "얼굴이 잘 보이지 않아요. 카메라에 얼굴이 보이게 앉아서 다시 면접관을 바라봐 주세요.",
   gazeOff: "시선 분석 없이 진행할게요.",
   noStt: "받아쓰기 없이 진행할게요.",
-  types: "어떤 면접을 볼까요? 내 생기부, 학생부 공통, 제시문, 기본 인성 중에서 골라 주세요. 여러 개를 골라도 돼요.",
+  types: "어떤 면접을 볼까요? 내 생기부, 학생부 공통, 제시문이나 MMI, 기본 인성 중에서 골라 주세요. 여러 개를 골라도 되지만 제시문과 MMI는 하나만 골라요.",
   typesDone: (ls) => `${ls.join(", ")} 순서로 할게요.`,
   prepPassage: (min) => `제시문을 읽고 ${min}분 동안 준비해 주세요. 다 읽었으면 '다 읽었어요'라고 말해 주세요.`,
   prepMmi: (q, min) => `${q} ${min}분 동안 생각을 정리해 주세요. 준비가 되면 '준비됐어요'라고 말해 주세요.`,
@@ -997,7 +1007,7 @@ let stream = null, meter = null;
 let threshold = 0.02;       // 말소리 판정 기준 (장비 점검 때 조정)
 let sttOk = !!SR, sttOff = false;
 let pool = [];              // 남은 질문 (고른 유형 순서대로)
-let poolBy = {};            // 유형별 질문 { personal, document, passage, personality }
+let poolBy = {};            // 유형별 질문 { personal, document, passage, mmi, personality }
 let types = [];             // 고른 면접 유형
 let items = [];             // 물은 질문 (답한 것만 저장)
 let clips = [];             // 녹화 영상 { it, which, blob, url, ext }
@@ -1102,8 +1112,11 @@ function parseTypes(text) {
   const out = [];
   if (/생기부|생활기록부|예상질문|내질문/.test(n)) out.push("personal");
   if (/학생부|공통/.test(n)) out.push("document");
-  if (/제시문/.test(n)) out.push("passage");
-  if (/인성|mmi|엠엠아이|엠엠|상황/.test(n)) out.push("personality");
+  // 제시문·MMI 는 하나만: 둘 다 말하면 먼저 말한 쪽
+  const ip = n.search(/제시문/), im = n.search(/mmi|엠엠아이|엠엠|상황/);
+  if (ip >= 0 && (im < 0 || ip < im)) out.push("passage");
+  else if (im >= 0) out.push("mmi");
+  if (/인성/.test(n)) out.push("personality");
   return IV_TYPES.map((t) => t.k).filter((k) => out.includes(k));
 }
 function parseMin(text) {
@@ -1772,7 +1785,8 @@ async function loadPool() {
       personal: personalQ.filter((q) => !framing(q)),            // 첫·마지막 질문과 겹치는 것은 중간에 내지 않음
       document: bankQ.filter((q) => q.type === "document" && relevant(q) && !framing(q)),
       passage: bankQ.filter((q) => q.type === "passage" && q.passage),
-      personality: bankQ.filter((q) => q.type === "personality" || q.type === "mmi")
+      mmi: bankQ.filter((q) => q.type === "mmi"),
+      personality: bankQ.filter((q) => q.type === "personality")
     };
     pool = Object.values(poolBy).flat();      // 질문이 하나라도 있는지 확인용 (실제 순서는 유형을 고른 뒤 정함)
   } catch (e) { showError(e, "질문 불러오기"); pool = []; poolBy = {}; }
@@ -2059,21 +2073,33 @@ async function checkMedia() {
 // ---------- 면접 시간 ----------// ---------- 면접 유형 (여러 개 가능 · 고른 순서와 상관없이 카드 순서대로 차례로) ----------
 async function typesPhase() {
   const by = (panel.members[1] || panel.members[0]).id;
-  const n = (k) => (poolBy[k] || []).length;
-  const avail = IV_TYPES.map((t) => t.k).filter((k) => n(k) > 0);
-  const recd = recommendedModes(ctx.profile).filter((k) => n(k) > 0);
+  const n = (k) => k === "pm" ? n("passage") + n("mmi") : (poolBy[k] || []).length;
+  // 제시문 · MMI 에서 먼저 고를 쪽 (특별 트랙 → 질문이 있는 쪽)
+  const pmFirst = (() => { const k = pmKindOf(ctx.profile); return n(k) ? k : k === "mmi" ? "passage" : "mmi"; })();
+  const onePm = (ks) => { const p = ks.filter((k) => PM.includes(k)); return p.length > 1 ? ks.filter((k) => !PM.includes(k) || k === p[0]) : ks; };
+  const avail = onePm(IV_TYPES.map((t) => t.k).filter((k) => n(k) > 0 && (!PM.includes(k) || k === pmFirst || !n(pmFirst))));
+  const recd = recommendedModes(ctx.profile).map((k) => (k === "pm" ? pmFirst : k)).filter((k) => n(k) > 0);
   const fallback = recd.length ? recd : avail;
   let sel = [];
+  const card = (t) => `<button type="button" class="ycard ${sel.includes(t.k) ? "on" : ""}" data-card="${t.k}" ${n(t.k) ? "" : "disabled"}>
+        <b>${t.label}${recd.includes(t.k) ? `<em>추천</em>` : ""}</b><span>${n(t.k) ? `${t.desc} · ${n(t.k)}개` : "아직 질문이 없어요"}</span></button>`;
+  // 제시문 · MMI 카드: 카드를 누르면 묶음 켜기/끄기, 안의 두 단추로 하나를 고름
+  const pmCard = () => {
+    const on = sel.find((k) => PM.includes(k));
+    return `<div class="ycard ypm ${on ? "on" : ""} ${n("pm") ? "" : "dis"}" data-card="pm" role="button" tabindex="0">
+      <b>제시문 · MMI${PM.some((k) => recd.includes(k)) ? `<em>추천</em>` : ""}</b>
+      <div class="ysub">${PM.map((k) => { const t = IV_TYPES.find((x) => x.k === k);
+        return `<button type="button" class="${on === k ? "on" : ""}" data-card="${k}" ${n(k) ? "" : "disabled"}><b>${k === "mmi" ? "MMI" : "제시문"}</b><span>${n(k) ? `${t.desc} · ${n(k)}개` : "질문 없음"}</span></button>`; }).join("")}</div></div>`;
+  };
   const draw = () => {
     setPhase("types", true);
-    side(`<div class="phase-l">면접 유형</div><h1 class="ttl">어떤 면접을 볼까요? <small>여러 개 가능</small></h1>
-      <div class="ycards">${IV_TYPES.map((t) => `<button type="button" class="ycard ${sel.includes(t.k) ? "on" : ""}" data-card="${t.k}" ${n(t.k) ? "" : "disabled"}>
-        <b>${t.label}${recd.includes(t.k) ? `<em>추천</em>` : ""}</b><span>${n(t.k) ? `${t.desc} · ${n(t.k)}개` : "아직 질문이 없어요"}</span></button>`).join("")}</div>
+    side(`<div class="phase-l">면접 유형</div><h1 class="ttl">어떤 면접을 볼까요? <small>여러 개 가능 · 제시문과 MMI 는 하나만</small></h1>
+      <div class="ycards">${IV_TYPES.filter((t) => !t.group).map((t) => t.k === "personality" ? pmCard() + card(t) : card(t)).join("")}</div>
       <div class="info"><p>고른 유형을 <b>위 순서대로 차례로</b> 물어봐요. 제시문을 고르면 면접 시간은 20분을 권해요.</p></div>
       ${lstat(sel.length ? `${sel.map(typeLabel).join(" · ")} 골랐어요 · ‘네’라고 하면 시작` : `듣는 중 · 대답이 없으면 추천(${fallback.map(typeLabel).join(" · ")})으로 해요`)}`);
   };
   const done = async (ks) => {
-    ks = IV_TYPES.map((t) => t.k).filter((k) => ks.includes(k) && n(k) > 0);
+    ks = onePm(IV_TYPES.map((t) => t.k).filter((k) => ks.includes(k) && n(k) > 0));
     if (!ks.length) ks = fallback;
     sel = ks; draw();
     await say(SAY.typesDone(ks.map(typeLabel)), { by, cap: "면접 유형 정하기" });
@@ -2086,8 +2112,15 @@ async function typesPhase() {
     const e = await nextUntil(until);
     if (e.type === "tick") return done(sel.length ? sel : fallback);
     if (e.type === "card") {
-      const k = e.value; if (!n(k)) continue;
-      sel = sel.includes(k) ? sel.filter((x) => x !== k) : [...sel, k];
+      let k = e.value; if (!n(k)) continue;
+      if (k === "pm") {                     // 묶음 카드: 켜져 있으면 끄고, 꺼져 있으면 먼저 고를 쪽으로 켬
+        const on = sel.find((x) => PM.includes(x));
+        sel = on ? sel.filter((x) => x !== on) : [...sel, pmFirst];
+      } else if (PM.includes(k)) {           // 제시문·MMI 단추: 하나만 (다른 쪽은 뺌), 같은 걸 다시 누르면 끔
+        const was = sel.includes(k);
+        sel = sel.filter((x) => !PM.includes(x));
+        if (!was) sel.push(k);
+      } else sel = sel.includes(k) ? sel.filter((x) => x !== k) : [...sel, k];
       draw(); until = now() + CONFIG.noReply; continue;
     }
     let c = e.type === "btn" ? e.name : null;

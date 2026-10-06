@@ -1588,3 +1588,10 @@ body.nd .apphead #scSub { flex: none; margin: 0; }
   .bb-c { padding: 3px; }
   .bb-set { grid-template-columns: 1fr 1fr 52px 52px; }
 }
+
+/* 연습 카드 '제시문 · MMI' — 제시문 n · MMI n (2026-10-06) */
+.modes .mode .pm-split { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.modes .mode .pm-split i { font-style: normal; font-size: .72rem; font-weight: 700; border-radius: 99px; padding: 1px 8px; }
+.modes .mode .pm-split i.p { background: #efe9f4; color: #6a4e86; } .modes .mode .pm-split i.m { background: var(--warn-bg); color: var(--warn); }
+.modes .mode .pm-split i.zero { opacity: .5; }
+.modes .mode.feat .pm-split i { background: rgba(255,255,255,.22); color: #fff; }

@@ -272,15 +272,17 @@ const rec = recommendedModes(me);
 const modes = [
   { mode: "personal", title: "내 생기부 면접", desc: "선생님이 준비한 질문과 내가 만든 질문", n: personal.length, badge: "document" },
   { mode: "document", title: "학생부 공통 질문", desc: "지원동기·학업계획·활동 질문", n: bank.filter((q) => q.type === "document" && relevant(q)).length, badge: "document" },
-  { mode: "passage", title: "제시문 면접", desc: "준비시간 동안 제시문 읽고 답변", n: bank.filter((q) => q.type === "passage").length, badge: "passage" },
-  { mode: "personality", title: "기본 인성 · MMI", desc: "가치관·경험·상황 판단 질문", n: bank.filter((q) => q.type === "personality" || q.type === "mmi").length, badge: "personality" }
+  // 제시문 · MMI 는 한 장으로 묶고 들어가서 둘 중 하나를 고른다. 기본 인성은 따로 (2026-10-06)
+  { mode: "pm", title: "제시문 · MMI", desc: "준비 시간 동안 읽고 정리한 뒤 답변", n: bank.filter((q) => q.type === "passage" || q.type === "mmi").length, badge: "passage",
+    split: [["제시문", bank.filter((q) => q.type === "passage").length, "p"], ["MMI", bank.filter((q) => q.type === "mmi").length, "m"]] },
+  { mode: "personality", title: "기본 인성", desc: "가치관·경험·대인관계 질문", n: bank.filter((q) => q.type === "personality").length, badge: "personality" }
 ].sort((a, b) => (rec.includes(b.mode) ? 1 : 0) - (rec.includes(a.mode) ? 1 : 0));
-const MODE_IC = { personal: "note", document: "book", passage: "list", personality: "heart" };
+const MODE_IC = { personal: "note", document: "book", pm: "list", personality: "heart" };
 const secTxt = (n) => n >= 60 && n % 60 === 0 ? `${n / 60}분` : `${n}초`;
 const MODE_TIME = {
   personal: `답변 ${secTxt(TYPES.document.answer)}씩`, document: `답변 ${secTxt(TYPES.document.answer)}씩`,
-  passage: `준비 ${secTxt(TYPES.passage.prep)} · 답변 ${secTxt(TYPES.passage.answer)}`,
-  personality: `답변 ${secTxt(TYPES.personality.answer)} · MMI 준비 ${secTxt(TYPES.mmi.prep)}`
+  pm: `제시문 준비 ${secTxt(TYPES.passage.prep)} · MMI 준비 ${secTxt(TYPES.mmi.prep)}`,
+  personality: `답변 ${secTxt(TYPES.personality.answer)}씩`
 };
 // 선생님이 넣은 예상질문 (학생이 만든 것 제외)
 const teacherPq = () => personal.filter((q) => !isStudentPq(q));
@@ -294,6 +296,7 @@ $("#modes").innerHTML = [...modes].sort((a, b) => (b.mode === featMode) - (a.mod
     ${m.mode === "personal" && teacherPq().length ? '<span class="by">선생님이 준비</span>' : rec.includes(m.mode) ? '<span class="by">내 트랙 추천</span>' : ""}
     <h4>${m.title}</h4><p>${m.desc}</p>
     <span class="tm">${m.n ? MODE_TIME[m.mode] : "아직 질문이 없어요"}</span>
+    ${m.split && m.n ? `<span class="pm-split">${m.split.map(([t, k, c]) => `<i class="${c}${k ? "" : " zero"}">${t} ${k}</i>`).join("")}</span>` : ""}
     <span class="mf"><span class="cnt">${m.n}<small>문항</small></span><span class="sp"></span><span class="go2">${icon("arrow", 16)}</span></span>
   </button>`).join("");
 $$("#modes .mode").forEach((el) => el.onclick = () => location.href = `interview.html?mode=${el.dataset.mode}`);
@@ -635,7 +638,7 @@ function renderHome() {
 
 const WD = "일월화수목금토";
 const mdw = (v) => { const d = toDateSafe(v) || new Date(v); return `${d.getMonth() + 1}/${d.getDate()} (${WD[d.getDay()]})`; };
-const REC_LABEL = { personal: "내 생기부", document: "학생부 공통", passage: "제시문", personality: "인성·MMI" };
+const REC_LABEL = { personal: "내 생기부", document: "학생부 공통", pm: "제시문·MMI", passage: "제시문", personality: "기본 인성" };
 const AVC = ["#5583cc", "#a8b746", "#7a8fb8"];
 const HERO_ART = `<svg class="art" viewBox="0 0 260 230" aria-hidden="true">
   <circle cx="178" cy="112" r="96" fill="rgba(255,255,255,.10)"/><circle cx="178" cy="112" r="62" fill="rgba(255,255,255,.12)"/>

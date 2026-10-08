@@ -6,7 +6,7 @@ import {
 
 export const S = {
   ctx: null,
-  students: [], staff: [], meetings: [], sessions: [], bank: [], interviews: [],
+  students: [], removedStudents: [], staff: [], meetings: [], sessions: [], bank: [], interviews: [],
   bookings: [], needMine: [], reviews: [], blockLabel: () => "",
   renderers: {}
 };
@@ -25,7 +25,10 @@ export async function loadAll({ force = false, refreshMeta = false } = {}) {
       cachedCollection("students", { force }), cachedCollection("staff", { force }),
       cachedCollection("meetings", { force }), cachedCollection("interviews", { force })
     ]);
-    S.students = st.sort((a, b) => String(a.studentNo).localeCompare(String(b.studentNo), "ko", { numeric: true }));
+    const byNo = (a, b) => String(a.studentNo).localeCompare(String(b.studentNo), "ko", { numeric: true });
+    // 앱 관리에서 '삭제'한 학생은 어느 화면에도 안 나온다 (기록은 남음). 관리 → ③ 학생 계정의 '삭제한 학생'에서만 보임
+    S.students = st.filter((s) => !s.removed).sort(byNo);
+    S.removedStudents = st.filter((s) => s.removed).sort(byNo);
     S.staff = sf.sort((a, b) => String(a.name).localeCompare(String(b.name), "ko"));
     S.meetings = mt.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
     S.interviews = iv;

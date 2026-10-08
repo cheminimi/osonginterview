@@ -1,8 +1,9 @@
 import {
   db, collection, doc, getDocs, setDoc, updateDoc, deleteDoc, writeBatch, query, where, serverTimestamp,
-  $, $$, esc, toast, showError, copyText, issueAccount, loginDocId, randomPw, defaultEmail, createAuthUser
+  $, $$, esc, toast, showError, copyText, issueAccount, loginDocId, randomPw, defaultEmail, createAuthUser,
+  deleteField, TRACKS, SPECIALS
 } from "./common.js";
-import { S, register, rerender, loadAll, openModal, closeModal, opt, studentByNo } from "./t-core.js";
+import { S, register, rerender, loadAll, openModal, closeModal, opt, studentByNo, myName, readForm } from "./t-core.js";
 import { getDoc, clearDataCache, readStats, getMetaVersions } from "./common.js";
 import { firebaseConfig } from "./firebase-config.js";
 import { importStaff } from "./importers.js";
@@ -177,12 +178,19 @@ function renderStudentAccounts() {
       <div class="spacer"></div>
       <button id="saShow">초기 비밀번호 표 보기</button>
       <button class="btn-primary" id="saIssue" ${S.students.length === issued.length ? "disabled" : ""}>미발급 ${S.students.length - issued.length}명 발급</button>
+      <button id="saAdd">+ 학생 추가</button>
     </div>
     <div class="card table-wrap"><table><thead><tr><th>학번</th><th>이름</th><th>상태</th><th></th></tr></thead><tbody>
       ${S.students.filter((s) => !kw || `${s.name}${s.studentNo}`.includes(kw)).map((s) => `<tr><td>${esc(s.studentNo)}</td><td>${esc(s.name)}</td>
         <td>${!s.uid ? '<span class="muted">미발급</span>' : s.mustChangePw ? `초기 비번 <span class="pw">${esc(s.initialPw || "")}</span>` : '<span class="badge badge-green">변경 완료</span>'}</td>
-        <td>${s.uid ? `<button class="btn-sm" data-reissue="${s.studentNo}">비번 재발급</button>` : `<button class="btn-sm" data-issue="${s.studentNo}">발급</button>`}</td></tr>`).join("")}
-    </tbody></table></div>
+        <td class="nowrap">${s.uid ? `<button class="btn-sm" data-reissue="${s.studentNo}">비번 재발급</button>` : `<button class="btn-sm" data-issue="${s.studentNo}">발급</button>`}
+          <button class="btn-sm" data-edit="${s.studentNo}">수정</button> <button class="btn-sm btn-danger" data-sdel="${s.studentNo}">삭제</button></td></tr>`).join("")}
+    </tbody></table>
+    ${S.removedStudents.length ? `<details style="margin-top:12px" ${p.dataset.rmOpen ? "open" : ""} id="saRemoved"><summary><b>삭제한 학생 ${S.removedStudents.length}명</b> <span class="muted">— 목록·로그인에서만 빠졌고 기록은 그대로입니다</span></summary>
+      <table style="margin-top:6px"><tbody>${S.removedStudents.map((s) => `<tr><td>${esc(s.studentNo)}</td><td>${esc(s.name)}</td>
+        <td class="muted">${s.removed?.at ? esc(new Date(s.removed.at).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" })) + " · " : ""}${esc(s.removed?.by || "")} 삭제</td>
+        <td class="nowrap"><button class="btn-sm" data-restore="${s.studentNo}">되살리기</button></td></tr>`).join("")}</tbody></table></details>` : ""}
+    </div>
     <p class="muted">Firebase는 한 곳에서 짧은 시간에 계정을 너무 많이 만들면 잠시 막습니다. 중간에 멈추면 1시간 뒤 같은 버튼을 다시 누르면 남은 학생만 이어서 발급합니다.</p>`;
   $("#saKw", p).oninput = (e) => { p.dataset.kw = e.target.value; renderStudentAccounts(); $("#saKw", p).focus(); $("#saKw", p).setSelectionRange(99, 99); };
   $("#saShow", p).onclick = () => {
@@ -191,6 +199,12 @@ function renderStudentAccounts() {
     const t = resultTable(rows, "student"); const body = openModal("학생 초기 비밀번호 (아직 안 바꾼 학생)", t.html, true); t.bind(body);
   };
   $("#saIssue", p).onclick = () => issueStudents(S.students.filter((s) => !s.uid));
+  $("#saAdd", p).onclick = () => studentForm(null);
+  $$("[data-edit]", p).forEach((b) => b.onclick = () => studentForm(studentByNo(b.dataset.edit)));
+  $$("[data-sdel]", p).forEach((b) => b.onclick = () => removeStudent(studentByNo(b.dataset.sdel)));
+  $$("[data-restore]", p).forEach((b) => b.onclick = () => restoreStudent(S.removedStudents.find((s) => s.studentNo === b.dataset.restore)));
+  const rm = $("#saRemoved", p);
+  if (rm) rm.ontoggle = () => { p.dataset.rmOpen = rm.open ? "1" : ""; };
   $$("[data-issue]", p).forEach((b) => b.onclick = () => issueStudents([studentByNo(b.dataset.issue)]));
   $$("[data-reissue]", p).forEach((b) => b.onclick = () => {
     const s = studentByNo(b.dataset.reissue);
@@ -207,7 +221,7 @@ async function issueStudents(list, reissue = false) {
     try {
       const r = await issueAccount({
         kind: "student", key: s.studentNo, loginId: s.studentNo, role: "student", name: s.name,
-        oldUid: s.uid || null, version: s.uid ? (s.loginVersion || 1) + 1 : 1
+        oldUid: s.uid || null, version: s.uid || s.loginVersion ? (s.loginVersion || 1) + 1 : 1   // 삭제 후 되살린 학생도 예전 로그인 이메일은 다시 못 씀
       });
       // 이 학생의 기존 연습·대면 기록을 새 계정에 연결
       const [ss, mt] = await Promise.all([
@@ -230,6 +244,121 @@ async function issueStudents(list, reissue = false) {
   $("#prog", body).textContent = `완료: 발급 ${ok}명${out.length - ok ? `, 실패 ${out.length - ok}명` : ""}${out.length < list.length ? `, 남은 ${list.length - out.length}명` : ""}`;
   const t = resultTable(out, "student"); $("#result", body).innerHTML = t.html; t.bind(body);
   await loadAll();
+}
+
+// ---- 학생 추가·수정·삭제·되살리기 (관리자만. 시트 '앱연동_학생'에는 바로 동기화)
+const classOf = (no) => /^\d{4,5}$/.test(no) ? `${no[0]}-${Number(no.slice(1, -2))}` : "";   // Code.gs classOf_ 와 같음: 3107 → 3-1
+function staffSelect(name, cur) {
+  const names = S.staff.map((t) => t.name);
+  if (cur && !names.includes(cur)) names.unshift(cur);
+  return `<select name="${name}">${opt(names, cur || "", "— 나중에 —")}</select>`;
+}
+function studentForm(s) {
+  const a = s?.assign || {};
+  const body = openModal(s ? `${s.name}(${s.studentNo}) 학생 정보 수정` : "학생 추가", `<form id="sfF">
+    <div class="grid grid-2" style="gap:0 14px">
+      <div class="field"><label>학번 *</label><input name="studentNo" value="${esc(s?.studentNo || "")}" ${s ? "readonly" : 'required inputmode="numeric" placeholder="예: 3107"'}>
+        <span class="muted" id="sfCls" style="font-size:.8rem">${s ? "학번은 바꿀 수 없어요. 틀렸으면 삭제 후 새로 추가하세요." : "반은 학번에서 자동으로 정해져요."}</span></div>
+      <div class="field"><label>이름 *</label><input name="name" value="${esc(s?.name || "")}" required></div>
+      <div class="field"><label>기본 트랙</label><select name="track">${opt(TRACKS, s?.track || "", "미정")}</select></div>
+      <div class="field"><label>특별 트랙</label><select name="special">${opt(SPECIALS, s?.special || "없음")}</select></div>
+      <div class="field"><label>1차 담임</label>${staffSelect("s1", a.s1)}</div>
+      <div class="field"><label>2차 교과</label>${staffSelect("s2", a.s2)}</div>
+      <div class="field"><label>3차 1위원</label>${staffSelect("s3a", a.s3a)}</div>
+      <div class="field"><label>3차 2위원</label>${staffSelect("s3b", a.s3b)}</div>
+      <div class="field"><label>우선도</label><input name="priority" value="${esc(s?.priority || "")}" placeholder="긴급 / 1순위 / 2순위"></div>
+      <div class="field"><label>준비 시트 링크 (선택)</label><input name="sheetUrl" value="${esc(s?.sheetUrl || "")}" placeholder="https://docs.google.com/…"></div>
+    </div>
+    ${s ? "" : '<label class="row" style="gap:8px;margin:4px 0 12px;font-weight:600"><input type="checkbox" name="issue" checked style="width:18px;height:18px"> 저장하고 바로 계정 발급 (초기 비밀번호 표가 나옴)</label>'}
+    <div class="row"><button class="btn-primary" id="sfSave">${s ? "저장" : "추가"}</button><button type="button" id="sfCancel">취소</button></div>
+  </form>`);
+  $("#sfCancel", body).onclick = closeModal;
+  if (!s) $("[name=studentNo]", body).oninput = (e) => {
+    const no = e.target.value.trim(), c = classOf(no);
+    $("#sfCls", body).textContent = c ? `${no[0]}학년 ${c.split("-")[1]}반` : "반은 학번에서 자동으로 정해져요.";
+  };
+  $("#sfF", body).onsubmit = async (e) => {
+    e.preventDefault();
+    const f = readForm($("#sfF", body));
+    const no = s ? s.studentNo : f.studentNo;
+    if (!f.name) return toast("이름을 넣어 주세요.", "error");
+    const fields = {
+      name: f.name, priority: f.priority, track: f.track, special: f.special, sheetUrl: f.sheetUrl,
+      assign: { s1: f.s1, s2: f.s2, s3a: f.s3a, s3b: f.s3b }, syncFieldsAt: Date.now(), syncedBy: myName() || S.ctx.user.email
+    };
+    const btn = $("#sfSave", body); btn.disabled = true;
+    try {
+      if (s) {
+        const b = writeBatch(db);
+        b.update(doc(db, "students", no), fields);
+        if (s.uid && f.name !== s.name) b.update(doc(db, "accounts", s.uid), { name: f.name });
+        await b.commit();
+        requestSync(["students"]);
+        closeModal(); toast("저장했습니다."); await loadAll();
+        return;
+      }
+      if (!/^\d{4,5}$/.test(no)) { btn.disabled = false; return toast("학번은 숫자 4~5자리로 넣어 주세요 (예: 3107).", "error"); }
+      const gone = S.removedStudents.find((x) => x.studentNo === no);
+      if (gone) { btn.disabled = false; return toast(`${no} ${gone.name}: 삭제한 학생 목록에 있어요. 아래 '삭제한 학생'에서 [되살리기]를 누르세요.`, "error", 7000); }
+      if (studentByNo(no) || (await getDoc(doc(db, "students", no))).exists()) { btn.disabled = false; return toast(`이미 있는 학번이에요 (${no}).`, "error"); }
+      const st = { studentNo: no, cls: classOf(no), firstInterview: "", createdAt: serverTimestamp(), ...fields };
+      await setDoc(doc(db, "students", no), st);
+      requestSync(["students"]);
+      if (f.issue) await issueStudents([{ ...st }]);
+      else { closeModal(); toast(`${f.name} 학생을 추가했습니다.`); await loadAll(); }
+    } catch (err) { btn.disabled = false; showError(err, s ? "학생 정보 저장" : "학생 추가"); }
+  };
+}
+
+// 삭제 = 명단·로그인 계정만 지움. 연습·대면 기록, 일정, 부스 예약, 예상질문, 지원 대학·면접일은 그대로 (되살리면 다시 보임)
+async function removeStudent(s) {
+  const no = s.studentNo;
+  const body = openModal(`${s.name}(${no}) 학생을 삭제할까요?`, `
+    <div class="notice" style="background:var(--danger-bg);border-color:#f1c9c4;color:var(--danger)"><b>지워지는 것</b>
+      <ul style="margin:6px 0 0;padding-left:18px"><li>학생 명단 — 앱 어디에도 안 나옴</li><li>로그인 계정 — 바로 로그인할 수 없음</li><li>시트 ‘앱연동_학생’의 이 학생 행 (자동)</li></ul></div>
+    <div class="notice"><b>남는 것</b> (되살리면 그대로 다시 보임)<ul style="margin:6px 0 0;padding-left:18px" id="rmKeep"><li class="muted">기록 세는 중…</li></ul></div>
+    <div class="row" style="margin-top:12px"><button class="btn-danger" id="rmGo">삭제</button><button id="rmCancel">취소</button></div>`);
+  $("#rmCancel", body).onclick = closeModal;
+  const n = (r) => r.status === "fulfilled" ? r.value.size : "?";
+  Promise.allSettled([
+    getDocs(query(collection(db, "sessions"), where("studentNo", "==", no))),
+    getDocs(query(collection(db, "bookings"), where("studentNo", "==", no))),
+    getDocs(query(collection(db, "boothBookings"), where("studentNo", "==", no))),
+    getDocs(collection(db, "students", no, "personalQuestions"))
+  ]).then(([ss, bk, bb, pq]) => {
+    const el = $("#rmKeep", body); if (!el) return;
+    el.innerHTML = `<li>말하기 연습 기록 ${n(ss)}건 · 대면 모의면접 기록 ${S.meetings.filter((m) => m.studentNo === no).length}건</li>
+      <li>면접 일정 ${n(bk)}건 · 부스 예약 ${n(bb)}건 · 예상질문 ${n(pq)}개</li>
+      <li>지원 대학·면접일 ${(s.universities || []).length}건 (시트 ‘앱연동_면접일’ 행도 그대로)</li>`;
+  });
+  $("#rmGo", body).onclick = async () => {
+    $("#rmGo", body).disabled = true;
+    try {
+      const b = writeBatch(db);
+      b.update(doc(db, "students", no), {
+        removed: { at: Date.now(), by: myName() || S.ctx.user.email },
+        uid: deleteField(), initialPw: deleteField(), mustChangePw: deleteField(),   // loginVersion 은 남김 (되살려 재발급할 때 새 이메일로)
+        syncFieldsAt: Date.now()
+      });
+      if (s.uid) b.delete(doc(db, "accounts", s.uid));
+      b.delete(doc(db, "logins", loginDocId("student", s.loginId || no)));
+      await b.commit();
+      requestSync(["students"]);
+      closeModal();
+      toast(`${s.name} 학생을 삭제했습니다. 로그인 계정(Authentication)은 Firebase 콘솔에서 지우면 깔끔해요 (안 지워도 로그인은 안 됨).`, "ok", 8000);
+      await loadAll();
+    } catch (e) { $("#rmGo", body).disabled = false; showError(e, "학생 삭제"); }
+  };
+}
+
+async function restoreStudent(s) {
+  if (!confirm(`${s.name}(${s.studentNo}) 학생을 되살릴까요? 명단과 시트 행이 돌아오고, 계정은 [발급]을 눌러 새 초기 비밀번호로 만들어요.`)) return;
+  try {
+    await updateDoc(doc(db, "students", s.studentNo), { removed: deleteField(), syncFieldsAt: Date.now(), syncedBy: myName() || S.ctx.user.email });
+    requestSync(["students"]);
+    toast(`${s.name} 학생을 되살렸습니다. 계정은 표에서 [발급]을 누르세요.`);
+    await loadAll();
+  } catch (e) { showError(e, "학생 되살리기"); }
 }
 
 // ================= ① 시트 연동 =================

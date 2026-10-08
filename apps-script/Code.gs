@@ -264,11 +264,19 @@ function merge_(kind, rows, docs, fields, h) {
 function mergeStudents_() {
   const sh = getOrThrow_(SpreadsheetApp.getActive(), TAB.STUDENTS);
   const table = readTable_(sh, STUDENT_COLS);
+  // 앱 관리에서 '삭제'한 학생(removed 표시): 시트 행을 지우고 다시 올리지 않는다. 기록은 앱에 그대로 남는다.
+  const removed = {};
+  fsListCached_('students').forEach(function (d) { if (d.fields.removed) removed[d.id] = true; });
+  const removedRows = [];
   const rows = table.rows.filter(function (r) { return r.data.studentNo; }).map(function (r) {
     r.id = String(r.data.studentNo); return r;
+  }).filter(function (r) {
+    if (removed[r.id]) { removedRows.push(r); return false; }
+    return true;
   });
   const docs = {}, raw = {};
   fsListCached_('students').forEach(function (d) {
+    if (removed[d.id]) return;   // 되살리면 removed 가 없어져 새 학생처럼 시트에 한 줄 추가된다
     const f = d.fields;
     raw[d.id] = f;
     docs[d.id] = {
@@ -298,12 +306,13 @@ function mergeStudents_() {
       if (row) table.setRow(row.rowNum, vals, '앱');
       else appends.push(vals);
     },
-    rowOnlyInState: function () { return 'keep'; },        // 학생은 앱에서 지우지 않으므로 다시 올림
+    rowOnlyInState: function () { return 'keep'; },        // 앱 문서가 사라진 행(콘솔에서 지움 등)은 다시 올림. 앱 '삭제'는 위 removed 로 처리
     docOnlyInState: function () { return 'ignore'; },      // 시트에서 행을 지워도 앱 학생은 유지
     docOnlyNew: function () { return 'append'; },
     deleteDoc: function () {},
     flush: function () {}
   });
+  if (removedRows.length) { table.deleteRows(removedRows.map(function (r) { return r.rowNum; })); res.deleted += removedRows.length; }
   appends.forEach(function (v) { table.appendRow(v, '앱'); });
   table.ensureFormulas();
   fsBatch_(writes);

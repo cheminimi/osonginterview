@@ -74,8 +74,11 @@ const weeklyOffAt = (bcfg, date, block, res) => {
   const dow = toDate(date)?.getDay();
   return bcfg.weeklyOff.some((w) => Number(w.dow) === dow && w.block === block && (w.res === "all" || w.res === res));
 };
-/** 같은 날 칸 번호 목록에서 가장 긴 연속 길이 */
-const maxRunOf = (idx) => { const s = [...new Set(idx)].sort((a, b) => a - b); let best = 0, run = 0; s.forEach((v, k) => { run = k && v === s[k - 1] + 1 ? run + 1 : 1; best = Math.max(best, run); }); return best; };
+/** 바로 이어진 칸: 앞 칸 끝과 다음 칸 시작 사이가 이 분 이하 (교시 사이 쉬는 시간 10분은 이어진 것으로, 그보다 길면 따로) */
+const RUN_GAP = 10;
+const joined = (a, b) => !!a && !!b && toMin(b.start) - toMin(a.end) <= RUN_GAP;
+/** 같은 날 칸 번호 목록에서 가장 긴 연속 길이 (list = 그날 칸 목록 — 번호가 붙어 있어도 쉬는 시간이 길면 끊음) */
+const maxRunOf = (idx, list) => { const s = [...new Set(idx)].sort((a, b) => a - b); let best = 0, run = 0; s.forEach((v, k) => { run = k && v === s[k - 1] + 1 && joined(list[s[k - 1]], list[v]) ? run + 1 : 1; best = Math.max(best, run); }); return best; };
 
 // ================= 화면 =================
 /**
@@ -310,13 +313,13 @@ export function mountBoothBooking(root, opts) {
   /** 이어서 한 칸 더 잡을 수 있는지 (같은 자리 바로 다음 칸) */
   function nextOk(r, sl, who) {
     const nx = slotsOfDay()[sl.i + 1];
-    if (!nx) return null;
+    if (!nx || !joined(sl, nx)) return null;          // 쉬는 시간이 길면 이어서 잡지 않음
     const d = st.date;
     if (closedAt(d, r.key, nx.start) || weeklyOffAt(st.bcfg, d, nx.block, r.key)) return null;
     if (idsAt(d, r.key, nx.start).length >= r.cap) return null;
     if (isStudent) {
       if (cellState(nx, r.key).k !== "free" && cellState(nx, r.key).k !== "part") return null;
-      if (maxRunOf([...myIdx(d), sl.i, nx.i]) > st.bcfg.maxRun) return null;
+      if (maxRunOf([...myIdx(d), sl.i, nx.i], slotsOfDay()) > st.bcfg.maxRun) return null;
     } else if (who && dayBookingsOf(who).some((b) => overlapIdx(b, nx))) return null;
     return nx;
   }
@@ -327,7 +330,7 @@ export function mountBoothBooking(root, opts) {
   function openSheet(r, sl) {
     document.getElementById("bbSheet")?.remove();
     const d = st.date, stu = !isStudent ? (opts.getStudents?.() || []) : [];
-    if (isStudent && maxRunOf([...myIdx(d), sl.i]) > st.bcfg.maxRun) return toast(`바로 이어진 칸은 ${st.bcfg.maxRun}개까지만 잡을 수 있어요.`, "error");
+    if (isStudent && maxRunOf([...myIdx(d), sl.i], slotsOfDay()) > st.bcfg.maxRun) return toast(`바로 이어진 칸은 ${st.bcfg.maxRun}개까지만 잡을 수 있어요.`, "error");
     document.body.insertAdjacentHTML("beforeend", `<div class="bb-sheet-bg" id="bbSheet"><form class="bb-sheet" role="dialog" aria-modal="true" aria-labelledby="bbT" novalidate>
       <div class="bb-grip"></div>
       <h3 id="bbT">${esc(r.name)} 예약</h3><div class="muted">${esc(r.place)}${r.cap > 1 ? ` · 최대 ${r.cap}명이 함께` : " · 혼자 사용"}</div>

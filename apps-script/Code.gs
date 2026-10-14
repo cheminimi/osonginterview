@@ -16,7 +16,11 @@
  *   - 앱에서 고치면 앱이 즉시 동기화를 요청 → 시트에 반영 (실패해도 정기 대조 때 반영)
  *   - 양쪽이 같은 행을 둘 다 고쳤으면 나중에 고친 쪽이 이김
  *   - 삭제: 면접일 행은 어느 쪽에서 지워도 양쪽에서 삭제 / 학생은 삭제하지 않음 / 모의 면접 기록은 앱에서만 삭제
+ *   - 모의면접 일정(앱에서 신청·수락): 변경 로그 → '면접 기록' 탭(계속 쌓임), 현재 일정 → '면접 일정표' 탭,
+ *     확정되면 '모의 면접 기록'에 예정 행 자동 추가 (앱 → 시트 한 방향)
  */
+
+const SCRIPT_VERSION = 'v12 (2026-10-10)';   // 동기화 결과창에 표시됩니다
 
 // ===================== 설정 (직접 입력) =====================
 const CONFIG = {
@@ -34,8 +38,15 @@ const TAB = {
   ASSIGN: '1. 3회 지도 배정안',
   SURVEY: '설문지 응답 시트1',
   CALENDAR: '5. 면접 달력',
-  MEETINGS: '모의 면접 기록'   // 통합 플랫폼 파일 안
+  MEETINGS: '모의 면접 기록',  // 통합 플랫폼 파일 안
+  REVIEWS: '면접 후기',         // 학생이 쓴 실제 대학 면접 후기 (통합 플랫폼 파일 안 · 앱 → 시트 한 방향)
+  BOOK_LOG: '면접 기록',        // 모의면접 일정 변경 로그 (이 파일)
+  BOOK_TABLE: '면접 일정표'     // 현재 잡혀 있는 모의면접 일정 (이 파일)
 };
+const BOOK_LOG_HEAD = ['기록 시각', '행동', '한 사람', '상태', '차수', '학반', '학번', '이름', '담당교사', '날짜', '시간', '칸', '장소', '메시지', '예약ID'];
+const BOOK_TABLE_HEAD = ['날짜', '요일', '시간', '칸', '차수', '학반', '학번', '이름', '담당교사', '장소', '상태', '수락 대기', '예약ID'];
+const BOOK_STATUS = { requested: '요청 중', confirmed: '확정', cancelled: '취소', rejected: '거절' };
+const BOOK_STAGE = { 1: '1차 담임', 2: '2차 교과', 3: '3차 모의면접' };
 
 const STUDENT_COLS = [
   ['학번', 'studentNo'], ['이름', 'name'], ['반', 'cls'], ['우선도', 'priority'],
@@ -48,6 +59,9 @@ const INTERVIEW_COLS = [
   ['학번', 'studentNo'], ['이름', 'name'], ['대학', 'univ'], ['학과', 'dept'], ['전형', 'admission'],
   ['면접 유형', 'format'], ['면접일', 'date'], ['수정 시각', '_stamp'], ['수정자', '_by'], ['행ID', 'id']
 ];
+const REVIEW_HEAD = ['학년도', '면접일', '학번', '이름', '학반', '대학', '학과', '전형', '면접 유형',
+  '받은 질문', '도움된 것', '아쉬웠던 것', '분위기', '난이도', '작성 시각', '기록ID'];
+
 const MEETING_COLS = [
   ['학반', 'cls'], ['학번', 'studentNo'], ['이름', 'name'], ['면접 유형', 'type'],
   ['담당교사', 'teachers'], ['실시일', 'date'], ['회차', 'round'], ['기록ID', 'id']
@@ -66,6 +80,10 @@ function onOpen() {
     .addSeparator()
     .addItem('지금 동기화', 'menuSyncNow')
     .addItem('면접 달력 다시 만들기', 'rebuildCalendar')
+    .addItem('지금 백업하기 (구글 드라이브)', 'menuBackupNow')
+    .addSeparator()
+    .addItem('알림 보내기 설정', 'menuSetupPush')
+    .addItem('지금 알림 보내기', 'menuPushNow')
     .addToUi();
 }
 
@@ -96,11 +114,12 @@ function menuSetupConnection() {
 
 function menuInstallTriggers() {
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('onSurveyEdit').forSpreadsheet(SpreadsheetApp.getActive()).onEdit().create();
+  ScriptApp.newTrigger('onSurveyEdit').forSpreadsheet(surveySS_()).onEdit().create();
   ScriptApp.newTrigger('onPlatformEdit').forSpreadsheet(CONFIG.PLATFORM_SHEET_ID).onEdit().create();
   ScriptApp.newTrigger('timedSync').timeBased().everyMinutes(30).create();
+  ScriptApp.newTrigger('weeklyBackup').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(6).create();
   const r = syncAll_('트리거 설치');
-  SpreadsheetApp.getUi().alert('자동 동기화를 켰습니다.\n' + summary_(r));
+  SpreadsheetApp.getUi().alert('자동 동기화를 켰습니다. (매주 일요일 새벽 자동 백업 포함)\n' + summary_(r));
 }
 
 function menuSyncNow() {
@@ -124,20 +143,45 @@ function onSurveyEdit(e) {
   const name = e.range.getSheet().getName();
   if (name !== TAB.STUDENTS && name !== TAB.INTERVIEWS) return;
   stampRows_(e.range, e.user && e.user.getEmail ? e.user.getEmail() : '');
-  runLocked_(function () {
+  const ok = runLocked_(function () {
     const kinds = name === TAB.STUDENTS ? ['students'] : ['interviews'];
-    syncKinds_(kinds, '시트 편집');
+    if (syncKinds_(kinds, '시트 편집').errors.length) markDirty_();
   });
+  if (!ok) markDirty_();
 }
 function onPlatformEdit(e) {
   if (e.range.getSheet().getName() !== TAB.MEETINGS) return;
-  runLocked_(function () { syncKinds_(['meetings'], '시트 편집'); });
+  const ok = runLocked_(function () { if (syncKinds_(['meetings'], '시트 편집').errors.length) markDirty_(); });
+  if (!ok) markDirty_();
 }
-// 정기 대조: 30분마다, 밤(22시~7시)에는 쉼 — Firestore 무료 읽기 한도(하루 5만 건) 안에서 돌도록
+// 시트 편집이 바로 반영되지 못했으면 표시 → 다음 정기 대조 때 전체 대조
+function markDirty_() { PropertiesService.getScriptProperties().setProperty('SHEET_DIRTY', '1'); }
+// 정기 대조: 30분마다, 밤(22시~7시)에는 쉼.
+// 무료 읽기 한도를 아끼려고, 앱에서 바뀐 목록이 없으면(meta/versions 1건만 읽고) 일정 로그만 옮긴다.
+// 하루 첫 대조, 시트 편집 반영 실패가 있었을 때는 전체를 대조한다.
 function timedSync() {
-  const h = Number(Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'H'));
+  const tz = Session.getScriptTimeZone();
+  const h = Number(Utilities.formatDate(new Date(), tz, 'H'));
   if (h < 7 || h >= 22) return;
-  runLocked_(function () { syncAll_('정기 대조'); });
+  runLocked_(function () {
+    const props = PropertiesService.getScriptProperties();
+    const today = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+    let meta = null;
+    try { meta = fsGet_('meta/versions') || {}; } catch (err) { meta = null; }
+    const seen = JSON.parse(props.getProperty('SEEN_META') || '{}');
+    const full = !meta || props.getProperty('SHEET_DIRTY') === '1' || props.getProperty('LAST_FULL_DAY') !== today;
+    let r;
+    if (full) {
+      r = syncAll_('정기 대조 (전체)');
+      if (!r.errors.length) { props.setProperty('LAST_FULL_DAY', today); props.deleteProperty('SHEET_DIRTY'); }
+    } else {
+      const changed = ['students', 'interviews', 'meetings'].filter(function (k) { return (meta[k] || 0) !== (seen[k] || 0); });
+      // 후기는 학생이 쓰므로 meta 표시가 남지 않는다 → 매번 '바뀐 것만' 가볍게 확인한다
+      r = syncKinds_(changed.concat(['bookings', 'reviews']), '정기 대조');
+    }
+    if (meta && !r.errors.length) props.setProperty('SEEN_META', JSON.stringify({ students: meta.students || 0, interviews: meta.interviews || 0, meetings: meta.meetings || 0 }));
+    try { notifyTick_(false); } catch (err) { /* 알림 실패가 동기화를 막지 않게 */ }
+  });
 }
 
 // ===================== 웹 앱 (앱 → 시트) =====================
@@ -145,7 +189,7 @@ function doGet(e) {
   const p = (e && e.parameter) || {};
   if (!checkToken_(p.token)) return json_({ ok: false, error: '토큰이 맞지 않습니다.' });
   try {
-    const ss = SpreadsheetApp.getActive();
+    const ss = surveySS_();
     const s = ss.getSheetByName(TAB.STUDENTS), i = ss.getSheetByName(TAB.INTERVIEWS);
     const m = getMeetingSheet_();
     return json_({
@@ -162,8 +206,14 @@ function doGet(e) {
 function doPost(e) {
   let body;
   try { body = JSON.parse(e.postData.contents); } catch (err) { return json_({ ok: false, error: '요청 형식 오류' }); }
-  if (!checkToken_(body.token)) return json_({ ok: false, error: '토큰이 맞지 않습니다.' });
-  const kinds = (body.kinds || ['students', 'interviews', 'meetings']).filter(function (k) { return ['students', 'interviews', 'meetings'].indexOf(k) >= 0; });
+  if (body.action === 'backup') {
+    if (!checkToken_(body.token)) return json_({ ok: false, error: '토큰이 맞지 않습니다.' });
+    try { return json_({ ok: true, result: weeklyBackup() }); } catch (err) { return json_({ ok: false, error: String(err.message || err) }); }
+  }
+  // 모의면접 일정 로그 옮기기는 학생 화면에서도 요청하므로 토큰 없이 허용 (앱 데이터를 읽어 시트에 적기만 함)
+  const bookingsOnly = Array.isArray(body.kinds) && body.kinds.length === 1 && body.kinds[0] === 'bookings';
+  if (!bookingsOnly && !checkToken_(body.token)) return json_({ ok: false, error: '토큰이 맞지 않습니다.' });
+  const kinds = (body.kinds || ['students', 'interviews', 'meetings', 'bookings', 'reviews']).filter(function (k) { return ['students', 'interviews', 'bookings', 'meetings', 'reviews'].indexOf(k) >= 0; });
   let result;
   const locked = runLocked_(function () { result = syncKinds_(kinds, '앱 요청'); });
   if (!locked) return json_({ ok: false, error: '다른 동기화가 진행 중입니다. 잠시 후 자동 반영됩니다.' });
@@ -171,17 +221,22 @@ function doPost(e) {
 }
 
 // ===================== 동기화 본체 =====================
-function syncAll_(reason) { return syncKinds_(['students', 'interviews', 'meetings'], reason); }
+function syncAll_(reason) { return syncKinds_(['students', 'interviews', 'bookings', 'meetings', 'reviews'], reason); }
 
 let LIST_CACHE_ = {};
 function fsListCached_(c) { if (!LIST_CACHE_[c]) LIST_CACHE_[c] = fsList_(c); return LIST_CACHE_[c]; }
 
 function syncKinds_(kinds, reason) {
   LIST_CACHE_ = {};
+  // 일정(bookings)이 모의 면접 기록을 바꾸면 그 뒤에 모의 면접 기록 동기화도 돈다
+  kinds = ['students', 'interviews', 'bookings', 'meetings', 'reviews'].filter(function (k) { return kinds.indexOf(k) >= 0; });
   const out = { pushed: 0, pulled: 0, created: 0, deleted: 0, errors: [], kinds: kinds };
-  kinds.forEach(function (k) {
+  for (let i = 0; i < kinds.length; i++) {  // forEach 는 도중에 추가된 'meetings' 를 돌지 않음
+    const k = kinds[i];
     try {
-      const r = k === 'students' ? mergeStudents_() : k === 'interviews' ? mergeInterviews_() : mergeMeetings_();
+      const r = k === 'students' ? mergeStudents_() : k === 'interviews' ? mergeInterviews_() : k === 'bookings' ? syncBookings_()
+        : k === 'reviews' ? syncReviews_(reason === '정기 대조 (전체)' || reason === '전체 대조') : mergeMeetings_();
+      if (k === 'bookings' && r.meetingsTouched && kinds.indexOf('meetings') < 0) kinds.push('meetings');
       out.pushed += r.pushed; out.pulled += r.pulled; out.created += r.created; out.deleted += r.deleted;
       if (k === 'interviews' && (r.pushed + r.pulled + r.created + r.deleted) > 0) {
         try { rebuildCalendar(); } catch (err) { out.errors.push('달력: ' + err.message); }
@@ -189,7 +244,7 @@ function syncKinds_(kinds, reason) {
     } catch (err) {
       out.errors.push(k + ': ' + (err.message || err));
     }
-  });
+  }
   log_(reason, out);
   return out;
 }
@@ -262,8 +317,10 @@ function merge_(kind, rows, docs, fields, h) {
 
 // ---------- 학생 ----------
 function mergeStudents_() {
-  const sh = getOrThrow_(SpreadsheetApp.getActive(), TAB.STUDENTS);
+  const sh = getOrThrow_(surveySS_(), TAB.STUDENTS);
   const table = readTable_(sh, STUDENT_COLS);
+  fixClsColumn_(sh, table);
+  table.reload();
   // 앱 관리에서 '삭제'한 학생(removed 표시): 시트 행을 지우고 다시 올리지 않는다. 기록은 앱에 그대로 남는다.
   const removed = {};
   fsListCached_('students').forEach(function (d) { if (d.fields.removed) removed[d.id] = true; });
@@ -282,12 +339,20 @@ function mergeStudents_() {
     docs[d.id] = {
       id: d.id, at: Number(f.syncFieldsAt || 0),
       data: {
-        studentNo: d.id, name: f.name || '', cls: f.cls || '', priority: f.priority || '', track: f.track || '',
+        studentNo: d.id, name: f.name || '', cls: clsOf_(f.cls, d.id), priority: f.priority || '', track: f.track || '',
         special: f.special || '', s1: (f.assign || {}).s1 || '', s2: (f.assign || {}).s2 || '',
         s3a: (f.assign || {}).s3a || '', s3b: (f.assign || {}).s3b || '', sheetUrl: f.sheetUrl || ''
       }
     };
   });
+  // 앱 학생 정보의 학반도 같은 이유로 날짜가 되어 있을 수 있다
+  const clsFixes = [];
+  Object.keys(raw).forEach(function (no) {
+    const fixed = clsOf_(raw[no].cls, no);
+    if (fixed && String(raw[no].cls || '') !== fixed) clsFixes.push(fsPatchReq_('students/' + no, { cls: fixed }, ['cls']));
+  });
+  if (clsFixes.length) { fsBatch_(clsFixes); Logger.log('앱 학생 ' + clsFixes.length + '명의 학반을 바로잡았습니다.'); }
+
   const firstByNo = firstDates_();
   const writes = [], appends = [];
   const res = merge_('students', rows, docs, STUDENT_SYNC, {
@@ -296,7 +361,7 @@ function mergeStudents_() {
       const d = row.data;
       const no = String(d.studentNo);
       writes.push(fsPatchReq_('students/' + no, {
-        studentNo: no, name: d.name, cls: d.cls || classOf_(no), priority: d.priority, track: d.track, special: d.special,
+        studentNo: no, name: d.name, cls: clsOf_(d.cls, no), priority: d.priority, track: d.track, special: d.special,
         assign: { s1: d.s1, s2: d.s2, s3a: d.s3a, s3b: d.s3b }, sheetUrl: d.sheetUrl,
         firstInterview: firstByNo[no] || '', syncFieldsAt: row.stamp || Date.now(), syncedBy: row.by || '시트'
       }, ['studentNo', 'name', 'cls', 'priority', 'track', 'special', 'assign', 'sheetUrl', 'firstInterview', 'syncFieldsAt', 'syncedBy']));
@@ -317,7 +382,7 @@ function mergeStudents_() {
   table.ensureFormulas();
   fsBatch_(writes);
   // 수요조사 응답의 희망 교과·준비 정도·도움 필요·전달 메모 (시트 → 앱 한 방향, 바뀐 것만)
-  const survey = readSurvey_(SpreadsheetApp.getActive());
+  const survey = readSurvey_(surveySS_());
   const extraWrites = [];
   Object.keys(survey).forEach(function (no) {
     const f = raw[no] || (writes.some(function (w) { return w.url.indexOf('/students/' + no + '?') >= 0; }) ? {} : null);
@@ -332,7 +397,7 @@ function mergeStudents_() {
 
 // ---------- 면접일 ----------
 function mergeInterviews_() {
-  const sh = getOrThrow_(SpreadsheetApp.getActive(), TAB.INTERVIEWS);
+  const sh = getOrThrow_(surveySS_(), TAB.INTERVIEWS);
   const table = readTable_(sh, INTERVIEW_COLS);
   const rows = table.rows.filter(function (r) { return r.data.studentNo || r.data.univ || r.data.date; });
   const docs = {};
@@ -356,7 +421,7 @@ function mergeInterviews_() {
       touched[String(d.studentNo)] = true;
       writes.push(fsPatchReq_('interviews/' + row.id, {
         studentNo: String(d.studentNo), name: d.name, univ: d.univ, dept: d.dept, admission: d.admission,
-        format: d.format, date: d.date, updatedAt: row.stamp || Date.now(), updatedBy: row.by || '시트'
+        format: d.format, date: d.date, updatedAt: Date.now(), updatedBy: row.by || '시트'
       }, null));
     },
     pull: function (doc, row) {
@@ -379,11 +444,429 @@ function mergeInterviews_() {
   return res;
 }
 
+// ---------- 모의면접 일정 (앱 → 시트: 면접 기록 · 면접 일정표 · 모의 면접 기록 예정 행) ----------
+function syncBookings_() {
+  const props = PropertiesService.getScriptProperties();
+  const lastMs = Number(props.getProperty('BOOK_LOG_MS') || 0);
+  const doneIds = JSON.parse(props.getProperty('BOOK_LOG_IDS') || '[]');
+  const logs = fsQuery_('bookingLogs', 'atMs', 'GREATER_THAN_OR_EQUAL', lastMs, 500)
+    .filter(function (d) { return doneIds.indexOf(d.id) < 0; })
+    .map(function (d) { const f = d.fields; f.id = d.id; return f; })
+    .sort(function (a, b) { return a.atMs - b.atMs; });
+  const res = { pushed: 0, pulled: 0, created: 0, deleted: 0, meetingsTouched: false };
+  if (!logs.length) return res;
+  const ss = surveySS_();
+
+  // 1) 면접 기록: 한 줄씩 계속 쌓기
+  const logSh = ensureTab_(ss, TAB.BOOK_LOG, BOOK_LOG_HEAD);
+  const lines = logs.map(function (l) {
+    return [new Date(l.atMs), l.action || '', l.by || '', BOOK_STATUS[l.status] || l.status || '', BOOK_STAGE[l.stage] || l.stage || '',
+      l.cls || '', toCell_('studentNo', l.studentNo || ''), l.studentName || '', (l.teachers || []).join(', '),
+      parseDay_(l.date) || l.date || '', (l.start || '') + '–' + (l.end || ''), l.blockLabel || '', l.room || '', l.memo || '', l.bookingId || ''];
+  });
+  logSh.getRange(logSh.getLastRow() + 1, 1, lines.length, BOOK_LOG_HEAD.length).setValues(lines);
+  logSh.getRange(2, 1, logSh.getLastRow() - 1, 1).setNumberFormat('yyyy. mm. dd HH:mm');
+  res.pulled = lines.length;
+
+  // 2) 면접 일정표: 예약별 마지막 상태로 갱신 (취소·거절은 뺌)
+  const latest = {};
+  logs.forEach(function (l) { latest[l.bookingId] = l; });
+  const tSh = ensureTab_(ss, TAB.BOOK_TABLE, BOOK_TABLE_HEAD);
+  const W = BOOK_TABLE_HEAD.length, idCol = W - 1;
+  const oldN = Math.max(0, tSh.getLastRow() - 1);
+  const keep = (oldN ? tSh.getRange(2, 1, oldN, W).getValues() : [])
+    .filter(function (r) { return r[idCol] !== '' && !latest[String(r[idCol])]; });
+  const WEEK = '일월화수목금토';
+  Object.keys(latest).forEach(function (id) {
+    const l = latest[id];
+    if (l.status !== 'requested' && l.status !== 'confirmed') return;
+    const d = parseDay_(l.date);
+    keep.push([d || l.date, d ? WEEK.charAt(d.getDay()) : '', (l.start || '') + '–' + (l.end || ''), l.blockLabel || '', BOOK_STAGE[l.stage] || '',
+      l.cls || '', toCell_('studentNo', l.studentNo || ''), l.studentName || '', (l.teachers || []).join(', '), l.room || '',
+      BOOK_STATUS[l.status] || '', l.status === 'requested' ? (l.waiting || '') : '', id]);
+  });
+  keep.sort(function (a, b) {
+    const da = a[0] instanceof Date ? a[0].getTime() : 0, db = b[0] instanceof Date ? b[0].getTime() : 0;
+    return da - db || String(a[2]).localeCompare(String(b[2]));
+  });
+  if (oldN) tSh.getRange(2, 1, oldN, W).clearContent();
+  if (keep.length) tSh.getRange(2, 1, keep.length, W).setValues(keep);
+  if (keep.length) tSh.getRange(2, 1, keep.length, 1).setNumberFormat('yyyy. mm. dd');
+
+  // 3) 확정 → '모의 면접 기록'에 예정 기록(meetings/bk_예약ID) / 확정이 풀리면 내용 없는 예정 기록 삭제
+  const writes = [];
+  Object.keys(latest).forEach(function (id) {
+    const l = latest[id], path = 'meetings/bk_' + id;
+    const cur = fsGet_(path);
+    if (l.status === 'confirmed') {
+      const base = { studentNo: String(l.studentNo), name: l.studentName || '', cls: l.cls || '', stage: Number(l.stage) || 4,
+        teachers: l.teachers || [], date: l.date, bookingId: id, updatedAtMs: Date.now() };
+      if (!cur) {
+        base.studentUid = l.studentUid || ''; base.type = l.meetingType || '학생부 기반'; base.shared = false; base.planned = true;
+        base.createdBy = '일정'; base.questions = ''; base.answerSummary = ''; base.good = ''; base.improve = ''; base.nextGoal = '';
+        writes.push(fsPatchReq_(path, base, null)); res.created++;
+      } else if (cur.planned === true && !hasRecord_(cur)
+                 && (cur.date !== l.date || String(cur.teachers) !== String(l.teachers))) {
+        // 아직 '기록 전'인 자리만 날짜·담당을 맞춘다. 선생님이 쓴 기록은 일정 변경으로 덮어쓰지 않는다
+        writes.push(fsPatchReq_(path, base, Object.keys(base))); res.pushed++;
+      }
+    } else if (cur && cur.planned === true && !hasRecord_(cur)) {
+      writes.push(fsDeleteReq_(path)); res.deleted++;   // 내용이 있으면 지우지 않는다
+    }
+  });
+  fsBatch_(writes);
+  res.meetingsTouched = writes.length > 0;
+
+  const maxMs = logs[logs.length - 1].atMs;
+  props.setProperty('BOOK_LOG_MS', String(maxMs));
+  props.setProperty('BOOK_LOG_IDS', JSON.stringify(logs.filter(function (l) { return l.atMs === maxMs; }).map(function (l) { return l.id; })
+    .concat(maxMs === lastMs ? doneIds : [])));
+  return res;
+}
+// ---------- 대학 면접 후기 (앱 → 시트 한 방향) ----------
+// 학생이 쓴 글이므로 시트에서 고친 것을 앱으로 되돌리지 않는다 (어느 쪽이 맞는지 다투지 않게).
+// 평소에는 바뀐 것만(updatedAtMs) 받아 해당 줄만 고치고, 하루 첫 전체 대조 때는 통째로 다시 쓴다.
+function syncReviews_(full) {
+  const props = PropertiesService.getScriptProperties();
+  const res = { pushed: 0, pulled: 0, created: 0, deleted: 0 };
+  const ss = SpreadsheetApp.openById(CONFIG.PLATFORM_SHEET_ID);
+  const sh = ensureTab_(ss, TAB.REVIEWS, REVIEW_HEAD);
+  const W = REVIEW_HEAD.length, ID = W - 1;   // 마지막 칸이 기록ID
+
+  let docs;
+  const lastMs = Number(props.getProperty('REVIEW_MS') || 0);
+  if (full || !lastMs) {
+    docs = fsList_('reviews');
+  } else {
+    docs = fsQuery_('reviews', 'updatedAtMs', 'GREATER_THAN', lastMs, 500);
+  }
+  if (!docs.length && !full) return res;
+
+  const rows = docs.map(function (d) { return reviewRow_(d.id, d.fields); });
+  let maxMs = lastMs;
+  docs.forEach(function (d) { maxMs = Math.max(maxMs, Number(d.fields.updatedAtMs || 0)); });
+
+  if (full || !lastMs) {
+    // 통째로 다시 쓰기 (지워진 후기도 이때 시트에서 빠진다)
+    rows.sort(function (a, b) { return String(b[1]).localeCompare(String(a[1])) || String(a[2]).localeCompare(String(b[2])); });
+    const oldN = Math.max(0, sh.getLastRow() - 1);
+    if (oldN) sh.getRange(2, 1, oldN, W).clearContent();
+    if (rows.length) {
+      sh.getRange(2, 1, rows.length, W).setValues(rows);
+      sh.getRange(2, 2, rows.length, 1).setNumberFormat('yyyy. mm. dd');
+    }
+    res.pushed = rows.length;
+  } else {
+    // 바뀐 줄만 고치고, 없던 것은 아래에 붙인다
+    const n = Math.max(0, sh.getLastRow() - 1);
+    const ids = n ? sh.getRange(2, ID + 1, n, 1).getValues().map(function (r) { return String(r[0] || ''); }) : [];
+    const add = [];
+    rows.forEach(function (row) {
+      const at = ids.indexOf(String(row[ID]));
+      if (at >= 0) { sh.getRange(at + 2, 1, 1, W).setValues([row]); sh.getRange(at + 2, 2).setNumberFormat('yyyy. mm. dd'); res.pushed++; }
+      else { add.push(row); }
+    });
+    if (add.length) {
+      const start = sh.getLastRow() + 1;
+      sh.getRange(start, 1, add.length, W).setValues(add);
+      sh.getRange(start, 2, add.length, 1).setNumberFormat('yyyy. mm. dd');
+      res.created = add.length;
+    }
+  }
+  SpreadsheetApp.flush();
+  if (maxMs > lastMs) props.setProperty('REVIEW_MS', String(maxMs));
+  return res;
+}
+function reviewRow_(id, f) {
+  const clean = function (v) { return String(v == null ? '' : v).slice(0, 5000); };
+  return [
+    Number(f.year) || '', parseDay_(f.date) || f.date || '', String(f.studentNo || ''), f.name || '', f.cls || '',
+    f.univ || '', f.dept || '', f.admission || '', f.format || '',
+    clean(f.questions), clean(f.helped), clean(f.regret),
+    Number(f.mood) || '', Number(f.difficulty) || '',
+    f.updatedAtMs ? new Date(Number(f.updatedAtMs)) : '', id
+  ];
+}
+
+// ===================== 휴대폰 알림 (웹 푸시 · FCM) =====================
+// 보내는 쪽은 여기입니다. 서비스 계정 키는 스크립트 속성(FCM_SA)에만 두고 코드에 적지 않습니다.
+// 알림 내용에는 학생 이름을 그대로 넣지 않습니다 (잠금화면에 남이 볼 수 있음).
+const PUSH_QUIET_FROM = 22, PUSH_QUIET_TO = 7;   // 밤에는 보내지 않고 아침에 모아서
+
+function menuSetupPush() {
+  const ui = SpreadsheetApp.getUi();
+  const r = ui.prompt('알림 보내기 설정',
+    'Firebase 콘솔 → 프로젝트 설정 → 서비스 계정 → 새 비공개 키 생성으로 받은\n' +
+    'JSON 파일의 내용을 통째로 붙여넣으세요.\n\n(이 키는 이 스크립트 안에만 저장되고 시트에는 남지 않습니다)', ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return;
+  const txt = String(r.getResponseText() || '').trim();
+  if (!txt) { PropertiesService.getScriptProperties().deleteProperty('FCM_SA'); ui.alert('알림 보내기를 껐습니다.'); return; }
+  let sa;
+  try { sa = JSON.parse(txt); } catch (e) { ui.alert('JSON 형식이 아닙니다. 파일 내용을 그대로 붙여넣어 주세요.'); return; }
+  if (!sa.client_email || !sa.private_key) { ui.alert('client_email 과 private_key 가 있는 서비스 계정 키가 아닙니다.'); return; }
+  if (sa.project_id && sa.project_id !== CONFIG.FIREBASE_PROJECT_ID) {
+    ui.alert('다른 프로젝트의 키입니다 (' + sa.project_id + '). 앱과 같은 프로젝트의 키를 넣어 주세요.'); return;
+  }
+  PropertiesService.getScriptProperties().setProperty('FCM_SA', JSON.stringify(sa));
+  CacheService.getScriptCache().remove('FCM_TOKEN');
+  try { fcmAccessToken_(); ui.alert('알림 보내기 설정을 마쳤습니다.'); }
+  catch (e) { ui.alert('키는 저장했지만 확인에 실패했습니다:\n' + e.message); }
+}
+function menuPushNow() {
+  const r = runLocked_(function () { const n = notifyTick_(true); SpreadsheetApp.getUi().alert('알림', '보낸 알림 ' + n.sent + '건 / 기기 ' + n.devices + '대' + (n.errors.length ? '\n오류: ' + n.errors.join('; ') : ''), SpreadsheetApp.getUi().ButtonSet.OK); });
+  if (!r) SpreadsheetApp.getUi().alert('다른 작업이 돌고 있습니다. 잠시 뒤 다시 해 주세요.');
+}
+function pushReady_() { return !!PropertiesService.getScriptProperties().getProperty('FCM_SA'); }
+
+// 서비스 계정으로 보내기 권한(액세스 토큰) 받기
+function fcmAccessToken_() {
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('FCM_TOKEN');
+  if (hit) return hit;
+  const raw = PropertiesService.getScriptProperties().getProperty('FCM_SA');
+  if (!raw) throw new Error('알림 보내기 설정이 안 되어 있습니다 (메뉴 → 알림 보내기 설정).');
+  const sa = JSON.parse(raw);
+  const now = Math.floor(Date.now() / 1000);
+  const b64 = function (o) { return Utilities.base64EncodeWebSafe(JSON.stringify(o)).replace(/=+$/, ''); };
+  const unsigned = b64({ alg: 'RS256', typ: 'JWT' }) + '.' + b64({
+    iss: sa.client_email, scope: 'https://www.googleapis.com/auth/firebase.messaging',
+    aud: 'https://oauth2.googleapis.com/token', exp: now + 3600, iat: now
+  });
+  const sig = Utilities.base64EncodeWebSafe(Utilities.computeRsaSha256Signature(unsigned, sa.private_key)).replace(/=+$/, '');
+  const res = UrlFetchApp.fetch('https://oauth2.googleapis.com/token', {
+    method: 'post', muteHttpExceptions: true,
+    payload: { grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: unsigned + '.' + sig }
+  });
+  const d = JSON.parse(res.getContentText() || '{}');
+  if (!d.access_token) throw new Error('알림 인증 실패: ' + (d.error_description || d.error || res.getResponseCode()));
+  cache.put('FCM_TOKEN', d.access_token, 3000);
+  return d.access_token;
+}
+
+// 기기 한 대에 보내기. 'gone' 이면 없어진 기기라 목록에서 지운다.
+function fcmSendOne_(token, data) {
+  const res = UrlFetchApp.fetch('https://fcm.googleapis.com/v1/projects/' + CONFIG.FIREBASE_PROJECT_ID + '/messages:send', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + fcmAccessToken_() },
+    payload: JSON.stringify({ message: {
+      token: token,
+      data: { title: String(data.title || ''), body: String(data.body || ''), url: String(data.url || 'student.html'), tag: String(data.tag || 'osong') },
+      webpush: { headers: { Urgency: 'high', TTL: '86400' } }
+    } })
+  });
+  const code = res.getResponseCode();
+  if (code < 300) return 'ok';
+  const t = res.getContentText() || '';
+  if (code === 404 || /UNREGISTERED|NOT_FOUND|INVALID_ARGUMENT/.test(t)) return 'gone';
+  return 'fail ' + code;
+}
+
+// 받는 사람의 기기 목록 (role: 'student' | 'staff', key: 학번 또는 교사ID)
+function pushTokensOf_(role, key) {
+  if (!key) return [];
+  const list = fsQuery_('pushTokens', 'key', 'EQUAL', String(key), 100);
+  return list.filter(function (d) { return d.fields.role === role; }).map(function (d) { return d.id; });
+}
+function dropToken_(token) { try { fsBatch_([fsDeleteReq_('pushTokens/' + token)]); } catch (e) {} }
+
+function pushTo_(role, key, data, out) {
+  const tokens = pushTokensOf_(role, key);
+  tokens.forEach(function (t) {
+    out.devices++;
+    let r;
+    try { r = fcmSendOne_(t, data); } catch (e) { out.errors.push(String(e.message || e).slice(0, 80)); return; }
+    if (r === 'ok') out.sent++;
+    else if (r === 'gone') { dropToken_(t); out.dropped++; }
+    else out.errors.push(r);
+  });
+  if (tokens.length) pushLog_(role + ' ' + key, data.title, tokens.length);
+}
+function pushLog_(to, title, n) {
+  try {
+    const ss = surveySS_();
+    let sh = ss.getSheetByName('_알림기록');
+    if (!sh) { sh = ss.insertSheet('_알림기록'); sh.getRange(1, 1, 1, 4).setValues([['시각', '받는 사람', '내용', '기기 수']]); sh.hideSheet(); }
+    sh.insertRowAfter(1);
+    sh.getRange(2, 1, 1, 4).setValues([[new Date(), to, title, n]]);
+    if (sh.getLastRow() > 300) sh.deleteRows(301, sh.getLastRow() - 300);
+  } catch (e) {}
+}
+
+// 이름 가리기 (박아름 → 박○○). 잠금화면에 그대로 보이지 않게
+function maskName_(n) {
+  n = String(n || '');
+  return n ? n.charAt(0) + Array(Math.max(1, n.length - 1) + 1).join('○') : '학생';
+}
+const STAGE_TXT_ = { 1: '1차 담임 면접', 2: '2차 교과 면접', 3: '3차 모의면접', 4: '추가 지도' };
+function whenTxt_(l) {
+  const d = parseDay_(l.date);
+  const wd = d ? '일월화수목금토'.charAt(d.getDay()) : '';
+  const day = d ? (d.getMonth() + 1) + '/' + d.getDate() + '(' + wd + ')' : String(l.date || '');
+  return day + (l.blockLabel ? ' ' + l.blockLabel : '') + (l.start ? ' ' + l.start : '');
+}
+// 교사 이름 → 교사ID
+let STAFF_BY_NAME_ = null;
+function staffIdByName_(name) {
+  if (!STAFF_BY_NAME_) {
+    STAFF_BY_NAME_ = {};
+    try { fsList_('staff').forEach(function (d) { if (d.fields.name) STAFF_BY_NAME_[d.fields.name] = d.id; }); } catch (e) {}
+  }
+  return STAFF_BY_NAME_[name] || '';
+}
+
+/**
+ * 보낼 알림을 찾아 보낸다. 30분마다 도는 동기화에 얹혀 돈다.
+ * force=true 면 밤이라도 보낸다 (메뉴에서 직접 누른 경우).
+ */
+function notifyTick_(force) {
+  const out = { sent: 0, devices: 0, dropped: 0, errors: [] };
+  if (!pushReady_()) return out;
+  const tz = Session.getScriptTimeZone();
+  const h = Number(Utilities.formatDate(new Date(), tz, 'H'));
+  if (!force && (h >= PUSH_QUIET_FROM || h < PUSH_QUIET_TO)) return out;   // 밤에는 쌓아 두고 아침에
+  STAFF_BY_NAME_ = null;
+  const props = PropertiesService.getScriptProperties();
+
+  // ① 일정 변화 (bookingLogs)
+  try { notifyBookings_(props, out); } catch (e) { out.errors.push('일정: ' + (e.message || e)); }
+  // ② 앱이 적어 둔 알림 (피드백 도착 등)
+  try { notifyQueue_(out); } catch (e) { out.errors.push('대기열: ' + (e.message || e)); }
+  // ③ 하루 한 번: 내일 면접 안내 (저녁) · 어제 대학 면접 후기 (아침)
+  const today = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+  try {
+    if (h >= 18 && props.getProperty('PUSH_EVE_DAY') !== today) { notifyTomorrow_(out); props.setProperty('PUSH_EVE_DAY', today); }
+    if (h >= 8 && props.getProperty('PUSH_MORN_DAY') !== today) { notifyReviewDue_(out); props.setProperty('PUSH_MORN_DAY', today); }
+  } catch (e) { out.errors.push('예약 알림: ' + (e.message || e)); }
+  return out;
+}
+
+function notifyBookings_(props, out) {
+  const lastMs = Number(props.getProperty('PUSH_LOG_MS') || 0);
+  const doneIds = JSON.parse(props.getProperty('PUSH_LOG_IDS') || '[]');
+  let logs = fsQuery_('bookingLogs', 'atMs', 'GREATER_THAN_OR_EQUAL', lastMs, 300)
+    .filter(function (d) { return doneIds.indexOf(d.id) < 0; })
+    .map(function (d) { const f = d.fields; f.id = d.id; return f; })
+    .sort(function (a, b) { return a.atMs - b.atMs; });
+  if (!lastMs) {   // 처음 켰을 때 예전 것을 몰아 보내지 않는다
+    const maxMs0 = logs.length ? logs[logs.length - 1].atMs : Date.now();
+    props.setProperty('PUSH_LOG_MS', String(maxMs0));
+    props.setProperty('PUSH_LOG_IDS', JSON.stringify(logs.filter(function (l) { return l.atMs === maxMs0; }).map(function (l) { return l.id; })));
+    return;
+  }
+  if (!logs.length) return;
+
+  // 같은 일정은 마지막 것만 보낸다
+  const lastPer = {};
+  logs.forEach(function (l) { lastPer[l.bookingId] = l; });
+  Object.keys(lastPer).forEach(function (bid) {
+    const l = lastPer[bid];
+    const stage = STAGE_TXT_[Number(l.stage)] || '면접';
+    const when = whenTxt_(l);
+    const tag = 'bk_' + bid;
+    const teacherKeys = (l.teachers || []).map(staffIdByName_).filter(Boolean);
+    const toStudent = function (title, body) { pushTo_('student', l.studentNo, { title: title, body: body, url: 'student.html', tag: tag }, out); };
+    const toTeachers = function (title, body) { teacherKeys.forEach(function (k) { pushTo_('staff', k, { title: title, body: body, url: 'teacher.html', tag: tag }, out); }); };
+
+    switch (String(l.action)) {
+      case '신청':
+        toTeachers(maskName_(l.studentName) + ' 학생이 ' + stage + '을 신청했어요', when + (l.room ? ' · ' + l.room : ''));
+        break;
+      case '일정 제안':
+        toStudent('선생님이 ' + stage + ' 시간을 제안했어요', when + (l.room ? ' · ' + l.room : '') + ' — 앱에서 수락해 주세요');
+        break;
+      case '확정':
+      case '관리자 확정':
+        toStudent(stage + '이 확정됐어요', when + (l.room ? ' · ' + l.room : ''));
+        break;
+      case '거절':
+        toStudent(stage + ' 요청이 거절됐어요', '앱에서 다른 시간을 신청해 주세요');
+        break;
+      case '취소':
+        if (String(l.byRole) === 'student') toTeachers(maskName_(l.studentName) + ' 학생이 ' + stage + '을 취소했어요', when);
+        else toStudent(stage + ' 일정이 취소됐어요', when + ' — 앱에서 다시 잡아 주세요');
+        break;
+      case '시간 변경 제안':
+        if (String(l.byRole) === 'student') toTeachers(maskName_(l.studentName) + ' 학생이 시간 변경을 제안했어요', when);
+        else toStudent('선생님이 ' + stage + ' 시간 변경을 제안했어요', when + ' — 앱에서 수락해 주세요');
+        break;
+      default: break;   // 수락(부분)·완료 등은 알리지 않는다
+    }
+  });
+
+  const maxMs = logs[logs.length - 1].atMs;
+  props.setProperty('PUSH_LOG_MS', String(maxMs));
+  props.setProperty('PUSH_LOG_IDS', JSON.stringify(logs.filter(function (l) { return l.atMs === maxMs; }).map(function (l) { return l.id; })));
+}
+
+// 앱이 적어 둔 알림 (선생님이 피드백을 공개했을 때 등)
+function notifyQueue_(out) {
+  const list = fsQuery_('notify', 'sentAtMs', 'EQUAL', 0, 200);
+  if (!list.length) return;
+  const writes = [];
+  list.forEach(function (d) {
+    const f = d.fields;
+    pushTo_(f.role === 'staff' ? 'staff' : 'student', f.key,
+      { title: f.title, body: f.body, url: f.url || 'student.html', tag: f.tag || d.id }, out);
+    writes.push(fsPatchReq_('notify/' + d.id, { sentAtMs: Date.now() }, ['sentAtMs']));
+  });
+  fsBatch_(writes);
+}
+
+// 내일 모의면접이 있는 학생에게 (저녁 한 번)
+function notifyTomorrow_(out) {
+  const tz = Session.getScriptTimeZone();
+  const d = new Date(); d.setDate(d.getDate() + 1);
+  const day = Utilities.formatDate(d, tz, 'yyyy-MM-dd');
+  fsQuery_('bookings', 'date', 'EQUAL', day, 200).forEach(function (x) {
+    const b = x.fields;
+    if (b.status !== 'confirmed' || b.done === true) return;
+    const stage = STAGE_TXT_[Number(b.stage)] || '면접';
+    pushTo_('student', b.studentNo, {
+      title: '내일 ' + stage + '이 있어요',
+      body: (b.start || '') + (b.room ? ' · ' + b.room : '') + ' — 준비한 답변을 한 번 읽어 보세요',
+      url: 'student.html', tag: 'eve_' + x.id
+    }, out);
+  });
+}
+
+// 어제 대학 면접을 본 학생에게 후기 요청 (아침 한 번)
+function notifyReviewDue_(out) {
+  const tz = Session.getScriptTimeZone();
+  const d = new Date(); d.setDate(d.getDate() - 1);
+  const day = Utilities.formatDate(d, tz, 'yyyy-MM-dd');
+  fsQuery_('interviews', 'date', 'EQUAL', day, 200).forEach(function (x) {
+    const iv = x.fields;
+    let has = null;
+    try { has = fsGet_('reviews/' + x.id); } catch (e) {}
+    if (has) return;
+    pushTo_('student', iv.studentNo, {
+      title: '어제 ' + (iv.univ || '대학') + ' 면접, 어땠나요?',
+      body: '받은 질문과 느낀 점을 적어 두면 선생님이 다음 준비를 도와줄 수 있어요',
+      url: 'student.html', tag: 'rv_' + x.id
+    }, out);
+  });
+}
+
+function ensureTab_(ss, name, head) {
+  let sh = ss.getSheetByName(name);
+  if (!sh) {
+    sh = ss.insertSheet(name);
+    sh.getRange(1, 1, 1, head.length).setValues([head]);
+    styleHeader_(sh, head.length);
+  }
+  return sh;
+}
+
 // ---------- 모의 면접 기록 (통합 플랫폼 파일) ----------
 function mergeMeetings_() {
   const sh = getMeetingSheet_();
   if (!sh) throw new Error("통합 플랫폼 파일에서 '모의 면접 기록' 탭을 찾지 못했습니다.");
-  const table = readTable_(sh, MEETING_COLS, { findHeader: true });
+  // soft: 시트에 걸린 데이터 확인 규칙과 부딪혀도 그 칸만 건너뛰고 나머지는 계속 반영한다
+  const table = readTable_(sh, MEETING_COLS, { findHeader: true, soft: true });
+  clearIdValidation_(sh, table);
+  ensureTypeValidation_(sh, table);
+  fixClsColumn_(sh, table);
+  table.reload();
   const rows = table.rows.filter(function (r) { return r.data.studentNo; });
   const students = {};
   fsListCached_('students').forEach(function (d) { students[d.id] = d.fields; });
@@ -391,10 +874,20 @@ function mergeMeetings_() {
   fsList_('meetings').forEach(function (d) {
     const f = d.fields;
     docs[d.id] = { id: d.id, at: Number(f.updatedAtMs || 0), raw: f, data: {
-      id: d.id, studentNo: String(f.studentNo || ''), name: f.name || '', cls: f.cls || '',
+      id: d.id, studentNo: String(f.studentNo || ''), name: f.name || '', cls: clsOf_(f.cls, String(f.studentNo || '')),
       type: f.type || '', teachers: (f.teachers || []).join(', '), date: f.date || '', stage: f.stage || 4
     } };
   });
+  // 앱 기록에 학반이 날짜로 저장돼 있으면 바로잡는다.
+  // (학반은 대조 항목이 아니라서 그냥 두면 계속 남는다)
+  const clsFixes = [];
+  Object.keys(docs).forEach(function (id) {
+    const raw = docs[id].raw, no = String(raw.studentNo || '');
+    const fixed = clsOf_(raw.cls, no);
+    if (fixed && String(raw.cls || '') !== fixed) clsFixes.push(fsPatchReq_('meetings/' + id, { cls: fixed, updatedAtMs: Date.now() }, ['cls', 'updatedAtMs']));
+  });
+  if (clsFixes.length) { fsBatch_(clsFixes); Logger.log('앱 기록 ' + clsFixes.length + '건의 학반을 바로잡았습니다.'); }
+
   const writes = [];
   const res = merge_('meetings', rows, docs, MEETING_SYNC, {
     newId: function (row) {
@@ -405,9 +898,9 @@ function mergeMeetings_() {
     push: function (row) {
       const d = row.data, no = String(d.studentNo), st = students[no] || {};
       const obj = {
-        studentNo: no, name: d.name || st.name || '', cls: d.cls || st.cls || classOf_(no), type: d.type,
+        studentNo: no, name: d.name || st.name || '', cls: clsOf_(d.cls || st.cls, no), type: d.type,
         teachers: String(d.teachers || '').split(/\s*[,，·]\s*/).filter(String), date: d.date,
-        updatedAtMs: row.stamp || Date.now()
+        updatedAtMs: Date.now()   // 앱 캐시가 바뀐 문서를 찾는 기준이므로 반영한 시각으로 기록
       };
       let mask = ['studentNo', 'name', 'cls', 'type', 'teachers', 'date', 'updatedAtMs'];
       if (!docs[row.id]) {  // 시트에서 새로 적은 기록
@@ -435,18 +928,19 @@ function mergeMeetings_() {
   Object.keys(by).forEach(function (no) {
     by[no].sort(function (a, b) { return String(a.data.date).localeCompare(String(b.data.date)); })
       .forEach(function (r, i) {
-        if (Number(r.data.round) !== i + 1) table.setCell(r.rowNum, 'round', i + 1);
+        if (Number(r.data.round) !== i + 1) writeRound_(sh, table, r.rowNum, i + 1);
         const d = docs[r.data.id];
-        if (d && Number(d.raw.round) !== i + 1) roundWrites.push(fsPatchReq_('meetings/' + r.data.id, { round: i + 1 }, ['round']));
+        if (d && Number(d.raw.round) !== i + 1) roundWrites.push(fsPatchReq_('meetings/' + r.data.id, { round: i + 1, updatedAtMs: Date.now() }, ['round', 'updatedAtMs']));
       });
   });
   fsBatch_(roundWrites);
+  if (table.skipped.length) Logger.log('시트 규칙 때문에 건너뛴 칸 ' + table.skipped.length + '개: ' + table.skipped.slice(0, 5).join(' / '));
   return res;
 }
 
 // ===================== 연동 탭 만들기 =====================
 function buildLinkTabs_() {
-  const ss = SpreadsheetApp.getActive();
+  const ss = surveySS_();
   let skipped = [];
   const survey = readSurvey_(ss);
   const assign = readAssign_(ss);
@@ -584,7 +1078,7 @@ const LINK_TARGETS = [
   { sheet: '7. 담당교사 배정안', need: ['학번', '최초 면접일'], cols: { '최초 면접일': 'first', '기본 트랙': 'track' } }
 ];
 function linkExistingTabs_() {
-  const ss = SpreadsheetApp.getActive();
+  const ss = surveySS_();
   const out = [];
   const backup = DriveApp.getFileById(ss.getId()).makeCopy(ss.getName() + ' (연동 전 백업 ' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'MM-dd HH:mm') + ')');
   out.push('백업: ' + backup.getName());
@@ -635,7 +1129,7 @@ function linkExistingTabs_() {
 
 // ===================== 면접 달력 =====================
 function rebuildCalendar() {
-  const ss = SpreadsheetApp.getActive();
+  const ss = surveySS_();
   const cal = ss.getSheetByName(TAB.CALENDAR);
   const iv = ss.getSheetByName(TAB.INTERVIEWS);
   const st = ss.getSheetByName(TAB.STUDENTS);
@@ -701,6 +1195,47 @@ function rebuildCalendar() {
   });
 }
 
+// 이 스크립트가 붙어 있는 '수요조사' 파일.
+// 통합 플랫폼 편집 트리거로 실행되면 getActive() 가 통합 플랫폼을 가리킨다.
+// 그대로 두면 _동기화상태·_동기화기록이 엉뚱한 파일에 생기고,
+// 상태를 못 읽어 모든 줄을 '처음 보는 줄' 로 취급해 기록이 중복된다.
+function surveySS_() {
+  const props = PropertiesService.getScriptProperties();
+  let id = props.getProperty('SURVEY_ID');
+  const act = SpreadsheetApp.getActiveSpreadsheet();
+  if (!id && act && act.getId() !== CONFIG.PLATFORM_SHEET_ID) {
+    id = act.getId(); props.setProperty('SURVEY_ID', id);      // 메뉴·수요조사 편집에서 한 번 기록
+  }
+  if (id && (!act || act.getId() !== id)) {
+    try { return SpreadsheetApp.openById(id); } catch (e) { /* 못 열면 아래로 */ }
+  }
+  return act;
+}
+
+// 학반 칸에 '3-2' 를 넣으면 시트가 날짜(3월 2일)로 바꿔 버린다.
+// 그 열을 '일반 텍스트' 로 고정하고, 이미 날짜가 된 칸은 되돌린다.
+function fixClsColumn_(sh, table) {
+  try {
+    if (!table.map || table.map.cls == null) return;
+    const col = table.map.cls + 1;
+    const last = Math.max(sh.getLastRow(), table.headerRow + 1);
+    sh.getRange(table.headerRow + 1, col, Math.max(last - table.headerRow, 500), 1).setNumberFormat('@');
+    const noCol = table.map.studentNo != null ? table.map.studentNo + 1 : 0;
+    const rng = sh.getRange(table.headerRow + 1, col, last - table.headerRow, 1);
+    const nos = noCol ? sh.getRange(table.headerRow + 1, noCol, last - table.headerRow, 1).getValues() : null;
+    const vals = rng.getValues();
+    let changed = 0;
+    for (let i = 0; i < vals.length; i++) {
+      const v = vals[i][0];
+      const no = nos ? String(nos[i][0] || '').replace(/\.0$/, '').trim() : '';
+      if (v === '' || v == null) continue;
+      const fixed = clsOf_(v, no);
+      if (fixed !== v) { vals[i][0] = fixed; changed++; }
+    }
+    if (changed) { rng.setValues(vals); SpreadsheetApp.flush(); Logger.log('학반 칸 ' + changed + '개를 날짜에서 되돌렸습니다.'); }
+  } catch (e) { Logger.log('학반 칸 정리 실패(무시): ' + e); }
+}
+
 // ===================== 시트 표 도우미 =====================
 function readTable_(sh, cols, opt) {
   opt = opt || {};
@@ -741,15 +1276,32 @@ function readTable_(sh, cols, opt) {
   }
   load();
   api.reload = load;
-  api.setCell = function (rowNum, key, value) { sh.getRange(rowNum, api.map[key] + 1).setValue(value); };
+  api.skipped = [];
+  // opt.soft 인 표는 데이터 확인 규칙과 부딪혀도 그 칸만 건너뛴다 (동기화 전체가 멈추지 않게)
+  // Apps Script 는 시트 쓰기를 모아 두었다가 나중에 반영한다.
+  // 그래서 setValue 바로 옆의 try/catch 로는 '데이터 확인 규칙 위반' 을 못 잡는다
+  // (한참 뒤에 터져서 동기화 전체가 멈춘다). 쓰고 바로 flush 해서 여기서 잡는다.
+  function put(rowNum, colIdx, value, what) {
+    try {
+      sh.getRange(rowNum, colIdx).setValue(value);
+      if (opt.soft) SpreadsheetApp.flush();
+      return true;
+    }
+    catch (e) {
+      if (!opt.soft) throw e;
+      api.skipped.push(sh.getName() + ' ' + rowNum + '행 ' + what + ': ' + (e && e.message ? e.message : e));
+      return false;
+    }
+  }
+  api.setCell = function (rowNum, key, value) { return put(rowNum, api.map[key] + 1, value, key); };
   api.setRow = function (rowNum, data, by) {
     cols.forEach(function (c) {
       const k = c[1];
       if (k.charAt(0) === '_' || !(k in data)) return;
-      sh.getRange(rowNum, api.map[k] + 1).setValue(toCell_(k, data[k]));
+      put(rowNum, api.map[k] + 1, toCell_(k, data[k]), k);
     });
-    if (api.map._stamp != null) sh.getRange(rowNum, api.map._stamp + 1).setValue(new Date());
-    if (api.map._by != null && by) sh.getRange(rowNum, api.map._by + 1).setValue(by);
+    if (api.map._stamp != null) put(rowNum, api.map._stamp + 1, new Date(), '수정 시각');
+    if (api.map._by != null && by) put(rowNum, api.map._by + 1, by, '수정자');
   };
   api.appendRow = function (data, by) {
     const width = Math.max.apply(null, Object.keys(api.map).map(function (k) { return api.map[k]; })) + 1;
@@ -758,7 +1310,12 @@ function readTable_(sh, cols, opt) {
     if (api.map._stamp != null) line[api.map._stamp] = new Date();
     if (api.map._by != null) line[api.map._by] = by || '';
     const target = nextEmptyRow_(sh, api.headerRow, api.map.studentNo);
-    sh.getRange(target, 1, 1, width).setValues([line]);
+    try { sh.getRange(target, 1, 1, width).setValues([line]); if (opt.soft) SpreadsheetApp.flush(); }
+    catch (e) {
+      if (!opt.soft) throw e;
+      // 줄 전체가 막히면 칸 하나씩 넣어 본다 (막힌 칸만 건너뜀)
+      for (let i = 0; i < width; i++) if (line[i] !== '') put(target, i + 1, line[i], '새 줄 ' + (i + 1) + '번째 칸');
+    }
   };
   api.deleteRows = function (nums) { nums.sort(function (a, b) { return b - a; }).forEach(function (n) { sh.deleteRow(n); }); };
   api.ensureFormulas = function () {
@@ -787,9 +1344,132 @@ function readTable_(sh, cols, opt) {
 function normCell_(key, v) {
   if (v === null || v === undefined) return '';
   if (key === 'date') return fmtDay_(v);
+  // 회차 칸은 '1차', '4차 이상' 처럼 글자로 적혀 있을 수 있다. 앞의 숫자만 뽑아 쓴다.
+  // (숫자로 못 읽으면 매번 '값이 달라졌다'고 보고 다시 쓰려 해서 데이터 확인 규칙과 부딪힌다)
+  if (key === 'round') { const m = String(v).match(/\d+/); return m ? Number(m[0]) : String(v).trim(); }
+  // 학반에 '3-2' 를 치면 시트가 날짜(3월 2일)로 바꿔 버린다. 다시 '3-2' 로 읽는다.
+  if (key === 'cls' && v instanceof Date) return (v.getMonth() + 1) + '-' + v.getDate();
   if (key === 'studentNo') return String(v).replace(/\.0$/, '').trim();
   if (v instanceof Date) return fmtDay_(v);
   return String(v).trim();
+}
+// 회차 열에 '1차 / 2차 / 3차 / 4차 이상' 같은 드롭다운이 걸려 있으면 그 표기로 써야 한다.
+// 숫자 1 을 그대로 넣으면 '데이터 확인 규칙을 위반합니다' 오류가 나고 동기화가 멈춘다.
+function roundList_(sh, table) {
+  if (table._roundList !== undefined) return table._roundList;
+  let list = [];
+  try {
+    if (table.map && table.map.round != null) {
+      const col = table.map.round + 1;
+      // 머리행 바로 아래부터 몇 칸을 훑는다 (규칙이 첫 칸에만 안 걸려 있을 수도 있다)
+      for (let k = 0; k < 200 && !list.length; k++) {
+        const rule = sh.getRange(table.headerRow + 1 + k, col).getDataValidation();
+        if (!rule) continue;
+        const C = SpreadsheetApp.DataValidationCriteria;
+        const type = rule.getCriteriaType(), vals = rule.getCriteriaValues() || [];
+        if (type === C.VALUE_IN_LIST) list = (vals[0] || []).map(String).filter(String);
+        else if (type === C.VALUE_IN_RANGE && vals[0] && vals[0].getValues) {
+          // '목록 범위'로 만든 드롭다운
+          list = [].concat.apply([], vals[0].getValues()).map(String).filter(String);
+        }
+      }
+    }
+  } catch (e) { list = []; }   // 못 읽어도 아래 모양 판단으로 넘어간다
+  table._roundList = list;
+  return list;
+}
+
+// '기록ID' 열은 스크립트가 만들고 스크립트만 쓰는 칸이다.
+// 여기에 드롭다운(데이터 확인)이 잘못 걸려 있으면 기록ID 를 못 적어서
+//  - '데이터 확인 규칙을 위반합니다' 오류가 나고
+//  - 기록ID 가 비어 있으니 같은 기록이 동기화할 때마다 새로 생긴다.
+// 그래서 이 열의 규칙만 지운다. (회차 열의 드롭다운은 그대로 둔다)
+function clearIdValidation_(sh, table) {
+  try {
+    if (!table.map || table.map.id == null) return;
+    const col = table.map.id + 1;
+    const last = Math.max(sh.getLastRow(), table.headerRow + 1);
+    const rng = sh.getRange(table.headerRow, col, last - table.headerRow + 1, 1);
+    const rules = rng.getDataValidations ? rng.getDataValidations() : null;
+    if (!rules) return;
+    let found = false;
+    for (let i = 0; i < rules.length; i++) if (rules[i] && rules[i][0]) { found = true; break; }
+    if (!found) return;
+    rng.clearDataValidations();
+    SpreadsheetApp.flush();   // 바로 반영해야 뒤따르는 쓰기가 막히지 않는다
+    Logger.log("'기록ID' 열에 잘못 걸려 있던 데이터 확인 규칙을 지웠습니다. (" + sh.getName() + ')');
+  } catch (e) { Logger.log('기록ID 열 규칙 정리 실패(무시): ' + e); }
+}
+
+// 앱이 쓰는 면접 유형 (common.js 의 MEETING_TYPES 와 같아야 한다)
+const APP_MEETING_TYPES = ['학생부 기반', '기본 인성', '제시문', 'MMI', '복합형', '담임 기본지도'];
+// '면접 유형' 열 드롭다운에 앱이 쓰는 유형이 빠져 있으면 목록에 더해 준다.
+// (시트 목록이 4개뿐이면 '복합형'·'담임 기본지도' 기록이 시트에 못 들어간다)
+function ensureTypeValidation_(sh, table) {
+  try {
+    if (!table.map || table.map.type == null) return;
+    const col = table.map.type + 1;
+    const C = SpreadsheetApp.DataValidationCriteria;
+    const last = Math.max(sh.getLastRow(), table.headerRow + 1);
+    // 규칙이 첫 줄에만 안 걸려 있을 수 있으니 데이터 줄 전체에서 목록형 규칙을 찾는다
+    let cur = null;
+    // 규칙이 아직 줄이 없는 아래쪽에만 걸려 있을 수도 있으니 넉넉히(200줄) 훑는다
+    const scan = Math.max(last - table.headerRow, 200);
+    const rules = sh.getRange(table.headerRow + 1, col, scan, 1).getDataValidations();
+    for (let i = 0; i < rules.length && !cur; i++) {
+      const r = rules[i] && rules[i][0];
+      if (r && r.getCriteriaType() === C.VALUE_IN_LIST) cur = (r.getCriteriaValues()[0] || []).map(String);
+    }
+    if (!cur) return;                                    // 드롭다운이 없거나 '목록 범위'형이면 손대지 않는다
+    const add = APP_MEETING_TYPES.filter(function (t) { return cur.indexOf(t) < 0; });
+    if (!add.length) return;
+    const next = SpreadsheetApp.newDataValidation().requireValueInList(cur.concat(add), true).setAllowInvalid(true).build();
+    // 앞으로 추가될 줄까지 덮도록 넉넉히 (머리행 아래 500줄)
+    sh.getRange(table.headerRow + 1, col, Math.max(scan, 500), 1).setDataValidation(next);
+    SpreadsheetApp.flush();   // 바로 반영해야 이어지는 쓰기가 새 목록으로 검사된다
+    Logger.log("'면접 유형' 드롭다운에 " + add.join(', ') + ' 을(를) 더했습니다.');
+  } catch (e) { Logger.log('면접 유형 목록 보완 실패(무시): ' + e); }
+}
+
+// 규칙을 못 읽었을 때: 이미 '1차' 처럼 글자로 적혀 있으면 같은 꼴로 쓴다
+function roundIsText_(sh, table) {
+  if (table._roundText !== undefined) return table._roundText;
+  let text = false;
+  try {
+    const col = table.map.round + 1, last = sh.getLastRow();
+    if (last > table.headerRow) {
+      const vals = sh.getRange(table.headerRow + 1, col, last - table.headerRow, 1).getValues();
+      for (let i = 0; i < vals.length; i++) {
+        if (typeof vals[i][0] === 'string' && /\d+\s*차/.test(vals[i][0])) { text = true; break; }
+      }
+    }
+  } catch (e) {}
+  table._roundText = text;
+  return text;
+}
+function roundCellValue_(sh, table, n) {
+  const vals = roundList_(sh, table);
+  if (vals.length) {
+    for (let i = 0; i < vals.length; i++) {
+      const m = String(vals[i]).match(/\d+/);
+      if (m && Number(m[0]) === n) return vals[i];
+    }
+    return vals[vals.length - 1];   // 목록에 없는 회차(5차 등) → '4차 이상' 같은 마지막 항목
+  }
+  return roundIsText_(sh, table) ? n + '차' : n;
+}
+// 회차 쓰기. 규칙을 못 읽는 경우까지 대비해 표기를 바꿔 가며 시도한다.
+// (한 가지만 시도하면 드롭다운이 거부했을 때 칸이 빈 채로 남는다)
+function writeRound_(sh, table, rowNum, n) {
+  const tries = [];
+  const first = roundCellValue_(sh, table, n);
+  tries.push(first);
+  if (tries.indexOf(n + '차') < 0) tries.push(n + '차');       // '1차'
+  if (tries.indexOf(n) < 0) tries.push(n);                     // 숫자 1
+  const alt = n >= 4 ? (n + '차 이상') : null;                 // '4차 이상' 같은 목록 마지막 항목
+  if (alt && tries.indexOf(alt) < 0) tries.push(alt);
+  for (let i = 0; i < tries.length; i++) if (table.setCell(rowNum, 'round', tries[i])) return true;
+  return false;
 }
 function toCell_(key, v) {
   if (key === 'date') return parseDay_(v) || v || '';
@@ -831,7 +1511,7 @@ function styleHeader_(sh, n) {
   sh.setFrozenRows(1);
 }
 function firstDates_() {
-  const sh = SpreadsheetApp.getActive().getSheetByName(TAB.INTERVIEWS);
+  const sh = surveySS_().getSheetByName(TAB.INTERVIEWS);
   const out = {};
   if (!sh) return out;
   readTable_(sh, INTERVIEW_COLS).rows.forEach(function (r) {
@@ -844,7 +1524,7 @@ function firstDates_() {
 
 // ===================== 동기화 상태 =====================
 function ensureStateSheet_() {
-  const ss = SpreadsheetApp.getActive();
+  const ss = surveySS_();
   let sh = ss.getSheetByName(TAB.STATE);
   if (!sh) { sh = ss.insertSheet(TAB.STATE); sh.getRange(1, 1, 1, 4).setValues([['종류', 'ID', '해시', '동기화 시각(ms)']]); sh.hideSheet(); }
   return sh;
@@ -866,17 +1546,18 @@ function writeState_(kind, map) {
   if (rows.length) sh.getRange(2, 1, rows.length, 4).setValues(rows);
 }
 function log_(reason, r) {
-  const ss = SpreadsheetApp.getActive();
+  const ss = surveySS_();
   let sh = ss.getSheetByName(TAB.LOG);
   if (!sh) { sh = ss.insertSheet(TAB.LOG); sh.getRange(1, 1, 1, 7).setValues([['시각', '계기', '종류', '시트→앱', '앱→시트', '새로 추가', '삭제/오류']]); sh.hideSheet(); }
   const changed = r.pushed + r.pulled + r.created + r.deleted;
-  if (!changed && !r.errors.length && reason === '정기 대조') return;
+  if (!changed && !r.errors.length && (String(reason).indexOf('정기 대조') === 0 || String(r.kinds) === 'bookings')) return;
   sh.insertRowAfter(1);
   sh.getRange(2, 1, 1, 7).setValues([[new Date(), reason, r.kinds.join(','), r.pushed, r.pulled, r.created, (r.deleted || 0) + (r.errors.length ? ' / ' + r.errors.join('; ') : '')]]);
   if (sh.getLastRow() > 500) sh.deleteRows(501, sh.getLastRow() - 500);
 }
 function summary_(r) {
-  return '시트→앱 ' + r.pushed + '건, 앱→시트 ' + r.pulled + '건, 새로 추가 ' + r.created + '건, 삭제 ' + r.deleted + '건' +
+  return '[스크립트 ' + SCRIPT_VERSION + ']\n' +
+    '시트→앱 ' + r.pushed + '건, 앱→시트 ' + r.pulled + '건, 새로 추가 ' + r.created + '건, 삭제 ' + r.deleted + '건' +
     (r.errors.length ? '\n오류: ' + r.errors.join('\n') : '');
 }
 
@@ -912,15 +1593,74 @@ function fsList_(collection) {
   } while (pageToken);
   return out;
 }
+// 면접 기록에 실제로 쓴 내용이 있는가 (있으면 자동 정리·덮어쓰기 대상에서 제외)
+function hasRecord_(m) {
+  if (!m) return false;
+  const keys = ['questions', 'answerSummary', 'good', 'improve', 'nextGoal'];
+  for (let i = 0; i < keys.length; i++) if (String(m[keys[i]] || '').trim()) return true;
+  return m.planned === false;
+}
+function fsGet_(path) {
+  const res = UrlFetchApp.fetch(fsBase_() + path, { headers: { Authorization: 'Bearer ' + fbToken_() }, muteHttpExceptions: true });
+  if (res.getResponseCode() === 404) return null;
+  const data = JSON.parse(res.getContentText() || '{}');
+  if (res.getResponseCode() >= 300) throw new Error('Firestore 읽기 실패(' + path + '): ' + ((data.error && data.error.message) || res.getResponseCode()));
+  return fromFsFields_(data.fields || {});
+}
+// 한 필드 조건 + 같은 필드 오름차순 (색인 추가 필요 없음)
+function fsQuery_(collection, field, op, value, limit) {
+  const res = UrlFetchApp.fetch(fsBase_().replace(/\/$/, '') + ':runQuery', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + fbToken_() },
+    payload: JSON.stringify({ structuredQuery: {
+      from: [{ collectionId: collection }],
+      where: { fieldFilter: { field: { fieldPath: field }, op: op, value: toFsValue_(value) } },
+      orderBy: [{ field: { fieldPath: field }, direction: 'ASCENDING' }],
+      limit: limit || 500
+    } })
+  });
+  const data = JSON.parse(res.getContentText() || '[]');
+  if (res.getResponseCode() >= 300) throw new Error('Firestore 조회 실패(' + collection + '): ' + ((data.error && data.error.message) || (data[0] && data[0].error && data[0].error.message) || res.getResponseCode()));
+  return (data || []).filter(function (x) { return x.document; }).map(function (x) {
+    return { id: x.document.name.split('/').pop(), fields: fromFsFields_(x.document.fields || {}) };
+  });
+}
 function fsPatchReq_(path, obj, mask) {
   let url = fsBase_() + path;
   if (mask) url += '?' + mask.map(function (f) { return 'updateMask.fieldPaths=' + encodeURIComponent(f); }).join('&');
   return { url: url, method: 'patch', contentType: 'application/json', payload: JSON.stringify({ fields: toFsFields_(obj) }), muteHttpExceptions: true };
 }
 function fsDeleteReq_(path) { return { url: fsBase_() + path, method: 'delete', muteHttpExceptions: true }; }
+// 앱의 브라우저 캐시가 바뀐 목록을 다시 받도록 meta/versions 에 표시 (시트 쪽 변경은 s_목록 필드)
+const CACHED_ = ['students', 'staff', 'interviews', 'meetings', 'questions', 'availability'];
+function bumpMeta_(reqs) {
+  const cols = {}, deleted = {};
+  reqs.forEach(function (r) {
+    const path = String(r.url).split('/documents/')[1].split('?')[0];
+    const parts = path.split('/'), c = parts[0];
+    if (CACHED_.indexOf(c) < 0) return;
+    cols[c] = true;
+    if (r.method === 'delete' && parts.length === 2 && (c === 'meetings' || c === 'interviews')) {
+      (deleted[c] = deleted[c] || {})[parts[1]] = Date.now();
+    }
+  });
+  const names = Object.keys(cols);
+  if (!names.length) return;
+  const obj = {}, mask = [];
+  names.forEach(function (c) { obj['s_' + c] = Date.now(); mask.push('s_' + c); });
+  Object.keys(deleted).forEach(function (c) {
+    obj.deleted = obj.deleted || {};
+    obj.deleted[c] = deleted[c];
+    Object.keys(deleted[c]).forEach(function (id) { mask.push('deleted.' + c + '.`' + id + '`'); });
+  });
+  const req = fsPatchReq_('meta/versions', obj, mask);
+  req.headers = { Authorization: 'Bearer ' + fbToken_() };
+  try { UrlFetchApp.fetch(req.url, req); } catch (err) { /* 표시 실패는 캐시가 12시간 뒤 새로 받으므로 무시 */ }
+}
 function fsBatch_(reqs) {
   if (!reqs.length) return;
   const token = fbToken_();
+  const all = reqs.slice();
   for (let i = 0; i < reqs.length; i += 20) {
     const chunk = reqs.slice(i, i + 20).map(function (r) { r.headers = { Authorization: 'Bearer ' + token }; return r; });
     const res = UrlFetchApp.fetchAll(chunk);
@@ -932,6 +1672,7 @@ function fsBatch_(reqs) {
       }
     });
   }
+  bumpMeta_(all);
 }
 function toFsValue_(v) {
   if (v === null || v === undefined) return { nullValue: null };
@@ -956,6 +1697,61 @@ function fromFsValue_(v) {
 }
 function fromFsFields_(f) { const o = {}; Object.keys(f).forEach(function (k) { o[k] = fromFsValue_(f[k]); }); return o; }
 
+// ===================== 백업 (구글 드라이브) =====================
+// 매주 일요일 6시(메뉴 ③ 설치 시) + 메뉴/앱에서 즉시. 이 스크립트 소유자의 드라이브 '면접 스튜디오 백업' 폴더에 JSON 저장, 최근 8개 보관.
+const BACKUP_COLLECTIONS = ['students', 'staff', 'accounts', 'logins', 'interviews', 'studentNotes', 'questions',
+  'sessions', 'meetings', 'bookings', 'bookingLogs', 'days', 'availability', 'meta'];
+const BACKUP_KEEP = 8;
+function menuBackupNow() {
+  const r = weeklyBackup();
+  SpreadsheetApp.getUi().alert('백업 완료', r.file + '\n' + r.total + '건 저장 (드라이브 > 면접 스튜디오 백업)', SpreadsheetApp.getUi().ButtonSet.OK);
+}
+function weeklyBackup() {
+  const data = { app: '면접 스튜디오', exportedAt: new Date().toISOString(), project: CONFIG.FIREBASE_PROJECT_ID, collections: {} };
+  const counts = {};
+  BACKUP_COLLECTIONS.forEach(function (c) {
+    data.collections[c] = fsList_(c).map(function (d) { return stripSecret_(Object.assign({ _id: d.id }, d.fields)); });
+    counts[c] = data.collections[c].length;
+  });
+  data.collections.personalQuestions = fsGroup_('personalQuestions').map(function (d) { return stripSecret_(Object.assign({ _id: d.id, _parent: d.parent }, d.fields)); });
+  counts.personalQuestions = data.collections.personalQuestions.length;
+  const sched = fsGet_('config/schedule');
+  data.collections.config = sched ? [Object.assign({ _id: 'schedule' }, sched)] : [];
+  const total = Object.keys(counts).reduce(function (a, k) { return a + counts[k]; }, 0);
+  const folder = backupFolder_();
+  const name = '면접스튜디오_백업_' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd_HHmm') + '.json';
+  const file = folder.createFile(name, JSON.stringify(data), 'application/json');
+  // 오래된 백업 정리
+  const files = [];
+  const it = folder.getFiles();
+  while (it.hasNext()) { const f = it.next(); if (String(f.getName()).indexOf('면접스튜디오_백업_') === 0) files.push(f); }
+  files.sort(function (a, b) { return String(b.getName()).localeCompare(String(a.getName())); });
+  files.slice(BACKUP_KEEP).forEach(function (f) { f.setTrashed(true); });
+  const info = { at: Date.now(), file: name, total: total, counts: counts, by: '드라이브 자동 백업' };
+  fsBatch_([fsPatchReq_('meta/backup', info, null)]);
+  log_('백업', { pushed: 0, pulled: total, created: 1, deleted: 0, errors: [], kinds: ['backup'] });
+  return info;
+}
+function backupFolder_() {
+  const it = DriveApp.getFoldersByName('면접 스튜디오 백업');
+  return it.hasNext() ? it.next() : DriveApp.createFolder('면접 스튜디오 백업');
+}
+function stripSecret_(o) { delete o.initialPw; delete o.token; return o; }
+// 하위 컬렉션 전체(예: 모든 학생의 personalQuestions) 한 번에 읽기
+function fsGroup_(collectionId) {
+  const res = UrlFetchApp.fetch(fsBase_().replace(/\/$/, '') + ':runQuery', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + fbToken_() },
+    payload: JSON.stringify({ structuredQuery: { from: [{ collectionId: collectionId, allDescendants: true }] } })
+  });
+  const data = JSON.parse(res.getContentText() || '[]');
+  if (res.getResponseCode() >= 300) throw new Error('Firestore 조회 실패(' + collectionId + '): ' + ((data.error && data.error.message) || (data[0] && data[0].error && data[0].error.message) || res.getResponseCode()));
+  return (data || []).filter(function (x) { return x.document; }).map(function (x) {
+    const parts = x.document.name.split('/documents/')[1].split('/');
+    return { id: parts[parts.length - 1], parent: parts.slice(0, -2).join('/'), fields: fromFsFields_(x.document.fields || {}) };
+  });
+}
+
 // ===================== 기타 =====================
 function runLocked_(fn) {
   const lock = LockService.getScriptLock();
@@ -975,6 +1771,17 @@ function hash_(o) {
 function pick_(o, fields) { const r = {}; fields.forEach(function (f) { r[f] = o[f] == null ? '' : String(o[f]); }); return r; }
 function uniq_(a) { return a.filter(function (x, i) { return a.indexOf(x) === i; }); }
 function clean_(v) { const s = String(v == null ? '' : v).trim(); return (s === '미정' || s === '-') ? '' : s; }
+// 학반 값 바로잡기.
+// 시트에 '3-2' 를 치면 날짜(2026-03-02)가 되고, 그게 그대로 앱까지 올라가 있다.
+// 날짜든 '2026-03-02' 같은 글자든 '3-2' 로 되돌리고, 그래도 이상하면 학번에서 만든다.
+function clsOf_(v, no) {
+  if (v instanceof Date) return (v.getMonth() + 1) + '-' + v.getDate();
+  const t = String(v == null ? '' : v).trim();
+  if (/^\d-\d{1,2}$/.test(t)) return t;                       // 이미 '3-2'
+  const m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);         // 시트가 날짜로 바꾼 것
+  if (m) return Number(m[2]) + '-' + Number(m[3]);
+  return no ? classOf_(no) : t;
+}
 function classOf_(no) { no = String(no); return no ? no.charAt(0) + '-' + Number(no.slice(1, no.length - 2)) : ''; }
 function colOf_(cols, key) { for (let i = 0; i < cols.length; i++) if (cols[i][1] === key) return i + 1; return -1; }
 function colLetter_(n) { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }

@@ -1,18 +1,13 @@
-// 홈 화면 앱(PWA)용 최소 서비스워커.
-// 앱 파일은 절대 캐시하지 않습니다 (옛 화면이 남아 화면이 멈추던 문제 방지).
-// 인터넷이 끊겼을 때 보여 줄 안내 페이지 하나만 저장해 둡니다.
-const OFFLINE = "osong-offline-v1";
-const PAGE = "offline.html";
+// 홈 화면 앱(PWA)·휴대폰 알림용 최소 서비스워커.
+// 화면·파일 요청은 전혀 가로채지 않습니다 (fetch 처리 없음) → 브라우저가 시크릿 창과 똑같이 바로 네트워크로 엽니다.
+// (2026-10-12) 예전에는 화면 이동을 대신 받아 실패하면 offline.html 을 보여 줬는데,
+//  확장 프로그램·보안 프로그램·절전 직후 등으로 서비스워커 요청만 실패하면 인터넷이 되는데도 '연결 안 됨' 화면이 떠서 없앴습니다.
+//  홈 화면 설치(크롬·안드로이드·아이폰)와 웹 푸시는 fetch 처리 없이도 됩니다.
 
-self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(OFFLINE).then((c) => c.add(PAGE)).then(() => self.skipWaiting()));
-});
+self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => {
-  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== OFFLINE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
-});
-self.addEventListener("fetch", (e) => {
-  if (e.request.mode !== "navigate") return;                 // 나머지는 평소대로 네트워크에서
-  e.respondWith(fetch(e.request).catch(() => caches.match(PAGE)));
+  // 예전 판이 저장해 둔 안내 페이지 캐시까지 모두 지운다
+  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
 
 // ===== 휴대폰 알림(웹 푸시) =====

@@ -353,7 +353,7 @@ function renderPracRecent() {
     ${sessions.length ? sessions.slice(0, 3).map((x) => {
       const d = x.startedAt ? new Date(x.startedAt.seconds * 1000) : null;
       const [c, lab] = sessState(x);
-      const nAns = (x.items || []).filter((i) => i.answer).length;
+      const nAns = (x.items || []).filter((i) => i?.answer).length;
       return `<button type="button" class="hist" data-sid="${esc(x.id)}"><span class="hd2">${d ? `${d.getMonth() + 1}/${d.getDate()}<small>${"일월화수목금토"[d.getDay()]}</small>` : "-"}</span>
         <span class="ht"><b>${esc(x.modeLabel || x.mode || "말하기 연습")}</b><small>${nAns}/${(x.items || []).length}문항</small></span><span class="st-b ${c}">${lab}</span></button>`;
     }).join("") : '<p class="muted" style="margin:6px 0 0">아직 연습 기록이 없어요. 위에서 유형을 골라 시작해 보세요.</p>'}`;
@@ -928,7 +928,7 @@ function renderHistory() {
         : s.reviewedAt ? `<span class="badge badge-green">피드백 도착</span>` : `<span class="badge badge-orange">검토 대기</span>`;
       const avg = avgScore(s);
       return `<tr class="clickable" data-id="${s.id}"><td>${fmtDate(s.startedAt)}</td><td>${esc(s.modeLabel || s.mode)}</td>
-        <td>${(s.items || []).filter((i) => i.answer).length}/${(s.items || []).length}</td><td>${st}</td><td>${avg != null ? avg.toFixed(1) : "-"}</td></tr>`;
+        <td>${(s.items || []).filter((i) => i?.answer).length}/${(s.items || []).length}</td><td>${st}</td><td>${avg != null ? avg.toFixed(1) : "-"}</td></tr>`;
     }).join("")}</tbody></table></div>`;
   $$("#history tr[data-id]").forEach((tr) => tr.onclick = () => openSession(sessions.find((s) => s.id === tr.dataset.id)));
 }

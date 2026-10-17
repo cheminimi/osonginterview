@@ -38,10 +38,10 @@ function render() {
     !st || (st === "pending" && s.status === "submitted" && !s.reviewedAt) || (st === "done" && s.reviewedAt) || (st === "progress" && s.status !== "submitted")));
   if (!list.length) { $("#rBody", root).innerHTML = `<tr><td colspan="7" class="empty">해당하는 기록이 없습니다.</td></tr>`; return; }
   $("#rBody", root).innerHTML = list.map((s) => {
-    const over = (s.items || []).filter((i) => i.usedSec > i.answerSec).length;
+    const over = (s.items || []).filter((i) => i?.usedSec > i?.answerSec).length;
     return `<tr class="clickable" data-id="${s.id}"><td class="nowrap">${fmtDate(s.submittedAt || s.startedAt)}</td>
       <td class="nowrap">${esc(s.studentNo)} <b>${esc(s.studentName)}</b></td><td>${isBoothSession(s) ? '<span class="badge badge-blue">부스</span> ' : ""}${esc(s.modeLabel)}</td>
-      <td>${(s.items || []).filter((i) => i.answer).length}/${(s.items || []).length}</td><td>${over || "-"}</td>
+      <td>${(s.items || []).filter((i) => i?.answer).length}/${(s.items || []).length}</td><td>${over || "-"}</td>
       <td>${s.status !== "submitted" ? '<span class="badge badge-gray">미완료</span>' : s.reviewedAt ? '<span class="badge badge-green">검토 완료</span>' : '<span class="badge badge-orange">검토 대기</span>'}</td>
       <td class="muted">${esc(s.reviewedBy || "")}</td></tr>`;
   }).join("");

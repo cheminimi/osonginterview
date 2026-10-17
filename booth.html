@@ -1379,7 +1379,8 @@ function aiMask(t) {
 }
 function aiItem(it, which) {
   const o = { slot: it.slot || "", type: it.type, question: it.text, basis: aiMask(basisOf.get(it.qid) || ""), answer: aiMask(it.answer),
-    keywords: keywordsOf(aiMask(it.answer)).filter((k) => !k.w.includes("○")),   // 가린 답변으로 다시 셈 m: it.m ? { cpm: it.m.cpm, pauses: it.m.pauses, firstSec: it.m.firstSec } : null,
+    keywords: keywordsOf(aiMask(it.answer)).filter((k) => !k.w.includes("○")),   // 가린 답변으로 다시 셈
+    m: it.m ? { cpm: it.m.cpm, pauses: it.m.pauses, firstSec: it.m.firstSec } : null,
     usedSec: it.usedSec, answerSec: it.answerSec };
   if (which === "all") Object.assign(o, { thinkUsedSec: it.thinkUsedSec || 0, followUp: it.followUp || "", followSource: it.followSource || "",
     followAnswer: aiMask(it.followAnswer), followUsedSec: it.followUsedSec || 0,

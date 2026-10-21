@@ -5,6 +5,7 @@ import {
   $, $$, esc, toast, showError, isoDay, toDate, fmtDay, fmtDate, nextInterview, defaultMeetingType, cachedCollection, icon, confirmBox
 } from "./common.js";
 import { pingScheduleSync } from "./sync.js";
+import { queueNotify } from "./notify.js";
 
 // ================= 기본값 =================
 export const DEFAULT_BLOCKS = [
@@ -145,6 +146,20 @@ export function findConflicts(b, items, { avail = {}, actor = "", isAdmin = fals
   if (student) {
     const nx = nextInterview(student);
     if (nx && toDate(b.date) > nx) out.push({ hard: false, msg: `대학 면접일(${fmtDay(nx)})보다 늦은 날짜예요.` });
+  }
+  return out;
+}
+
+/** 장소만 바꿀 때의 검사 — 같은 시간·같은 장소의 다른 일정, 그 장소를 못 쓰는 시간만 본다
+ *  (선생님·학생 시간은 이미 정해진 일정이라 다시 보지 않는다) */
+function roomConflicts(b, items, { isAdmin = false, bookingId = "", cfg = null } = {}) {
+  const out = [];
+  const offMsg = cfg ? roomOff(cfg, b.room, b.date, b.block) : "";
+  if (offMsg) out.push({ hard: !isAdmin, msg: offMsg });
+  if (!b.room) return out;
+  for (const [id, x] of Object.entries(items || {})) {
+    if (id === bookingId || !ACTIVE(x.status) || !overlap(x, b)) continue;
+    if (normRoom(x.room) === normRoom(b.room)) out.push({ hard: true, msg: `${b.room}에 같은 시간 다른 일정이 있어요 (${x.start}–${x.end} ${x.stage}차${x.status === "requested" ? "(요청 중)" : ""})` });
   }
   return out;
 }
@@ -456,7 +471,7 @@ export function mountSchedule(root, opts) {
     if (!isStudent && !stuList.length) return toast("배정된 담당 학생이 없습니다. (관리자는 모든 학생 가능)", "error");
     let sNo = b0?.studentNo || studentNo || (isStudent ? opts.student.studentNo : "");
     const body = modal(b0 ? "시간 변경 제안" : isStudent ? "모의면접 신청" : "일정 잡기", `<form id="bkF">
-      ${b0 ? `<div class="notice">지금 일정: <b>${timeText(b0)}</b> · ${esc(b0.room || "장소 미정")} ${statusBadge(b0.status)}<br><span class="muted">바꾸면 상대방이 다시 수락해야 확정됩니다.</span></div>` : ""}
+      ${b0 ? `<div class="notice">지금 일정: <b>${timeText(b0)}</b> · ${esc(b0.room || "장소 미정")} ${statusBadge(b0.status)}<br><span class="muted">바꾸면 상대방이 다시 수락해야 확정됩니다.${isStudent ? "" : " 장소만 바꾸면 수락은 그대로이고 학생에게 알림만 가요."}</span></div>` : ""}
       <div class="grid grid-2" style="gap:0 14px">
         ${isStudent ? "" : `<div class="field"><label>학생 *</label><select name="studentNo" ${canPickStudent ? "" : "disabled"}>
           <option value="">— 학생 선택 —</option>${stuList.map((s) => `<option value="${esc(s.studentNo)}" ${s.studentNo === sNo ? "selected" : ""}>${esc(s.studentNo)} ${esc(s.name)}</option>`).join("")}</select></div>`}
@@ -607,6 +622,12 @@ export function mountSchedule(root, opts) {
       if (hard.length && !force) return toast(hard[0].msg, "error");
       if (warns.length && !confirm(warns.map((x) => "• " + x.msg).join("\n") + "\n\n그래도 진행할까요?")) return;
       $("#bkSave", body).disabled = true;
+      // 교사가 기존 일정의 장소만 바꿨으면 제안이 아니라 '장소 변경' (수락 유지 · 학생 안내)
+      if (b0 && !isStudent && !force && ACTIVE(b0.status) && ["date", "block", "start", "end"].every((k) => b0[k] === next[k]) && normRoom(b0.room || "") !== normRoom(next.room || "")) {
+        try { await changeRoom(b0, next.room || "", next.memo); close(); toast("장소를 바꿨어요. 학생에게 알림이 가요."); await refresh(); }
+        catch (err) { if (err.conflict) toast(err.message, "error", 7000); else showError(err, "장소 바꾸기"); $("#bkSave", body).disabled = false; }
+        return;
+      }
       try {
         await commit(b0?.id || null, next, force ? "관리자 확정" : b0 ? "시간 변경 제안" : isStudent ? "신청" : "일정 제안", { force, expectMs: b0?.updatedAtMs });
         close();
@@ -619,7 +640,7 @@ export function mountSchedule(root, opts) {
   }
 
   // 트랜잭션: 일정 문서 + 날짜별 요약 + 로그를 한 번에. 저장 직전에 다시 겹침 검사
-  async function commit(id, data, action, { force = false, expectMs = null } = {}) {
+  async function commit(id, data, action, { force = false, expectMs = null, roomOnly = false } = {}) {
     const ref = id ? doc(db, "bookings", id) : doc(collection(db, "bookings"));
     const bid = ref.id;
     const now = Date.now();
@@ -637,10 +658,13 @@ export function mountSchedule(root, opts) {
       const sameSlot = cur && ACTIVE(cur.status) && ["date", "start", "end", "room"].every((k) => cur[k] === next[k]);
       // 완료 표시된 일정을 다른 날짜·시간으로 옮기면 '다시 잡은 면접'이므로 완료를 푼다.
       // (그대로 두면 미래 일정인데도 '다가오는 일정'에서 빠져 버린다)
-      const slotMoved = cur && ["date", "start", "end", "room"].some((k) => cur[k] !== next[k]);
+      // (장소만 바뀐 것은 같은 면접이므로 완료를 그대로 둔다)
+      const slotMoved = cur && ["date", "start", "end"].some((k) => cur[k] !== next[k]);
       if (cur && cur.done === true && slotMoved && data.done === undefined) { next.done = false; next.doneAtMs = 0; }
       if (ACTIVE(next.status) && !force && !sameSlot) {
-        const hard = findConflicts(next, dayItems[next.date], { avail: st.avail, actor: me, isAdmin, bookingId: bid, cfg: st.cfg }).filter((x) => x.hard);
+        const list = roomOnly ? roomConflicts(next, dayItems[next.date], { isAdmin, bookingId: bid, cfg: st.cfg })
+          : findConflicts(next, dayItems[next.date], { avail: st.avail, actor: me, isAdmin, bookingId: bid, cfg: st.cfg });
+        const hard = list.filter((x) => x.hard);
         if (hard.length) throw Object.assign(new Error("방금 다른 일정이 먼저 잡혔어요: " + hard[0].msg), { conflict: true });
       }
       tx.set(ref, next);
@@ -668,6 +692,52 @@ export function mountSchedule(root, opts) {
     return saved;
   }
 
+  // ---- 장소 바꾸기 (교사·관리자) — 수락은 그대로, 학생과 함께하는 선생님에게 알림만
+  async function changeRoom(b, room, memo = "") {
+    const old = b.room || "";
+    if (normRoom(old) === normRoom(room)) { toast("장소가 그대로예요."); return false; }
+    await commit(b.id, { room, memo: memo || `장소 ${old || "미정"} → ${room || "미정"}`, updatedBy: me }, "장소 변경", { expectMs: b.updatedAtMs, roomOnly: true });
+    const stg = `${b.stage}차`, tag = `room_${b.id}`;
+    const text = `${timeText(b)} · ${old || "미정"} → ${room || "미정"}`;
+    const staff = opts.getStaff?.() || [];
+    await Promise.all([
+      queueNotify({ key: b.studentNo, title: `${stg} 모의면접 장소가 바뀌었어요`, body: text, url: "student.html#schedule", tag }),
+      ...(b.teachers || []).filter((t) => t !== me).map((t) => {
+        const sid = staff.find((x) => x.name === t)?.id;
+        return sid ? queueNotify({ role: "staff", key: sid, title: `${maskName(b.studentName)} 학생 ${stg} 장소가 바뀌었어요`, body: text, url: "teacher.html", tag }) : null;
+      })
+    ]);
+    return true;
+  }
+  function openRoom(b) {
+    const cur = b.room || "", names = roomNames(st.cfg.rooms), inList = !cur || names.includes(cur);
+    const others = (b.teachers || []).filter((t) => t !== me);
+    const body = modal("장소 바꾸기", `<form id="rmF">
+      <div class="notice"><b>${timeText(b)}</b> · 지금 장소 <b>${esc(cur || "미정")}</b> ${statusBadge(b.status)}<br>
+        <span class="muted">장소만 바꾸면 수락은 그대로예요. 학생${others.length ? `과 ${esc(others.join("·"))} 선생님` : ""}에게 알림이 가요.</span></div>
+      <div class="field"><label>새 장소</label><select name="room">
+        <option value="">미정</option>${st.cfg.rooms.map((r) => {
+          const off = roomOff(st.cfg, r.name, b.date, b.block);
+          return `<option value="${esc(r.name)}" ${r.name === cur ? "selected" : ""} ${off && !isAdmin && r.name !== cur ? "disabled" : ""}>${esc(r.name)}${off ? " · 이 시간 불가" : ""}</option>`;
+        }).join("")}<option value="__other" ${inList ? "" : "selected"}>기타 (직접 입력)</option></select>
+        <input name="roomOther" placeholder="장소 직접 입력 (예: 3-2 교실)" style="margin-top:6px" value="${inList ? "" : esc(cur)}" ${inList ? "hidden" : ""}></div>
+      <div class="field"><label>학생에게 남길 말 (선택)</label><input name="memo" maxlength="200" placeholder="예: 교실 공사로 장소를 옮겼어요"></div>
+      <div class="row"><button class="btn-primary" id="rmSave">장소 바꾸기</button><button type="button" id="rmCancel">취소</button></div></form>`);
+    const sel = $("[name=room]", body), other = $("[name=roomOther]", body);
+    sel.onchange = () => { other.hidden = sel.value !== "__other"; };
+    $("#rmCancel", body).onclick = () => openDetail(b.id);
+    $("#rmF", body).onsubmit = async (e) => {
+      e.preventDefault();
+      const room = sel.value === "__other" ? other.value.trim() : sel.value;
+      if (sel.value === "__other" && !room) return toast("장소를 입력하세요.", "error");
+      $("#rmSave", body).disabled = true;
+      try {
+        if (await changeRoom(b, room, $("[name=memo]", body).value.trim())) { close(); toast("장소를 바꿨어요. 학생에게 알림이 가요."); await refresh(); }
+        else $("#rmSave", body).disabled = false;
+      } catch (err) { $("#rmSave", body).disabled = false; if (err.conflict) toast(err.message, "error", 7000); else showError(err, "장소 바꾸기"); }
+    };
+  }
+
   // 일정 상세 + 수락/거절/취소
   async function openDetail(id) {
     let b = st.bookings.find((x) => x.id === id);
@@ -693,6 +763,7 @@ export function mountSchedule(root, opts) {
       <div class="row">
         ${canAccept ? '<button class="btn-primary" id="bdAccept">수락</button>' : ""}
         <button id="bdChange">시간 변경 제안</button>
+        ${!isStudent && !DONE(b) ? '<button id="bdRoom">장소 바꾸기</button>' : ""}
         ${canAccept ? '<button class="btn-danger" id="bdReject">거절</button>' : ""}
         <button class="btn-danger" id="bdCancel">일정 취소</button>
         ${isAdmin && b.status !== "confirmed" ? '<button id="bdForce">바로 확정</button>' : ""}
@@ -730,6 +801,7 @@ export function mountSchedule(root, opts) {
     $("#bdDone", body)?.addEventListener("click", () => run({ done: true }, "완료", "완료 처리했습니다. 다가오는 일정에서 빠집니다."));
     $("#bdUndone", body)?.addEventListener("click", () => run({ done: false }, "완료 취소", "완료를 취소했습니다."));
     $("#bdChange", body)?.addEventListener("click", () => openForm({ booking: b }));
+    $("#bdRoom", body)?.addEventListener("click", () => openRoom(b));
     $("#bdMeet", body)?.addEventListener("click", () => { close(); opts.openMeeting(b); });
 
     if (!isStudent) {

@@ -497,11 +497,17 @@ function reviewOf(u) {
   if (!u) return null;
   return reviews.find((r) => r.id === u.id) || reviews.find((r) => sameInterview(r, u)) || null;
 }
-// 면접이 끝났고(다음날부터) 아직 안 쓴 것
+// 후기는 면접 당일 저녁 6시부터 쓸 수 있다 (2026-10-25)
+const RV_OPEN_HOUR = 18;
+function reviewOpen(u) {
+  if (!u?.date) return false;
+  const d = isoDay(u.date), today = isoDay();
+  return d < today || (d === today && new Date().getHours() >= RV_OPEN_HOUR);
+}
+// 면접이 끝났고(당일 18시부터) 아직 안 쓴 것
 function pendingReviews() {
-  const today = isoDay();
   return (me.universities || [])
-    .filter((u) => u.date && isoDay(u.date) < today && !reviewOf(u))
+    .filter((u) => reviewOpen(u) && !reviewOf(u))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 const snoozed = () => { try { return JSON.parse(localStorage.getItem(SNOOZE_KEY) || "{}"); } catch (e) { return {}; } };
@@ -516,7 +522,7 @@ function nudgeReviews() {
 const uniOf = (id) => (me.universities || []).find((u) => u.id === id);
 
 // ---- 후기 쓰기 화면 (홈 안의 하위 화면)
-const RV_MAX = { questions: 4000, helped: 2000, regret: 2000 };
+const RV_MAX = { questions: 4000, helped: 2000, regret: 2000, procedure: 2000, notes: 2000, q: 300, a: 2000, qa: 20 };
 function starsHtml(name, n) {
   return `<span class="stars" data-star="${name}">${[1, 2, 3, 4, 5].map((i) => `<button type="button" class="st${i <= n ? " on" : ""}" data-v="${i}"
     aria-label="${i}점">${icon("star", 22)}</button>`).join("")}</span>`;
@@ -532,9 +538,16 @@ function openReview(id) {
       <span>${esc([u.admission, u.format].filter(Boolean).join(" · "))}${u.date ? " · " + fmtDay(u.date) : ""}</span></div>
     <div class="rv-note">선생님만 봅니다. 다른 학생에게는 보이지 않아요.<br>
       빈칸으로 두어도 괜찮아요 — 기억나는 것만 적으면 됩니다.</div>
-    <div class="field"><label for="rvQ">실제로 받은 질문</label>
-      <textarea id="rvQ" class="rv tall" maxlength="${RV_MAX.questions}" placeholder="한 줄에 하나씩 적어 주세요">${esc(r.questions || "")}</textarea>
-      <div class="rv-hint">한 줄에 하나씩. 정확하지 않아도 괜찮아요.</div></div>
+    <div class="field"><label for="rvP">면접 절차 및 진행 방식</label>
+      <textarea id="rvP" class="rv" maxlength="${RV_MAX.procedure}" placeholder="예) 대기실 → 면접실 이동, 면접관 3명, 약 10분, 제시문 없음">${esc(r.procedure || "")}</textarea>
+      <div class="rv-hint">대기·이동 순서, 면접관·학생 수, 걸린 시간, 제시문·준비 시간이 있었는지</div></div>
+    <div class="field"><label>받은 질문과 실제 답변</label>
+      ${r.questions ? `<div class="rv-old"><small>예전에 적은 받은 질문 (그대로 보관)</small>${esc(r.questions)}</div>` : ""}
+      <div id="rvQa"></div>
+      <button type="button" class="rv-addq" id="rvAddQ">+ 질문 추가</button>
+      <div class="rv-hint">꼬리질문도 따로 Q로 적어 주세요. 정확하지 않아도 괜찮아요.</div></div>
+    <div class="field"><label for="rvN">기타 유의사항</label>
+      <textarea id="rvN" class="rv" maxlength="${RV_MAX.notes}" placeholder="예) 대기실에서 휴대폰 제출 · 수험번호로 부름">${esc(r.notes || "")}</textarea></div>
     <div class="field"><label for="rvH">준비하면서 도움된 것</label>
       <textarea id="rvH" class="rv" maxlength="${RV_MAX.helped}" placeholder="예) 3차 모의면접에서 연습한 꼬리 질문이 그대로 나왔어요">${esc(r.helped || "")}</textarea></div>
     <div class="field"><label for="rvR">아쉬웠던 것 · 다시 한다면</label>
@@ -559,6 +572,27 @@ function openReview(id) {
       $$("[data-v]", row).forEach((x) => x.classList.toggle("on", Number(x.dataset.v) <= picked[key]));
     };
   });
+  // 받은 질문과 실제 답변 (Q/A 짝, 최대 20개)
+  const qaBox = $("#rvQa", box);
+  const qaRow = (q = "", a = "") => {
+    const el = document.createElement("div");
+    el.className = "rv-qa";
+    el.innerHTML = `<div class="qrow"><b></b><input class="rq" maxlength="${RV_MAX.q}" placeholder="받은 질문" value="${esc(q)}"></div>
+      <div class="arow"><b>A</b><textarea class="rv ra" maxlength="${RV_MAX.a}" placeholder="실제로 한 답 (기억나는 만큼)">${esc(a)}</textarea></div>
+      <div class="rm"><button type="button" class="link">이 질문 지우기</button></div>`;
+    $(".rm button", el).onclick = () => { el.remove(); if (!qaBox.children.length) qaRow(); numberQa(); };
+    qaBox.append(el);
+    numberQa();
+  };
+  const numberQa = () => {
+    [...qaBox.children].forEach((el, i) => { $(".qrow b", el).textContent = "Q" + (i + 1); });
+    $("#rvAddQ", box).hidden = qaBox.children.length >= RV_MAX.qa;
+  };
+  const qa0 = (Array.isArray(r.qa) ? r.qa : []).filter((x) => x && (x.q || x.a));
+  if (qa0.length) qa0.forEach((x) => qaRow(x.q || "", x.a || ""));
+  else { qaRow(); if (!r.questions) qaRow(); }
+  $("#rvAddQ", box).onclick = () => { qaRow(); $$(".rq", qaBox).pop()?.focus(); };
+
   const close = () => { box.hidden = true; box.innerHTML = ""; $("#homeBody").hidden = false; renderHome(); window.scrollTo({ top: 0, behavior: "instant" }); };
   $("#rvBack", box).onclick = close;
   $("#rvCancel", box).onclick = close;
@@ -568,7 +602,11 @@ function openReview(id) {
       studentNo: String(me.studentNo), name: me.name || "", cls: me.cls || "",
       interviewId: u.id, univ: u.univ || "", dept: u.dept || "", admission: u.admission || "",
       format: u.format || "", date: u.date || "", year: schoolYear(),
-      questions: $("#rvQ", box).value.trim().slice(0, RV_MAX.questions),
+      questions: String(r.questions || "").slice(0, RV_MAX.questions),     // 예전 양식 글은 그대로 둔다
+      procedure: $("#rvP", box).value.trim().slice(0, RV_MAX.procedure),
+      qa: [...qaBox.children].map((el) => ({ q: $(".rq", el).value.trim().slice(0, RV_MAX.q), a: $(".ra", el).value.trim().slice(0, RV_MAX.a) }))
+        .filter((x) => x.q || x.a).slice(0, RV_MAX.qa),
+      notes: $("#rvN", box).value.trim().slice(0, RV_MAX.notes),
       helped: $("#rvH", box).value.trim().slice(0, RV_MAX.helped),
       regret: $("#rvR", box).value.trim().slice(0, RV_MAX.regret),
       mood: picked.mood, difficulty: picked.difficulty,
@@ -674,7 +712,7 @@ function bandHtml() {
   if (!u) return "";
   const dt = new Date(String(u.date).replace(/-/g, "/"));
   const gap = Math.round((new Date(isoDay()).getTime() - dt.getTime()) / 86400000);
-  const when = gap <= 1 ? "어제" : `${dt.getMonth() + 1}/${dt.getDate()}`;
+  const when = gap <= 0 ? "오늘" : gap <= 1 ? "어제" : `${dt.getMonth() + 1}/${dt.getDate()}`;
   return `<div class="band rv-call">
     <span class="bi">${icon("pen", 19)}</span>
     <div class="bt"><b>${when} ${esc(u.univ || "")} 면접, 어땠나요?</b>
@@ -699,8 +737,7 @@ function fbCardHtml() {
 
 // 지원 대학 오른쪽 끝 (D-day / 후기 쓰기 / 후기 작성함)
 function uniEnd(u, withDate) {
-  const today = isoDay();
-  const past = u.date && isoDay(u.date) < today;
+  const past = reviewOpen(u);
   const d = dday(u.date);
   if (reviewOf(u)) return `<button type="button" class="uem ok" data-rv="${esc(u.id)}" title="후기 다시 보기">후기 작성함</button>`;
   if (past) return `<button type="button" class="uem rv" data-rv="${esc(u.id)}">후기 쓰기</button>`;

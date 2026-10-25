@@ -9,6 +9,7 @@ import { firebaseConfig } from "./firebase-config.js";
 import { importStaff } from "./importers.js";
 import { getSyncConfig, clearSyncCache, testConnection, requestSync } from "./sync.js";
 import { loadScheduleConfig, DEFAULT_BLOCKS, DEFAULT_ROOMS, normalizeRoom, roomLimitText } from "./schedule.js";
+import { load as loadReviews, yearOf, qaOf, qaText } from "./t-reviews.js";
 
 let root;
 export function init(el) {
@@ -21,17 +22,19 @@ export function init(el) {
       <button data-ad="sched">④ 일정 설정</button>
       <button data-ad="backup">⑤ 백업·사용량</button>
       <button data-ad="push">⑥ 휴대폰 알림</button>
+      <button data-ad="rvx">⑦ 면접 후기 내보내기</button>
     </div>
     <div data-adpanel="sync"></div>
     <div data-adpanel="staff" hidden></div>
     <div data-adpanel="student" hidden></div>
     <div data-adpanel="sched" hidden></div>
     <div data-adpanel="backup" hidden></div>
-    <div data-adpanel="push" hidden></div>`;
+    <div data-adpanel="push" hidden></div>
+    <div data-adpanel="rvx" hidden></div>`;
   $$("[data-ad]", root).forEach((b) => b.onclick = () => {
     $$("[data-ad]", root).forEach((x) => x.classList.toggle("active", x === b));
     $$("[data-adpanel]", root).forEach((p) => p.hidden = p.dataset.adpanel !== b.dataset.ad);
-    ({ sync: renderSync, sched: renderSched, backup: renderBackup, push: renderPush })[b.dataset.ad]?.();   // 설정 문서는 탭을 열 때만 읽기
+    ({ sync: renderSync, sched: renderSched, backup: renderBackup, push: renderPush, rvx: renderReviewExport })[b.dataset.ad]?.();   // 설정 문서는 탭을 열 때만 읽기
   });
   register("admin", render);
 }
@@ -585,6 +588,66 @@ async function renderPush() {
     } catch (e) { showError(e, "알림 설정 저장"); }
     $("#pvSave", p).disabled = false;
   };
+}
+
+// ================= ⑦ 면접 후기 내보내기 (관리자만) =================
+// 학생이 쓴 대학 면접 후기를 엑셀에서 열리는 CSV 로 받는다. 파일은 이 컴퓨터에만 저장된다.
+// 후기 1건 = 1줄. 이름·학번은 기본으로 뺀다. 예전 양식(받은 질문 글만 있는 것)은 고를 때만 넣는다.
+const RVX_HEAD = ["학년도", "대학", "학과", "전형", "면접 유형", "면접일", "면접 절차 및 진행 방식", "받은 질문과 실제 답변", "기타 유의사항"];
+const isNewForm = (r) => !!(r.procedure || r.notes || qaOf(r).length);
+async function renderReviewExport() {
+  const p = $("[data-adpanel=rvx]", root);
+  if (!p.innerHTML) p.innerHTML = '<div class="card"><p class="muted">후기를 불러오는 중…</p></div>';
+  await loadReviews();     // 이미 받아 두었으면 다시 읽지 않는다
+  const all = S.reviews || [];
+  const years = [...new Set(all.map(yearOf).filter(Boolean))].sort((a, b) => b - a);
+  const univs = [...new Set(all.map((r) => r.univ).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
+  p.innerHTML = `
+    <div class="card">
+      <div class="toolbar" style="margin-bottom:12px">
+        <select id="rxYear" style="width:auto">${opt(years.map((y) => [String(y), `${y}학년도`]), String(years[0] || ""), "전체 학년도")}</select>
+        <select id="rxUniv" style="width:auto">${opt(univs, "", `전체 대학 (${univs.length}곳)`)}</select>
+        <label class="rx-chk"><input type="checkbox" id="rxName"> 이름·학번 넣기</label>
+        <label class="rx-chk"><input type="checkbox" id="rxOld"> 예전 양식 후기도 넣기</label>
+        <div class="spacer"></div>
+        <button class="btn-sm" id="rxReload">다시 받기</button>
+        <button class="btn-primary btn-sm" id="rxGo"></button>
+      </div>
+      <div class="table-wrap" style="max-height:55vh;overflow-y:auto"><table class="rows-sm"><thead id="rxHead"></thead><tbody id="rxBody"></tbody></table></div>
+      <p class="muted" style="margin:10px 0 0">파일은 이 컴퓨터에만 저장됩니다. 엑셀로 열어 교육청 양식에 붙여 넣어 쓰세요. 이름·학번은 체크할 때만 들어갑니다.</p>
+    </div>`;
+  const pick = () => {
+    const y = $("#rxYear", p).value, u = $("#rxUniv", p).value, old = $("#rxOld", p).checked;
+    return all.filter((r) => (!y || String(yearOf(r)) === y) && (!u || r.univ === u) && (isNewForm(r) || (old && r.questions)))
+      .sort((a, b) => String(a.univ || "").localeCompare(String(b.univ || ""), "ko") || String(a.date || "").localeCompare(String(b.date || "")));
+  };
+  const rowOf = (r, withName) => [...(withName ? [r.studentNo || "", r.name || ""] : []), yearOf(r) || "", r.univ || "", r.dept || "", r.admission || "", r.format || "",
+    r.date || "", r.procedure || "", qaText(r), r.notes || ""].map(String);
+  const draw = () => {
+    const list = pick(), withName = $("#rxName", p).checked;
+    const head = [...(withName ? ["학번", "이름"] : []), ...RVX_HEAD];
+    $("#rxHead", p).innerHTML = `<tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr>`;
+    $("#rxBody", p).innerHTML = list.length ? list.slice(0, 50).map((r) => `<tr>${rowOf(r, withName).map((v) => `<td style="white-space:pre-line;vertical-align:top">${esc(v.length > 160 ? v.slice(0, 160) + "…" : v)}</td>`).join("")}</tr>`).join("")
+      + (list.length > 50 ? `<tr><td colspan="${head.length}" class="muted">… 미리 보기는 50건까지 (파일에는 ${list.length}건 모두)</td></tr>` : "")
+      : `<tr><td colspan="${head.length}" class="empty">조건에 맞는 후기가 없습니다.</td></tr>`;
+    const b = $("#rxGo", p);
+    b.textContent = `엑셀 파일(CSV) 받기 · ${list.length}건`; b.disabled = !list.length;
+  };
+  ["#rxYear", "#rxUniv", "#rxName", "#rxOld"].forEach((s) => $(s, p).onchange = draw);
+  $("#rxReload", p).onclick = async () => { await loadReviews(true); renderReviewExport(); };
+  $("#rxGo", p).onclick = () => {
+    const list = pick(), withName = $("#rxName", p).checked;
+    const cell = (v) => `"${String(v).replace(/"/g, '""')}"`;
+    const lines = [[...(withName ? ["학번", "이름"] : []), ...RVX_HEAD], ...list.map((r) => rowOf(r, withName))].map((row) => row.map(cell).join(","));
+    const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `대학면접후기_${$("#rxYear", p).value || "전체"}학년도_${$("#rxUniv", p).value || "전체대학"}.csv`;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toast(`${list.length}건을 파일로 받았어요.`);
+  };
+  draw();
 }
 
 async function renderBackup() {

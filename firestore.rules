@@ -95,7 +95,9 @@ service cloud.firestore {
     function reviewFields() {
       return ['studentNo', 'name', 'cls', 'interviewId', 'univ', 'dept', 'admission', 'format',
               'date', 'year', 'questions', 'helped', 'regret', 'mood', 'difficulty',
-              'createdAtMs', 'updatedAtMs'];
+              'createdAtMs', 'updatedAtMs',
+              // (2026-10-25) 면접 절차 및 진행 방식 · 받은 질문과 실제 답변 [{q, a}] · 기타 유의사항
+              'procedure', 'qa', 'notes'];
     }
     function reviewShapeOk() {
       let d = request.resource.data;
@@ -106,7 +108,10 @@ service cloud.firestore {
         && d.get('difficulty', 0) is int && d.get('difficulty', 0) >= 0 && d.get('difficulty', 0) <= 5
         && d.get('questions', '').size() <= 4000
         && d.get('helped', '').size() <= 2000
-        && d.get('regret', '').size() <= 2000;
+        && d.get('regret', '').size() <= 2000
+        && d.get('procedure', '') is string && d.get('procedure', '').size() <= 2000
+        && d.get('notes', '') is string && d.get('notes', '').size() <= 2000
+        && d.get('qa', []) is list && d.get('qa', []).size() <= 20;
     }
     match /reviews/{rid} {
       allow read: if isStaff() || isStudent(resource.data.studentNo);

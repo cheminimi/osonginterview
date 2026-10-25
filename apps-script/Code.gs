@@ -20,7 +20,7 @@
  *     확정되면 '모의 면접 기록'에 예정 행 자동 추가 (앱 → 시트 한 방향)
  */
 
-const SCRIPT_VERSION = 'v12 (2026-10-10)';   // 동기화 결과창에 표시됩니다
+const SCRIPT_VERSION = 'v13 (2026-10-25)';   // 동기화 결과창에 표시됩니다
 
 // ===================== 설정 (직접 입력) =====================
 const CONFIG = {
@@ -59,8 +59,9 @@ const INTERVIEW_COLS = [
   ['학번', 'studentNo'], ['이름', 'name'], ['대학', 'univ'], ['학과', 'dept'], ['전형', 'admission'],
   ['면접 유형', 'format'], ['면접일', 'date'], ['수정 시각', '_stamp'], ['수정자', '_by'], ['행ID', 'id']
 ];
+// (v13) 면접 절차 및 진행 방식 · 받은 질문과 실제 답변(Q/A) · 기타 유의사항. 머리행이 다르면 다음 동기화 때 통째로 다시 쓴다
 const REVIEW_HEAD = ['학년도', '면접일', '학번', '이름', '학반', '대학', '학과', '전형', '면접 유형',
-  '받은 질문', '도움된 것', '아쉬웠던 것', '분위기', '난이도', '작성 시각', '기록ID'];
+  '면접 절차 및 진행 방식', '받은 질문과 실제 답변', '기타 유의사항', '도움된 것', '아쉬웠던 것', '분위기', '난이도', '작성 시각', '기록ID'];
 
 const MEETING_COLS = [
   ['학반', 'cls'], ['학번', 'studentNo'], ['이름', 'name'], ['면접 유형', 'type'],
@@ -532,6 +533,15 @@ function syncReviews_(full) {
   const ss = SpreadsheetApp.openById(CONFIG.PLATFORM_SHEET_ID);
   const sh = ensureTab_(ss, TAB.REVIEWS, REVIEW_HEAD);
   const W = REVIEW_HEAD.length, ID = W - 1;   // 마지막 칸이 기록ID
+  // 머리행이 예전 판이면 새 머리행으로 바꾸고 통째로 다시 쓴다 (칸 위치가 달라져 줄 찾기를 할 수 없음)
+  const head = sh.getRange(1, 1, 1, Math.max(W, sh.getLastColumn())).getValues()[0].map(String);
+  if (head.slice(0, W).join('|') !== REVIEW_HEAD.join('|') || head.slice(W).some(function (v) { return v; })) {
+    sh.getRange(1, 1, 1, head.length).clearContent();
+    sh.getRange(1, 1, 1, W).setValues([REVIEW_HEAD]);
+    styleHeader_(sh, W);
+    if (sh.getLastRow() > 1 && head.length > W) sh.getRange(2, W + 1, sh.getLastRow() - 1, head.length - W).clearContent();
+    full = true;
+  }
 
   let docs;
   const lastMs = Number(props.getProperty('REVIEW_MS') || 0);
@@ -582,10 +592,18 @@ function reviewRow_(id, f) {
   return [
     Number(f.year) || '', parseDay_(f.date) || f.date || '', String(f.studentNo || ''), f.name || '', f.cls || '',
     f.univ || '', f.dept || '', f.admission || '', f.format || '',
-    clean(f.questions), clean(f.helped), clean(f.regret),
+    clean(f.procedure), clean(reviewQaText_(f)), clean(f.notes), clean(f.helped), clean(f.regret),
     Number(f.mood) || '', Number(f.difficulty) || '',
     f.updatedAtMs ? new Date(Number(f.updatedAtMs)) : '', id
   ];
+}
+
+// 받은 질문과 실제 답변을 한 칸 글로. 예전 양식(받은 질문 글)은 뒤에 그대로 붙인다
+function reviewQaText_(f) {
+  const lines = (Array.isArray(f.qa) ? f.qa : []).filter(function (x) { return x && (x.q || x.a); })
+    .map(function (x, i) { return 'Q' + (i + 1) + '. ' + (x.q || '') + '\nA. ' + (x.a || '(적지 않음)'); });
+  if (f.questions) lines.push(String(f.questions).trim());
+  return lines.join('\n');
 }
 
 // ===================== 휴대폰 알림 (웹 푸시 · FCM) =====================
@@ -731,11 +749,12 @@ function notifyTick_(force) {
   try { notifyBookings_(props, out); } catch (e) { out.errors.push('일정: ' + (e.message || e)); }
   // ② 앱이 적어 둔 알림 (피드백 도착 등)
   try { notifyQueue_(out); } catch (e) { out.errors.push('대기열: ' + (e.message || e)); }
-  // ③ 하루 한 번: 내일 면접 안내 (저녁) · 어제 대학 면접 후기 (아침)
+  // ③ 하루 한 번: 내일 면접 안내 (저녁) · 오늘 대학 면접 후기 (저녁) · 그때까지 안 쓴 어제 후기 다시 (아침)
   const today = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
   try {
     if (h >= 18 && props.getProperty('PUSH_EVE_DAY') !== today) { notifyTomorrow_(out); props.setProperty('PUSH_EVE_DAY', today); }
-    if (h >= 8 && props.getProperty('PUSH_MORN_DAY') !== today) { notifyReviewDue_(out); props.setProperty('PUSH_MORN_DAY', today); }
+    if (h >= 18 && props.getProperty('PUSH_RV_DAY') !== today) { notifyReviewDue_(out, 0); props.setProperty('PUSH_RV_DAY', today); }
+    if (h >= 8 && props.getProperty('PUSH_MORN_DAY') !== today) { notifyReviewDue_(out, 1); props.setProperty('PUSH_MORN_DAY', today); }
   } catch (e) { out.errors.push('예약 알림: ' + (e.message || e)); }
   return out;
 }
@@ -829,10 +848,11 @@ function notifyTomorrow_(out) {
   });
 }
 
-// 어제 대학 면접을 본 학생에게 후기 요청 (아침 한 번)
-function notifyReviewDue_(out) {
+// 대학 면접을 본 학생에게 후기 요청 — 당일 저녁 6시(ago=0) · 안 썼으면 다음 날 아침 한 번 더(ago=1)
+function notifyReviewDue_(out, ago) {
+  if (ago == null) ago = 1;
   const tz = Session.getScriptTimeZone();
-  const d = new Date(); d.setDate(d.getDate() - 1);
+  const d = new Date(); d.setDate(d.getDate() - ago);
   const day = Utilities.formatDate(d, tz, 'yyyy-MM-dd');
   fsQuery_('interviews', 'date', 'EQUAL', day, 200).forEach(function (x) {
     const iv = x.fields;
@@ -840,8 +860,9 @@ function notifyReviewDue_(out) {
     try { has = fsGet_('reviews/' + x.id); } catch (e) {}
     if (has) return;
     pushTo_('student', iv.studentNo, {
-      title: '어제 ' + (iv.univ || '대학') + ' 면접, 어땠나요?',
-      body: '받은 질문과 느낀 점을 적어 두면 선생님이 다음 준비를 도와줄 수 있어요',
+      title: (ago ? '어제 ' : '오늘 ') + (iv.univ || '대학') + ' 면접, 어땠나요?',
+      body: ago ? '받은 질문과 느낀 점을 적어 두면 선생님이 다음 준비를 도와줄 수 있어요'
+        : '잊기 전에 받은 질문과 답을 적어 두세요 · 5분',
       url: 'student.html', tag: 'rv_' + x.id
     }, out);
   });

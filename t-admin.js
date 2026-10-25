@@ -1,7 +1,7 @@
 import {
   db, collection, doc, getDocs, setDoc, updateDoc, deleteDoc, writeBatch, query, where, serverTimestamp,
   $, $$, esc, toast, showError, copyText, issueAccount, loginDocId, randomPw, defaultEmail, createAuthUser,
-  deleteField, TRACKS, SPECIALS
+  deleteField, TRACKS, SPECIALS, isoDay, confirmBox
 } from "./common.js";
 import { S, register, rerender, loadAll, openModal, closeModal, opt, studentByNo, myName, readForm } from "./t-core.js";
 import { getDoc, clearDataCache, readStats, getMetaVersions } from "./common.js";
@@ -10,6 +10,7 @@ import { importStaff } from "./importers.js";
 import { getSyncConfig, clearSyncCache, testConnection, requestSync } from "./sync.js";
 import { loadScheduleConfig, DEFAULT_BLOCKS, DEFAULT_ROOMS, normalizeRoom, roomLimitText } from "./schedule.js";
 import { load as loadReviews, yearOf, qaOf, qaText } from "./t-reviews.js";
+import { boothConfigOf } from "./booth-booking.js";
 
 let root;
 export function init(el) {
@@ -23,6 +24,7 @@ export function init(el) {
       <button data-ad="backup">⑤ 백업·사용량</button>
       <button data-ad="push">⑥ 휴대폰 알림</button>
       <button data-ad="rvx">⑦ 면접 후기 내보내기</button>
+      <button data-ad="booth">⑧ 면접 부스 PC</button>
     </div>
     <div data-adpanel="sync"></div>
     <div data-adpanel="staff" hidden></div>
@@ -30,11 +32,12 @@ export function init(el) {
     <div data-adpanel="sched" hidden></div>
     <div data-adpanel="backup" hidden></div>
     <div data-adpanel="push" hidden></div>
-    <div data-adpanel="rvx" hidden></div>`;
+    <div data-adpanel="rvx" hidden></div>
+    <div data-adpanel="booth" hidden></div>`;
   $$("[data-ad]", root).forEach((b) => b.onclick = () => {
     $$("[data-ad]", root).forEach((x) => x.classList.toggle("active", x === b));
     $$("[data-adpanel]", root).forEach((p) => p.hidden = p.dataset.adpanel !== b.dataset.ad);
-    ({ sync: renderSync, sched: renderSched, backup: renderBackup, push: renderPush, rvx: renderReviewExport })[b.dataset.ad]?.();   // 설정 문서는 탭을 열 때만 읽기
+    ({ sync: renderSync, sched: renderSched, backup: renderBackup, push: renderPush, rvx: renderReviewExport, booth: renderBoothPcs })[b.dataset.ad]?.();   // 설정 문서는 탭을 열 때만 읽기
   });
   register("admin", render);
 }
@@ -531,6 +534,82 @@ async function renderSched() {
 // ================= ⑤ 백업 · 사용량 =================
 const BACKUP_COLS = ["students", "staff", "accounts", "logins", "interviews", "studentNotes", "questions",
   "sessions", "meetings", "bookings", "bookingLogs", "days", "availability", "meta"];
+// ================= ⑧ 면접 부스 PC (관리자만) =================
+// config/booth.devices[키의 SHA-256] = { name, res?, registeredAt, registeredBy } — 부스 화면(booth.html)이 등록할 때 씀.
+// 자리(res)를 정하면 부스가 그 자리 예약에 맞춰 학생에게 안내한다. 해제하면 그 PC 는 다음 로그인 때 잠금 화면.
+// '최근 사용'은 PC 별이 아니라 자리별: 부스 기록(sessions.boothRes·boothDate)을 오늘부터 하루씩 거슬러 최대 14일 찾는다.
+const BOOTH_PC_RES = ["booth1", "booth2"];      // PC 가 있는 자리 ('셀프 면접 연습'은 PC 없음)
+const BOOTH_LOOKBACK = 14;
+const tsMs = (t) => (!t ? 0 : typeof t.toMillis === "function" ? t.toMillis() : t.seconds ? t.seconds * 1000 : Number(t) || 0);
+async function lastBoothUse() {
+  const last = {};
+  for (let k = 0; k < BOOTH_LOOKBACK && BOOTH_PC_RES.some((r) => !last[r]); k++) {
+    const d = new Date(); d.setDate(d.getDate() - k);
+    const snap = await getDocs(query(collection(db, "sessions"), where("boothDate", "==", isoDay(d))));
+    const day = {};       // 그날 자리별 가장 늦은 기록
+    snap.docs.forEach((x) => {
+      const v = x.data(), t = tsMs(v.startedAt) || tsMs(v.updatedAt);
+      if (BOOTH_PC_RES.includes(v.boothRes) && t > (day[v.boothRes]?.t || 0)) day[v.boothRes] = { t, no: String(v.studentNo || "") };
+    });
+    BOOTH_PC_RES.forEach((r) => { if (!last[r] && day[r]) last[r] = day[r]; });
+  }
+  return last;
+}
+async function renderBoothPcs() {
+  const p = $("[data-adpanel=booth]", root);
+  p.innerHTML = '<div class="card"><p class="muted" style="margin:0">불러오는 중…</p></div>';
+  let devices = {}, bcfg = boothConfigOf({}), last = {};
+  try { const s = await getDoc(doc(db, "config", "booth")); if (s.exists()) devices = s.data().devices || {}; }
+  catch (e) { p.innerHTML = '<div class="card"><p class="muted" style="margin:0">부스 PC 목록을 읽지 못했어요. 잠시 뒤 다시 열어 주세요.</p></div>'; return showError(e, "부스 PC 목록"); }
+  try { const s = await getDoc(doc(db, "config", "schedule")); if (s.exists()) bcfg = boothConfigOf(s.data()); } catch (_) {}
+  try { last = await lastBoothUse(); } catch (e) { console.warn("부스 최근 사용", e); }
+  const resName = (k) => bcfg.resources.find((r) => r.key === k)?.name || k;
+  const list = Object.entries(devices).filter(([, v]) => v && typeof v === "object")
+    .map(([h, v]) => ({ h, ...v })).sort((a, b) => tsMs(b.registeredAt) - tsMs(a.registeredAt));
+  const per = {}; list.forEach((d) => { if (d.res) per[d.res] = (per[d.res] || 0) + 1; });
+  const when = (t) => { const x = new Date(t); const hm = `${String(x.getHours()).padStart(2, "0")}:${String(x.getMinutes()).padStart(2, "0")}`;
+    return isoDay(x) === isoDay() ? `오늘 ${hm}` : `${x.getMonth() + 1}/${x.getDate()} ${hm}`; };
+  const regDay = (t) => { const ms = tsMs(t); if (!ms) return ""; const x = new Date(ms); return `${x.getMonth() + 1}/${x.getDate()}`; };
+  const resOpts = (cur) => `<option value="">정하지 않음</option>${BOOTH_PC_RES.map((k) => {
+    const r = bcfg.resources.find((x) => x.key === k);
+    return `<option value="${k}" ${cur === k ? "selected" : ""}>${esc(resName(k))}${r && !r.on ? " (꺼 둠)" : ""}</option>`; }).join("")}`;
+  p.innerHTML = `
+    <div class="card">
+      <h3>면접 부스 PC</h3>
+      <p class="muted" style="margin-top:0">부스 화면은 여기 있는 컴퓨터에서만 열려요. 자리를 정하면 그 자리 예약에 맞춰 학생에게 안내해요.
+        새 PC 는 그 PC 의 부스 화면(booth.html)에서 관리자 계정으로 등록해요.</p>
+      ${list.length ? `<div class="table-wrap"><table class="rows-sm bpc"><thead><tr><th>부스 이름</th><th>예약 자리</th><th>등록</th><th>최근 사용 (자리별)</th><th></th></tr></thead><tbody>
+        ${list.map((d) => { const u = d.res ? last[d.res] : null;
+          return `<tr data-h="${esc(d.h)}">
+          <td class="head" data-l="-"><b>${esc(d.name || "(이름 없음)")}</b></td>
+          <td data-l="예약 자리"><select data-bres="${esc(d.h)}" style="width:auto" aria-label="예약 자리">${resOpts(d.res || "")}</select>${d.res && per[d.res] > 1 ? ` <span class="badge badge-orange">${per[d.res]}대</span>` : ""}</td>
+          <td class="nowrap" data-l="등록">${esc([regDay(d.registeredAt), d.registeredBy].filter(Boolean).join(" · ") || "-")}</td>
+          <td class="nowrap" data-l="최근 사용">${!d.res ? '<span class="muted">-</span>' : u ? `${when(u.t)}${u.no ? ` <span class="badge badge-gray">${esc(u.no)}</span>` : ""}` : `<span class="muted">${BOOTH_LOOKBACK}일 안 기록 없음</span>`}</td>
+          <td class="nowrap" data-l="-" style="text-align:right"><button class="btn-sm btn-danger" data-bdel="${esc(d.h)}">해제</button></td></tr>`; }).join("")}
+      </tbody></table></div>` : '<p class="empty">등록된 부스 PC 가 없어요.</p>'}
+      <p class="muted" style="margin:10px 0 0;font-size:.84rem">자리 바꾸기 = 그 PC 의 예약 자리만 고쳐요 (다시 등록하지 않아도 돼요) ·
+        해제 = 목록에서 지워요. 그 PC 는 다음 학생이 로그인할 때 잠금 화면이 떠요 · 같은 자리에 PC 가 둘 이상이면 노란 표시 (예비 PC 는 괜찮아요) ·
+        '최근 사용'은 그 자리 부스 기록의 마지막 시각이에요</p>
+    </div>`;
+  $$("[data-bres]", p).forEach((sel) => sel.onchange = async () => {
+    const h = sel.dataset.bres, v = sel.value;
+    sel.disabled = true;
+    try {
+      await updateDoc(doc(db, "config", "booth"), { [`devices.${h}.res`]: v || deleteField() });
+      toast(v ? `예약 자리를 ‘${resName(v)}’(으)로 바꿨어요.` : "예약 자리를 정하지 않음으로 바꿨어요.");
+      renderBoothPcs();
+    } catch (e) { sel.disabled = false; showError(e, "부스 PC 자리 바꾸기"); }
+  });
+  $$("[data-bdel]", p).forEach((b) => b.onclick = async () => {
+    const d = list.find((x) => x.h === b.dataset.bdel);
+    if (!d) return;
+    if (!(await confirmBox({ title: "이 부스 PC 를 해제할까요?", what: `<b>${esc(d.name || "(이름 없음)")}</b>${d.res ? ` · ${esc(resName(d.res))}` : ""}`,
+      note: "그 PC 에서 다음 학생이 로그인하면 잠금 화면이 떠요. 다시 쓰려면 그 PC 에서 관리자 계정으로 다시 등록해요.", yes: "해제" }))) return;
+    try { await updateDoc(doc(db, "config", "booth"), { [`devices.${d.h}`]: deleteField() }); toast("부스 PC 를 해제했어요."); renderBoothPcs(); }
+    catch (e) { showError(e, "부스 PC 해제"); }
+  });
+}
+
 // ================= ⑥ 휴대폰 알림 =================
 async function renderPush() {
   const p = $("[data-adpanel=push]", root);

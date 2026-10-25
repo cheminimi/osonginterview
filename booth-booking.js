@@ -7,6 +7,8 @@
 //   boothBookings/{id}           예약 하나: 학번·자리·날짜·시작~끝·slots(칸 문서 id 1~2개)
 //   config/schedule.booth        자리 이름·장소·정원·켬, 매주 막는 시간, 며칠 앞까지, 취소 마감(분)
 //   config/schedule.boothCaps    자리별 정원 (규칙이 읽음 — 없으면 규칙의 기본값)
+//   (교사 표) sessions where boothDate == 날짜 — 부스 PC 가 남긴 부스 기록(boothRes·bookingCase·bookingId, 부스 v1.7)으로
+//                                '✓ 사용 / 아직 안 옴 / 안 옴'과 '예약 없이 사용'을 보여 준다 (규칙 그대로 — 교사는 모든 기록을 읽음)
 // 예약·취소는 칸 문서와 예약 문서를 한 트랜잭션으로 함께 쓴다 (정원은 규칙과 트랜잭션이 함께 지킴).
 import {
   db, collection, doc, getDocs, query, where, runTransaction, setDoc, onSnapshot, serverTimestamp,
@@ -28,6 +30,9 @@ export const DEFAULT_BOOTH = {
   maxRun: 2             // 한 학생이 바로 이어서 잡을 수 있는 칸 수 (예약을 따로 잡아 이어 붙여도 같음)
 };
 const RES_KEYS = DEFAULT_BOOTH.resources.map((r) => r.key);
+const PC_RES = ["booth1", "booth2"];          // 부스 PC 가 있는 자리 ('셀프 면접 연습'은 PC 없음 → 사용함 표시 안 함)
+const NOSHOW_MIN = 10;                        // 예약 시작 이만큼 지나도 기록이 없으면 '아직 안 옴' (부스의 '빈 부스로 보기'와 같은 10분)
+const tsMs = (t) => (!t ? 0 : typeof t.toMillis === "function" ? t.toMillis() : t.seconds ? t.seconds * 1000 : Number(t) || 0);
 export function boothConfigOf(c = {}) {
   const b = c.booth && typeof c.booth === "object" ? c.booth : {};
   const saved = Array.isArray(b.resources) ? b.resources : [];
@@ -92,9 +97,9 @@ export function mountBoothBooking(root, opts) {
   const first = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); const w = d.getDay(); return w === 6 ? addDays(d, 2) : w === 0 ? addDays(d, 1) : d; })();
   const st = {
     cfg: scheduleConfigOf({}), bcfg: boothConfigOf({}), date: isoDay(first), week: mondayOf(first),
-    slots: {}, dayBookings: [], mine: [], showPast: false, blockMode: false, picked: new Set(), filterMine: false, ready: false
+    slots: {}, dayBookings: [], used: [], mine: [], showPast: false, blockMode: false, picked: new Set(), filterMine: false, ready: false
   };
-  let stopSlots = null, stopBk = null, stopMine = null, stopCfg = null;
+  let stopSlots = null, stopBk = null, stopMine = null, stopCfg = null, stopUse = null;
 
   root.innerHTML = `<div class="bb">
     <div class="bb-mine" id="bbMine"></div>
@@ -118,7 +123,7 @@ export function mountBoothBooking(root, opts) {
     }, (e) => console.warn("내 부스 예약", e));
   }
   function watchDate() {
-    stopSlots?.(); stopBk?.();
+    stopSlots?.(); stopBk?.(); stopUse?.(); stopUse = null;
     const d = st.date;
     stopSlots = onSnapshot(query(collection(db, "boothSlots"), where("date", "==", d)), (snap) => {
       if (d !== st.date) return;
@@ -132,6 +137,16 @@ export function mountBoothBooking(root, opts) {
         render();
         if (d === isoDay()) opts.onBadge?.(st.dayBookings.length);
       }, (e) => showError(e, "부스 예약 불러오기"));
+      // 그날 부스 기록 (오늘 이후 날짜는 기록이 없으므로 읽지 않음). 읽지 못해도 예약 표는 그대로 — 표시만 빠짐
+      if (d <= isoDay()) {
+        stopUse = onSnapshot(query(collection(db, "sessions"), where("boothDate", "==", d)), (snap) => {
+          if (d !== st.date) return;
+          st.used = snap.docs.map((x) => { const v = x.data();
+            return { id: x.id, res: v.boothRes, kind: v.bookingCase, bookingId: v.bookingId || "", studentNo: String(v.studentNo || ""), t: tsMs(v.startedAt) || tsMs(v.updatedAt) }; })
+            .filter((u) => PC_RES.includes(u.res));
+          renderGrid();
+        }, (e) => console.warn("부스 기록 (사용함 표시)", e));
+      }
     }
   }
   watchDate();
@@ -206,7 +221,7 @@ export function mountBoothBooking(root, opts) {
   }
   function pickDate(iso) {
     if (iso === st.date) { render(); return; }
-    st.date = iso; st.slots = {}; st.dayBookings = []; st.picked.clear();
+    st.date = iso; st.slots = {}; st.dayBookings = []; st.used = []; st.picked.clear();
     watchDate(); render();
   }
   function renderTools() {
@@ -284,14 +299,35 @@ export function mountBoothBooking(root, opts) {
     const who = bks.map((b) => {
       const two = (b.slots || []).length > 1, first = (b.slots || [])[0] === id;
       const dim = mineSet && !mineSet.has(String(b.studentNo));
-      return `<span class="bb-who${dim ? " dim" : ""}" title="${esc(`${b.start}–${b.end}${b.createdBy && b.createdBy !== "student" ? " · " + b.createdBy + " 선생님이 예약" : ""}`)}">${esc(b.studentNo)} ${esc(b.studentName || studentName(b.studentNo))}${two ? `<em>${first ? "2칸" : "이어서"}</em>` : ""}<button type="button" data-del="${esc(b.id)}" aria-label="예약 지우기">×</button></span>`;
+      return `<span class="bb-who${dim ? " dim" : ""}" title="${esc(`${b.start}–${b.end}${b.createdBy && b.createdBy !== "student" ? " · " + b.createdBy + " 선생님이 예약" : ""}`)}">${esc(b.studentNo)} ${esc(b.studentName || studentName(b.studentNo))}${two ? `<em>${first ? "2칸" : "이어서"}</em>` : ""}${first ? usePill(b) : ""}<button type="button" data-del="${esc(b.id)}" aria-label="예약 지우기">×</button></span>`;
     }).join("");
+    const walk = walkIns(sl, r.key);
     const picked = st.picked.has(id);
     const cnt = r.cap > 1 && bks.length ? `<span class="bb-cnt">${ids.length}/${r.cap}</span>` : "";
     if (weekly) return `<div class="bb-tc off">매주 막음</div>`;
     const cls = `bb-tc${closed ? " off" : ""}${picked ? " picked" : ""}`;
     const empty = !bks.length ? `<span class="bb-empty">${closed ? "막음" : r.cap > 1 ? `0/${r.cap}` : "비어 있음"}</span>` : "";
-    return `<div class="${cls}" data-cell="${r.key}|${sl.i}" role="button" tabindex="0">${who}${empty}${cnt}</div>`;
+    return `<div class="${cls}" data-cell="${r.key}|${sl.i}" role="button" tabindex="0">${who}${empty}${cnt}${walk}</div>`;
+  }
+  /** 예약 첫 칸 이름표 옆: ✓ 사용(그 예약으로 부스 기록이 있음) · 아직 안 옴(시작 10분 지남, 끝나기 전) · 안 옴(끝났는데 기록 없음) */
+  function usePill(b) {
+    if (!PC_RES.includes(b.res)) return "";
+    if (st.used.some((u) => u.bookingId === b.id)) return `<i class="bb-use ok">✓ 사용</i>`;
+    const now = nowMs();
+    if (now >= atMs(b.date, b.end)) return `<i class="bb-use no">안 옴</i>`;
+    if (now >= atMs(b.date, b.start) + NOSHOW_MIN * 60000) return `<i class="bb-use wait">아직 안 옴</i>`;
+    return "";
+  }
+  /** 그 칸 시간에 예약 없이(또는 다른 학생 예약 시간에) 그 자리 PC 를 쓴 기록 */
+  function walkIns(sl, res) {
+    if (!PC_RES.includes(res)) return "";
+    const a = atMs(st.date, sl.start), z = atMs(st.date, sl.end);
+    const list = st.used.filter((u) => u.res === res && u.t >= a && u.t < z
+      && (u.kind !== "mine" || !st.dayBookings.some((b) => b.id === u.bookingId)))
+      .sort((x, y) => x.t - y.t);
+    if (!list.length) return "";
+    const hm = (t) => { const x = new Date(t); return `${String(x.getHours()).padStart(2, "0")}:${String(x.getMinutes()).padStart(2, "0")}`; };
+    return `<span class="bb-walk">예약 없이 사용 ${list.length} · ${list.map((u) => `${esc(u.studentNo)} (${hm(u.t)})`).join(", ")}</span>`;
   }
 
   // ---- 칸 누름
@@ -480,7 +516,7 @@ export function mountBoothBooking(root, opts) {
   return {
     render,
     /** 화면을 떠날 때 실시간 구독 끊기 */
-    stop() { stopSlots?.(); stopBk?.(); stopMine?.(); stopCfg?.(); }
+    stop() { stopSlots?.(); stopBk?.(); stopMine?.(); stopCfg?.(); stopUse?.(); }
   };
 }
 

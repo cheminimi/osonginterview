@@ -12,6 +12,8 @@ const AI_PENDING_MAX = 30 * 60 * 1000;                         // 이보다 오�
 const IV_LABEL = { A: "A 교수", B: "B 교수", C: "C 교수", D: "D 교수" };
 const TYPE_LABEL = { personal: "내 생기부 면접", document: "학생부 공통 질문", passage: "제시문 면접", mmi: "MMI 면접", personality: "기본 인성" };
 const RULE_LABEL = { role: "역할", evidence: "근거", limit: "아쉬운 점", link: "학과 연결" };
+// 부스 PC 자리 (부스 v1.7 boothRes). 선생님이 바꾼 자리 이름은 이 화면에서 읽지 않고 기본 이름을 쓴다
+const RES_LABEL = { booth1: "AI 부스 1", booth2: "AI 부스 2" };
 
 export const isBoothSession = (s) => s?.mode === "booth";
 
@@ -75,6 +77,7 @@ function infoLine(s) {
   if (ty.length) p.push(ty.join(" → "));
   const iv = arr(s.interviewers).map(ivLabel).filter(Boolean);
   if (iv.length) p.push(iv.join(" · "));
+  if (RES_LABEL[s.boothRes]) p.push(`${RES_LABEL[s.boothRes]} · ${s.bookingCase === "mine" ? "예약한 시간" : "예약 없이"}`);
   return p.length ? `<div class="bv-info">${esc(p.join(" · "))}</div>` : "";
 }
 function quickHtml(s) {

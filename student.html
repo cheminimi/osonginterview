@@ -200,7 +200,7 @@
 import {
   db, requireRole, mountAccountMenu, collection, doc, setDoc, getDocs, query, where, onSnapshot, esc, $, $$, toast, showError, loadInterviewsFor, cachedCollection,
   CRITERIA, STAGES, TYPES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes, icon, isoDay, initials,
-  railHead, railFoot, tabButton, wireRailMe, setHead, writeBatch, serverTimestamp, confirmBox, pqStats, isStudentPq, passageReady
+  railHead, railFoot, tabButton, wireRailMe, setHead, writeBatch, serverTimestamp, confirmBox, pqStats, isStudentPq, passageReady, updateDoc
 } from "./common.js";
 import { mountSchedule, BOOK_STAGES, stageTeachers, ACTIVE, DONE, STATUS } from "./schedule.js";
 import { isBoothSession, boothViewHtml, aiReportState, replaceAiReport } from "./booth-view.js";
@@ -516,9 +516,10 @@ function snooze(id) {
   try { const s = snoozed(); s[id] = Date.now() + 3 * 86400000; localStorage.setItem(SNOOZE_KEY, JSON.stringify(s)); } catch (e) {}
 }
 // 알림에 띄울 것 (지원 대학 칸에는 숨긴 것도 계속 보인다)
+// 면접 당일의 후기 쓰기는 '오늘' 카드 줄이 맡는다 (2026-10-26) → 띠·할 일에는 다음 날부터
 function nudgeReviews() {
-  const s = snoozed(), now = Date.now();
-  return pendingReviews().filter((u) => !(s[u.id] > now));
+  const s = snoozed(), now = Date.now(), today = isoDay();
+  return pendingReviews().filter((u) => !(s[u.id] > now) && isoDay(u.date) !== today);
 }
 const uniOf = (id) => (me.universities || []).find((u) => u.id === id);
 
@@ -653,6 +654,11 @@ function renderHome() {
   $$("[data-stage]", box).forEach((b) => b.onclick = () => { toInterview(); switchTab("schedule"); sched.focusStage(Number(b.dataset.stage)); });
   $$("[data-rv]", box).forEach((b) => b.onclick = () => openReview(b.dataset.rv));
   $$("[data-rvlater]", box).forEach((b) => b.onclick = () => { snooze(b.dataset.rvlater); renderHome(); });
+  // '오늘' 카드 · 1차 발표일
+  $$("[data-ann]", box).forEach((b) => b.onclick = () => setAnnounce(b.dataset.ann, b.dataset.r));
+  $("#tcHide", box)?.addEventListener("click", () => { try { localStorage.setItem(TC_HIDE, isoDay()); } catch (_) {} renderHome(); });
+  $("#tcMore", box)?.addEventListener("click", () => { tcAll = true; renderHome(); });
+  $$("[data-fa]", box).forEach((b) => b.onclick = (e) => { e.stopPropagation(); openAnnounceEdit(b.dataset.fa); });
   // 피드백 넘겨 보기
   $$("[data-fbpager]", box).forEach((pg) => {
     const card = pg.closest(".fb"), items = $$(".fbbox", pg);
@@ -673,6 +679,96 @@ function renderHome() {
     $$("[data-extra]", box).forEach((x) => x.hidden = !open);
     $("span", more).textContent = open ? "접기" : "더 보기";
   };
+}
+
+// ================= '오늘' 카드: 1차 발표일 · 대학 면접일 (2026-10-26) =================
+// 오늘 1차 발표(보라 점: [합격][불합격]) · 오늘 면접(검은 점: 18시부터 후기 쓰기) · 내일 1차 발표·면접(회색 점). 없으면 카드 없음.
+// 4줄 넘으면 3줄 + '외 n건 보기' · ✕ = 그날만 접기 (localStorage 날짜 키, 다음 날 다시 계산)
+// 학생이 누른 결과(announceResult · announceAt)는 앱에만 남고 시트와 동기화하지 않는다. 담당 선생님 알림은 Apps Script 가 보냄
+const TC_HIDE = `todayCardHide:${me.studentNo}`;
+let tcAll = false;
+const ddayOf = (v) => { const n = dday(v); return n == null ? "" : n === 0 ? "D-DAY" : n > 0 ? `D-${n}` : ""; };
+const tomorrowIso = () => { const d = new Date(); d.setDate(d.getDate() + 1); return isoDay(d); };
+function todayRows() {
+  const t = isoDay(), tm = tomorrowIso(), unis = me.universities || [], out = [];
+  unis.forEach((u) => { if (u.firstAnnounce === t) out.push({ k: "ann", u }); });
+  unis.forEach((u) => { if (u.date && isoDay(u.date) === t) out.push({ k: "iv", u }); });
+  unis.forEach((u) => { if (u.firstAnnounce === tm) out.push({ k: "tann", u }); });
+  unis.forEach((u) => { if (u.date && isoDay(u.date) === tm) out.push({ k: "tiv", u }); });
+  return out;
+}
+function todayCardHtml() {
+  try { if (localStorage.getItem(TC_HIDE) === isoDay()) return ""; } catch (_) {}
+  const rows = todayRows();
+  if (!rows.length) return "";
+  const nm = (u) => esc(u.univ || "대학"), sub = (u) => esc([u.dept, u.admission].filter(Boolean).join(" · "));
+  const line = ({ k, u }) => {
+    let dot = k === "ann" ? "ann" : k === "iv" ? "iv" : "tm", main = "", s2 = "", act = "";
+    if (k === "ann") {
+      if (u.announceResult === "pass") { main = `${nm(u)} 1차 합격 🎉`; s2 = u.date ? `면접일 ${mdw(u.date)} · ${ddayOf(u.date)}` : "면접 준비도 힘내요"; act = '<span class="tc-done">알렸어요</span>'; }
+      else if (u.announceResult === "fail") { main = `${nm(u)} 결과를 알려 줘서 고마워요`; s2 = sub(u); }
+      else { main = `오늘 ${nm(u)} 1차 발표일이에요`; s2 = sub(u);
+        act = `<button type="button" class="tc-b pass" data-ann="${esc(u.id)}" data-r="pass">합격</button><button type="button" class="tc-b" data-ann="${esc(u.id)}" data-r="fail">불합격</button>`; }
+    } else if (k === "iv") {
+      if (!reviewOpen(u)) { main = `오늘 ${nm(u)} 면접일이에요`; s2 = "잘하고 와요! 저녁 6시부터 후기를 쓸 수 있어요"; }
+      else if (reviewOf(u)) { main = `${nm(u)} 후기를 남겼어요`; s2 = "고마워요! 고칠 게 있으면 언제든 고칠 수 있어요"; act = `<button type="button" class="tc-b" data-rv="${esc(u.id)}">후기 보기</button>`; }
+      else { main = `오늘 ${nm(u)} 면접, 어땠나요?`; s2 = "기억날 때 적어 두면 좋아요 · 5분"; act = `<button type="button" class="tc-b go" data-rv="${esc(u.id)}">후기 쓰기</button>`; }
+    } else if (k === "tann") { main = `내일 ${nm(u)} 1차 발표`; s2 = "발표 뒤 면접 준비도 힘내요."; }
+    else { main = `내일 ${nm(u)} 면접`; s2 = "수험표·신분증·장소를 확인해 두세요"; }
+    return `<div class="tc-row ${k === "tann" || k === "tiv" ? "tm" : ""}"><i class="tc-dot ${dot}"></i><div class="tc-t"><b>${main}</b>${s2 ? `<span>${s2}</span>` : ""}</div><div class="tc-a">${act}</div></div>`;
+  };
+  const many = rows.length > 4 && !tcAll;
+  return `<section class="tcard" id="todayCard"><div class="tc-hd"><span>오늘 · ${esc(fmtDay(isoDay()))}</span>
+      <button type="button" class="tc-x" id="tcHide" aria-label="오늘은 접기">✕</button></div>
+    ${(many ? rows.slice(0, 3) : rows).map(line).join("")}
+    ${many ? `<button type="button" class="tc-more" id="tcMore">외 ${rows.length - 3}건 보기</button>` : ""}</section>`;
+}
+async function setAnnounce(id, r) {
+  const u = uniOf(id); if (!u) return;
+  $$("[data-ann]").forEach((b) => b.disabled = true);
+  try {
+    const at = Date.now();
+    await updateDoc(doc(db, "interviews", id), { announceResult: r, announceAt: at });
+    Object.assign(u, { announceResult: r, announceAt: at });
+    toast(r === "pass" ? "축하해요! 선생님께도 알려 드릴게요." : "알려 줘서 고마워요.");
+  } catch (e) { showError(e, "발표 결과 저장"); }
+  renderHome();
+}
+// 지원 대학 줄의 1차 발표일 — 비어 있으면 '1차 발표일 입력', 있으면 날짜 + 수정, '없음' = 1단계 없이 면접
+const faText = (u) => u.firstAnnounce === "없음" ? "1단계 없음" : u.firstAnnounce ? `1차 발표 ${mdw(u.firstAnnounce)}` : "";
+const faBtn = (u) => `<button type="button" class="fa-ed${u.firstAnnounce ? "" : " add"}" data-fa="${esc(u.id)}">${u.firstAnnounce ? `${esc(faText(u))} · 수정` : "+ 1차 발표일 입력"}</button>`;
+function openAnnounceEdit(id) {
+  const u = uniOf(id); if (!u) return;
+  document.getElementById("faSheet")?.remove();
+  const cur = /^\d{4}-\d{2}-\d{2}$/.test(u.firstAnnounce || "") ? u.firstAnnounce : "";
+  document.body.insertAdjacentHTML("beforeend", `<div class="fa-bg" id="faSheet"><form class="fa-sheet" role="dialog" aria-modal="true" aria-labelledby="faT" novalidate>
+    <h3 id="faT">${esc(u.univ || "")} 1차 발표일</h3>
+    <p class="muted">${esc([u.dept, u.admission].filter(Boolean).join(" · "))}<br>모르면 비워 두세요. 넣은 날짜는 선생님 화면과 시트에도 그대로 보여요.</p>
+    <input type="date" id="faDate" value="${esc(cur)}" aria-label="1차 발표일">
+    <div class="fa-btns"><button type="submit" class="btn-primary" id="faSave">저장</button>
+      <button type="button" id="faNone">1단계 없이 면접</button>
+      ${u.firstAnnounce ? '<button type="button" id="faClear">비우기</button>' : ""}
+      <button type="button" id="faX">닫기</button></div></form></div>`);
+  const bg = $("#faSheet");
+  const close = () => { bg.remove(); document.removeEventListener("keydown", onKey, true); };
+  const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  document.addEventListener("keydown", onKey, true);
+  bg.onclick = (e) => { if (e.target === bg) close(); };
+  $("#faX", bg).onclick = close;
+  const save = async (v) => {
+    $$("button", bg).forEach((b) => b.disabled = true);
+    try {
+      const at = Date.now();
+      await updateDoc(doc(db, "interviews", id), { firstAnnounce: v, updatedAt: at, updatedBy: "학생" });
+      Object.assign(u, { firstAnnounce: v, updatedAt: at, updatedBy: "학생" });
+      toast(v === "없음" ? "1단계 없이 면접으로 적어 두었어요." : v ? `1차 발표일을 ${mdw(v)}로 적어 두었어요.` : "1차 발표일을 비웠어요.");
+      close(); renderHome();
+    } catch (e) { $$("button", bg).forEach((b) => b.disabled = false); showError(e, "1차 발표일 저장"); }
+  };
+  $(".fa-sheet", bg).onsubmit = (e) => { e.preventDefault(); const v = $("#faDate", bg).value; if (!v) return toast("날짜를 골라 주세요.", "error"); save(v); };
+  $("#faNone", bg).onclick = () => save("없음");
+  $("#faClear", bg)?.addEventListener("click", () => save(""));
+  $("#faDate", bg).focus();
 }
 
 const WD = "일월화수목금토";
@@ -760,6 +856,7 @@ function homeWide({ today, up }) {
   const firstOpen = st.find((x) => !x.cls && x.teachers.length);
   const unis = me.universities || [];
   return `
+    ${todayCardHtml()}
     ${bandHtml()}
     <div class="h-row1">
       <section class="h-hero">
@@ -807,7 +904,7 @@ function homeWide({ today, up }) {
 
     ${unis.length ? `<div class="univ2"><span class="lab">지원 대학</span>${unis.map((u) => {
       const past = u.date && isoDay(u.date) < today;
-      return `<span class="uchip uni-row ${past ? "past" : ""}">${esc(`${u.univ || ""} ${u.dept || ""}`.trim())}${uniEnd(u, true)}</span>`;
+      return `<span class="uchip uni-row ${past ? "past" : ""}">${esc(`${u.univ || ""} ${u.dept || ""}`.trim())}${past && !u.firstAnnounce ? "" : faBtn(u)}${uniEnd(u, true)}</span>`;
     }).join("")}</div>` : ""}`;
 }
 function bindWide() { /* 컴퓨터 화면 전용 클릭은 없음 */ }
@@ -839,6 +936,7 @@ function homeNarrow({ today, up }) {
   const wk = weekCount();
   const unis = me.universities || [];
   return `
+    ${todayCardHtml()}
     ${bandHtml()}
     <section class="todo">
       <h2>오늘 할 일 ${todos.length ? `<span>${todos.length}</span>` : ""}</h2>
@@ -875,7 +973,7 @@ function homeNarrow({ today, up }) {
         const past = u.date && isoDay(u.date) < today;
         const dt = toDateSafe(u.date);
         return `<div class="urow uni-row ${past ? "past" : ""}"><div class="ud">${dt ? `${dt.getMonth() + 1}/${dt.getDate()}<small>${WD[dt.getDay()]}</small>` : "-"}</div>
-          <div class="un"><b>${esc(`${u.univ || ""} ${u.dept || ""}`.trim())}</b><small>${esc([u.admission, u.format].filter(Boolean).join(" · "))}</small></div>${uniEnd(u, false)}</div>`;
+          <div class="un"><b>${esc(`${u.univ || ""} ${u.dept || ""}`.trim())}</b><small>${esc([u.admission, u.format].filter(Boolean).join(" · "))}</small>${past && !u.firstAnnounce ? "" : faBtn(u)}</div>${uniEnd(u, false)}</div>`;
       }).join("")}</section>` : ""}`;
 }
 function bindNarrow() { /* 휴대폰 화면 전용 클릭은 없음 */ }

@@ -13,6 +13,7 @@ import { openStudent } from "./t-students.js";
 import { openMeetingForm, recordWrittenFor } from "./t-meetings.js";
 import { openBookingRecord, gotoSchedule, quickBooking } from "./t-schedule.js";
 import { BOOK_STAGES, stageTeachers, ACTIVE, DONE } from "./schedule.js";
+import { watchAnnounce, announceHero, bindAnnounce, refreshPopup } from "./t-announce.js";
 
 const WIDE = window.matchMedia("(min-width: 721px)");
 const WEEK = "일월화수목금토";
@@ -78,7 +79,9 @@ function collect() {
     .sort((a, b) => a.start.localeCompare(b.start));
   // 학생이 넣은 예상질문 검토 대기 (내 담당, 이름 없는 관리자는 전체)
   const pqWait = pqWaitStudents();
-  return { me, today, now, mine, scope, mineToday, todayAll, noRecord, pending, need, missing, pqWait };
+  // 1차 발표일·대학 면접일 (오늘·내일 줄만 실시간으로 따로 읽음 — t-announce.js)
+  const an = announceHero();
+  return { me, today, now, mine, scope, mineToday, todayAll, noRecord, pending, need, missing, pqWait, an };
 }
 // 할 일: 학생이 넣은 예상질문 검토 (점선 줄). wide 는 1 이상일 때만
 function pqRowHtml(pqWait) {
@@ -95,6 +98,7 @@ const noticeHtml = (me) => !S.ctx.profile ? `<div class="notice row">
 // ================= 그리기 =================
 function render() {
   if (!root) return;
+  watchAnnounce(() => { render(); refreshPopup(); });
   const d = collect();
   setDot("#todayDot", WIDE.matches ? d.need.length + d.noRecord.length : d.need.length + d.pending.length);
   S.homeHead = () => {
@@ -122,6 +126,7 @@ function bindCommon() {
     if (bk) openBookingRecord(bk);
   });
   $$("[data-no]", root).forEach((b) => b.onclick = () => openStudent(b.dataset.no));
+  bindAnnounce(root);
   $$("[data-meet]", root).forEach((b) => b.onclick = () => openMeetingForm({ id: b.dataset.meet }));
   // 승인 요청 카드: 수락 · 거절(확인 창) · 시간 변경 + 넘겨 보기
   $$("[data-qa]", root).forEach((b) => b.onclick = async () => {
@@ -158,11 +163,11 @@ function askHtml(need, phone) {
 }
 
 // ================= 컴퓨터 화면 (721px 이상) =================
-function wideHtml({ me, now, mine, scope, todayAll, noRecord, pending, need, missing, pqWait }) {
+function wideHtml({ me, now, mine, scope, todayAll, noRecord, pending, need, missing, pqWait, an }) {
   const nowHm = hm(now);
   const left = todayAll.filter((b) => !recorded(b) && b.status === "confirmed");
   const next = left.find((b) => b.end >= nowHm);
-  let sub = "오늘 잡힌 면접이 없어요.";
+  let sub = an.has ? "오늘 잡힌 모의면접이 없어요." : "오늘 잡힌 면접이 없어요.";
   if (todayAll.length) {
     if (!next) sub = left.length ? "끝난 면접의 기록을 써 주세요." : "오늘 면접을 모두 마쳤어요. 수고하셨어요!";
     else if (next.start <= nowHm) sub = "지금 면접 시간이에요.";
@@ -223,7 +228,8 @@ function wideHtml({ me, now, mine, scope, todayAll, noRecord, pending, need, mis
             <div class="st">${isNext ? "<em>다음 면접</em>" : ""}<b>${esc(S.blockLabel(b.block) || b.start)}</b>${esc(b.start)}</div>
             <button type="button" class="sb" data-no="${esc(b.studentNo)}"><b>${esc(s?.name || b.studentName || "")}</b> ${esc(b.studentNo)} · ${b.stage}차 <span>${meta}</span></button>
             ${end}</div>`;
-        }).join("") : '<div class="slot-none">오늘은 쉬어 가는 날이에요. 이번 주 일정은 아래에서 볼 수 있어요.</div>'}</div>
+        }).join("") : an.has ? "" : '<div class="slot-none">오늘은 쉬어 가는 날이에요. 이번 주 일정은 아래에서 볼 수 있어요.</div>'}</div>
+        ${an.html}
       </section>
 
       <section class="t-prog">
@@ -365,7 +371,7 @@ function renderRows(scope) {
 }
 
 // ================= 휴대폰 화면 (720px 이하) =================
-function narrowHtml({ me, now, todayAll, noRecord, pending, need, missing, pqWait }) {
+function narrowHtml({ me, now, todayAll, noRecord, pending, need, missing, pqWait, an }) {
   const missBy = BOOK_STAGES.map((sg) => `${sg.short} ${missing.filter((x) => x.sg.key === sg.key).length}`).join(", ");
   const soon = soonList();
   return `
@@ -386,7 +392,8 @@ function narrowHtml({ me, now, todayAll, noRecord, pending, need, missing, pqWai
           <button type="button" class="tx" data-no="${esc(b.studentNo)}"><b>${esc(s?.name || b.studentName || "")}</b><span class="no">${esc(b.studentNo)} · ${b.stage}차</span>
             <small>${esc(b.room || "장소 미정")} · ${esc(b.start)}–${esc(b.end)}${others.length ? " · " + esc(others.join("·")) + " 선생님과" : ""}</small></button>
           ${b.status !== "confirmed" ? '<span class="rec view">요청 중</span>' : `<button type="button" class="rec ${done ? "view" : "go"}" data-rec="${esc(b.id)}">${done ? "기록 보기" : "기록"}</button>`}</div>`;
-      }).join("") : '<div class="trow2 none">오늘 잡힌 면접이 없어요.</div>'}</div>
+      }).join("") : `<div class="trow2 none">${an.has ? "오늘 잡힌 모의면접이 없어요." : "오늘 잡힌 면접이 없어요."}</div>`}</div>
+      ${an.html}
     </section>
 
     <section class="p-card todo-t" id="todoCard">

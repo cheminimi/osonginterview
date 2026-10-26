@@ -1,6 +1,6 @@
 import {
   db, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, $, $$, esc, toast, showError, fmtDate, fmtDay, ddayBadge,
-  TRACKS, SPECIALS, STAGES, nextInterview, serverTimestamp, icon, dday, initials
+  TRACKS, SPECIALS, STAGES, nextInterview, serverTimestamp, icon, dday, initials, writeBatch
 } from "./common.js";
 import { S, register, rerender, myName, myRoles, stageChips, nextBadge, openModal, closeModal, switchTab, readForm, opt, attachInterviews, loadAllSessions, RECENT_DAYS } from "./t-core.js";
 import { requestSync } from "./sync.js";
@@ -258,8 +258,9 @@ export async function openStudent(no) {
 
     <div class="section-title"><h3>지원 대학 · 면접일</h3><span class="muted">시트 '앱연동_면접일'과 연동</span>
       <div class="spacer"></div><button class="btn-sm" id="addIv">+ 대학 추가</button></div>
-    ${(s.universities || []).length ? `<div class="table-wrap"><table><thead><tr><th>면접일</th><th>대학</th><th>학과</th><th>전형</th><th>면접 유형</th><th></th></tr></thead><tbody>
-      ${s.universities.map((u) => `<tr><td class="nowrap">${u.date ? `${ddayBadge(u.date)} ${fmtDay(u.date)}` : "-"}</td><td>${esc(u.univ)}</td><td>${esc(u.dept)}</td><td>${esc(u.admission)}</td><td>${esc(u.format)}</td>
+    ${(s.universities || []).length ? `<div class="table-wrap"><table><thead><tr><th>면접일</th><th>1차 발표</th><th>대학</th><th>학과</th><th>전형</th><th>면접 유형</th><th></th></tr></thead><tbody>
+      ${s.universities.map((u) => `<tr><td class="nowrap">${u.date ? `${ddayBadge(u.date)} ${fmtDay(u.date)}` : "-"}</td>
+        <td class="nowrap">${announceCell(u)}</td><td>${esc(u.univ)}</td><td>${esc(u.dept)}</td><td>${esc(u.admission)}</td><td>${esc(u.format)}</td>
         <td class="nowrap"><button class="btn-sm" data-iv="${u.id}">수정</button></td></tr>`).join("")}
       </tbody></table></div>` : '<div class="muted">등록된 면접일이 없습니다.</div>'}
 
@@ -421,20 +422,41 @@ function openInterviewForm(st, iv) {
       <div class="field"><label>전형</label><input name="admission" value="${esc(iv?.admission || "")}"></div>
       <div class="field"><label>면접 유형</label><select name="format">${opt(["학생부 기반", "기본 인성", "제시문", "MMI", "학생부 기반+제시문", "복합형", "기타"], iv?.format || "학생부 기반")}</select></div>
       <div class="field"><label>면접일 *</label><input type="date" name="date" value="${esc(iv?.date || "")}" required></div>
+      <div class="field"><label>1차 발표일</label><input type="date" name="firstAnnounce" value="${esc(/^\d{4}-\d{2}-\d{2}$/.test(iv?.firstAnnounce || "") ? iv.firstAnnounce : "")}">
+        <label class="inline-check" style="margin-top:6px"><input type="checkbox" name="noFirst" ${iv?.firstAnnounce === "없음" ? "checked" : ""}> 1단계 없이 면접 (발표 없음)</label></div>
     </div>
+    <label class="inline-check" id="ivSameWrap" hidden><input type="checkbox" name="sameAll"> <span id="ivSameTxt"></span></label>
     ${iv?.updatedBy ? `<p class="muted">마지막 수정: ${esc(iv.updatedBy)}${iv.updatedAt ? " · " + esc(new Date(iv.updatedAt).toLocaleString("ko-KR")) : ""}</p>` : ""}
     <div class="row"><button class="btn-primary" id="ivSave">저장</button>
       <span class="muted">저장하면 구글 시트에도 바로 반영됩니다.</span>
       ${iv ? '<div class="spacer"></div><button type="button" class="btn-sm btn-danger" id="ivDel">이 대학 삭제</button>' : ""}</div>
   </form>`);
   const back = () => openStudent(st.studentNo);
+  // 같은 대학·전형의 다른 학생 줄 (1차 발표일을 함께 넣을 수 있게)
+  const sameOthers = () => {
+    const u = $("#ivF [name=univ]", body).value.trim(), a = $("#ivF [name=admission]", body).value.trim();
+    return u ? S.interviews.filter((x) => x.id !== iv?.id && String(x.univ || "").trim() === u && String(x.admission || "").trim() === a) : [];
+  };
+  const drawSame = () => {
+    const n = sameOthers().length, a = $("#ivF [name=admission]", body).value.trim();
+    $("#ivSameWrap", body).hidden = !n;
+    $("#ivSameTxt", body).textContent = `같은 대학·전형(${$("#ivF [name=univ]", body).value.trim()}${a ? " · " + a : ""})의 다른 학생 ${n}명에게도 1차 발표일 함께 넣기`;
+  };
+  ["univ", "admission"].forEach((k) => $(`#ivF [name=${k}]`, body).addEventListener("input", drawSame));
+  drawSame();
+  const noFirst = $("#ivF [name=noFirst]", body), faIn = $("#ivF [name=firstAnnounce]", body);
+  noFirst.onchange = () => { faIn.disabled = noFirst.checked; };
+  noFirst.onchange();
   $("#ivF", body).onsubmit = async (e) => {
     e.preventDefault();
     const f = readForm($("#ivF", body));
+    const firstAnnounce = f.noFirst ? "없음" : (f.firstAnnounce || "");
+    const by = myName() || S.ctx.user.email;
     const data = {
       studentNo: st.studentNo, name: st.name, univ: f.univ, dept: f.dept, admission: f.admission, format: f.format, date: f.date,
-      updatedAt: Date.now(), updatedBy: myName() || S.ctx.user.email
+      firstAnnounce, updatedAt: Date.now(), updatedBy: by
     };
+    const others = f.sameAll ? sameOthers() : [];
     $("#ivSave", body).disabled = true;
     try {
       if (iv) { await updateDoc(doc(db, "interviews", iv.id), data); Object.assign(iv, data); }
@@ -442,10 +464,16 @@ function openInterviewForm(st, iv) {
         const ref = await addDoc(collection(db, "interviews"), data);
         S.interviews.push({ id: ref.id, ...data });
       }
+      if (others.length) {
+        const b = writeBatch(db), at = Date.now();
+        others.forEach((x) => b.update(doc(db, "interviews", x.id), { firstAnnounce, updatedAt: at, updatedBy: by }));
+        await b.commit();
+        others.forEach((x) => Object.assign(x, { firstAnnounce, updatedAt: at, updatedBy: by }));
+      }
       st.firstInterview = firstOf(st.studentNo);
       await updateDoc(doc(db, "students", st.studentNo), { firstInterview: st.firstInterview });
       attachInterviews(); rerender(); back();
-      toast("면접일을 저장했습니다.");
+      toast(others.length ? `면접일을 저장하고, 다른 학생 ${others.length}명에게도 1차 발표일을 넣었어요.` : "면접일을 저장했습니다.");
       requestSync(["interviews"]);
     } catch (err) { showError(err, "면접일 저장"); $("#ivSave", body).disabled = false; }
   };
@@ -460,5 +488,13 @@ function openInterviewForm(st, iv) {
       requestSync(["interviews"]);
     } catch (err) { showError(err, "면접일 삭제"); }
   });
+}
+// 1차 발표일 칸 ('없음' = 1단계 없이 면접)
+function announceCell(u) {
+  const v = u.firstAnnounce || "";
+  if (v === "없음") return '<span class="muted">1단계 없음</span>';
+  if (!v) return '<span class="muted">-</span>';
+  const r = u.announceResult === "pass" ? ' <span class="badge badge-green">합격</span>' : u.announceResult === "fail" ? ' <span class="badge badge-gray">불합격</span>' : "";
+  return `${esc(fmtDay(v))}${r}`;
 }
 const firstOf = (no) => S.interviews.filter((x) => x.studentNo === no && x.date).map((x) => x.date).sort()[0] || "";

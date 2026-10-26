@@ -20,7 +20,7 @@
  *     확정되면 '모의 면접 기록'에 예정 행 자동 추가 (앱 → 시트 한 방향)
  */
 
-const SCRIPT_VERSION = 'v13 (2026-10-25)';   // 동기화 결과창에 표시됩니다
+const SCRIPT_VERSION = 'v14 (2026-10-26)';   // 동기화 결과창에 표시됩니다
 
 // ===================== 설정 (직접 입력) =====================
 const CONFIG = {
@@ -57,8 +57,10 @@ const STUDENT_COLS = [
 ];
 const INTERVIEW_COLS = [
   ['학번', 'studentNo'], ['이름', 'name'], ['대학', 'univ'], ['학과', 'dept'], ['전형', 'admission'],
-  ['면접 유형', 'format'], ['면접일', 'date'], ['수정 시각', '_stamp'], ['수정자', '_by'], ['행ID', 'id']
+  ['면접 유형', 'format'], ['면접일', 'date'], ['1차 발표일', 'firstAnnounce'], ['수정 시각', '_stamp'], ['수정자', '_by'], ['행ID', 'id']
 ];
+// (v14) '1차 발표일' 칸: 'YYYY-MM-DD' · '없음'(1단계 없이 면접) · 빈칸. 시트에 칸이 없으면 면접일 바로 오른쪽에 끼워 넣는다 (기존 행 보존)
+//   학생이 앱에서 누르는 발표 결과(announceResult · announceAt)는 앱 전용 — 시트와 주고받지 않는다
 // (v13) 면접 절차 및 진행 방식 · 받은 질문과 실제 답변(Q/A) · 기타 유의사항. 머리행이 다르면 다음 동기화 때 통째로 다시 쓴다
 const REVIEW_HEAD = ['학년도', '면접일', '학번', '이름', '학반', '대학', '학과', '전형', '면접 유형',
   '면접 절차 및 진행 방식', '받은 질문과 실제 답변', '기타 유의사항', '도움된 것', '아쉬웠던 것', '분위기', '난이도', '작성 시각', '기록ID'];
@@ -68,7 +70,9 @@ const MEETING_COLS = [
   ['담당교사', 'teachers'], ['실시일', 'date'], ['회차', 'round'], ['기록ID', 'id']
 ];
 const STUDENT_SYNC = ['name', 'cls', 'priority', 'track', 'special', 's1', 's2', 's3a', 's3b', 'sheetUrl'];
-const INTERVIEW_SYNC = ['studentNo', 'name', 'univ', 'dept', 'admission', 'format', 'date'];
+const INTERVIEW_SYNC = ['studentNo', 'name', 'univ', 'dept', 'admission', 'format', 'date', 'firstAnnounce'];
+// 시트 → 앱으로 쓸 때 고치는 칸만 (updateMask) — 학생 발표 결과 등 앱 전용 칸을 지우지 않게 (v13 까지는 문서를 통째로 덮어씀)
+const INTERVIEW_MASK = INTERVIEW_SYNC.concat(['updatedAt', 'updatedBy']);
 const MEETING_SYNC = ['studentNo', 'type', 'teachers', 'date'];
 
 // ===================== 메뉴 =====================
@@ -404,9 +408,9 @@ function mergeInterviews_() {
   const docs = {};
   fsList_('interviews').forEach(function (d) {
     const f = d.fields;
-    docs[d.id] = { id: d.id, at: Number(f.updatedAt || 0), data: {
+    docs[d.id] = { id: d.id, at: Number(f.updatedAt || 0), by: f.updatedBy || '', data: {
       id: d.id, studentNo: String(f.studentNo || ''), name: f.name || '', univ: f.univ || '', dept: f.dept || '',
-      admission: f.admission || '', format: f.format || '', date: f.date || ''
+      admission: f.admission || '', format: f.format || '', date: f.date || '', firstAnnounce: f.firstAnnounce || ''
     } };
   });
   const writes = [];
@@ -422,12 +426,13 @@ function mergeInterviews_() {
       touched[String(d.studentNo)] = true;
       writes.push(fsPatchReq_('interviews/' + row.id, {
         studentNo: String(d.studentNo), name: d.name, univ: d.univ, dept: d.dept, admission: d.admission,
-        format: d.format, date: d.date, updatedAt: Date.now(), updatedBy: row.by || '시트'
-      }, null));
+        format: d.format, date: d.date, firstAnnounce: d.firstAnnounce || '', updatedAt: Date.now(), updatedBy: row.by || '시트'
+      }, INTERVIEW_MASK));
     },
     pull: function (doc, row) {
       touched[doc.data.studentNo] = true;
-      if (row) table.setRow(row.rowNum, doc.data, '앱'); else table.appendRow(doc.data, '앱');
+      const by = doc.by === '학생' ? '학생' : '앱';     // (v14) 학생이 앱에서 1차 발표일을 바꿨으면 수정자 '학생'
+      if (row) table.setRow(row.rowNum, doc.data, by); else table.appendRow(doc.data, by);
     },
     rowOnlyInState: function (row) { touched[String(row.data.studentNo)] = true; return 'delete'; },
     docOnlyInState: function (doc) { touched[doc.data.studentNo] = true; return 'delete'; },
@@ -756,7 +761,62 @@ function notifyTick_(force) {
     if (h >= 18 && props.getProperty('PUSH_RV_DAY') !== today) { notifyReviewDue_(out, 0); props.setProperty('PUSH_RV_DAY', today); }
     if (h >= 8 && props.getProperty('PUSH_MORN_DAY') !== today) { notifyReviewDue_(out, 1); props.setProperty('PUSH_MORN_DAY', today); }
   } catch (e) { out.errors.push('예약 알림: ' + (e.message || e)); }
+  // ④ (v14) 1차 발표일 아침 8시 · 대학 면접일 아침 7시 · 대학 면접 전날 저녁 6시 (학생, 하루 한 번)
+  try {
+    if (h >= 8 && props.getProperty('PUSH_ANN_DAY') !== today) { notifyAnnounceDay_(out, today); props.setProperty('PUSH_ANN_DAY', today); }
+    if (h >= 7 && props.getProperty('PUSH_IVDAY_DAY') !== today) { notifyUnivDay_(out, today, false); props.setProperty('PUSH_IVDAY_DAY', today); }
+    if (h >= 18 && props.getProperty('PUSH_IVEVE_DAY') !== today) { notifyUnivDay_(out, today, true); props.setProperty('PUSH_IVEVE_DAY', today); }
+  } catch (e) { out.errors.push('발표·면접 알림: ' + (e.message || e)); }
+  // ⑤ (v14) 학생이 1차 [합격]을 누르면 담당 선생님 전원에게 한 번 (정기 대조마다 확인)
+  try { notifyPass_(out); } catch (e) { out.errors.push('합격 알림: ' + (e.message || e)); }
   return out;
+}
+
+// (v14) 오늘 1차 발표일인 학생에게 (잠금 화면에 대학 이름은 넣고 학생 이름은 넣지 않음)
+function notifyAnnounceDay_(out, today) {
+  fsQuery_('interviews', 'firstAnnounce', 'EQUAL', today, 300).forEach(function (x) {
+    const iv = x.fields;
+    pushTo_('student', iv.studentNo, {
+      title: '오늘 ' + (iv.univ || '대학') + ' 1차 발표일이에요', body: '발표를 확인하고 앱에 결과를 알려 주세요',
+      url: 'student.html', tag: 'ann_' + x.id
+    }, out);
+  });
+}
+// (v14) 대학 면접일 아침 (eve=false: 오늘 면접) · 전날 저녁 (eve=true: 내일 면접)
+function notifyUnivDay_(out, today, eve) {
+  let day = today;
+  if (eve) { const d = new Date(); d.setDate(d.getDate() + 1); day = Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd'); }
+  fsQuery_('interviews', 'date', 'EQUAL', day, 300).forEach(function (x) {
+    const iv = x.fields, u = iv.univ || '대학';
+    pushTo_('student', iv.studentNo, eve
+      ? { title: '내일 ' + u + ' 면접이에요', body: '수험표·신분증·장소를 확인해 두세요', url: 'student.html', tag: 'ive_' + x.id }
+      : { title: '오늘 ' + u + ' 면접이에요 💪', body: '준비한 답변 한 번만 훑어보고 가요', url: 'student.html', tag: 'ivd_' + x.id }, out);
+  });
+}
+// (v14) 1차 합격 → 담당 선생님(1차 담임·2차 교과·3차 위원) 전원에게 한 번. 보낸 표시는 문서의 announceNotifiedAt (앱 전용 칸, 수정 시각은 그대로)
+//   오래된 것을 몰아 보내지 않게 누른 지 3일 안의 것만. 불합격은 알림 없음
+const PASS_ALERT_DAYS = 3;
+function notifyPass_(out) {
+  const since = Date.now() - PASS_ALERT_DAYS * 86400000;
+  const list = fsQuery_('interviews', 'announceResult', 'EQUAL', 'pass', 300)
+    .filter(function (x) { return !x.fields.announceNotifiedAt && Number(x.fields.announceAt || 0) >= since; });
+  if (!list.length) return;
+  const marks = [];
+  list.forEach(function (x) {
+    const iv = x.fields;
+    let st = null;
+    try { st = fsGet_('students/' + iv.studentNo); } catch (e) {}
+    const a = (st && st.assign) || {};
+    const keys = {};
+    [a.s1, a.s2, a.s3a, a.s3b].forEach(function (nm) { const k = nm ? staffIdByName_(nm) : ''; if (k) keys[k] = true; });
+    const who = maskName_((st && st.name) || iv.name || '');
+    Object.keys(keys).forEach(function (k) {
+      pushTo_('staff', k, { title: who + ' 학생 ' + (iv.univ || '') + ' 1차 합격 🎉', body: [iv.dept, iv.admission].filter(Boolean).join(' · '),
+        url: 'teacher.html', tag: 'pass_' + x.id }, out);
+    });
+    marks.push(fsPatchReq_('interviews/' + x.id, { announceNotifiedAt: Date.now() }, ['announceNotifiedAt']));
+  });
+  fsBatch_(marks);
 }
 
 function notifyBookings_(props, out) {
@@ -1262,6 +1322,7 @@ function readTable_(sh, cols, opt) {
   opt = opt || {};
   const api = {};
   function load() {
+    if (cols === INTERVIEW_COLS) ensureAnnounceCol_(sh);
     const lastRow = sh.getLastRow(), lastCol = Math.max(sh.getLastColumn(), cols.length);
     const all = lastRow ? sh.getRange(1, 1, lastRow, lastCol).getValues() : [[]];
     let hr = 0;
@@ -1362,9 +1423,22 @@ function readTable_(sh, cols, opt) {
   return api;
 }
 
+// (v14) '앱연동_면접일' 에 '1차 발표일' 칸이 없으면 '면접일' 바로 오른쪽에 새 칸을 끼워 넣는다 (행은 그대로, 오른쪽 칸만 한 칸씩 밀림)
+function ensureAnnounceCol_(sh) {
+  const lastCol = sh.getLastColumn();
+  if (!lastCol) return;
+  const head = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+  if (head.indexOf('1차 발표일') >= 0) return;
+  const d = head.indexOf('면접일');
+  if (d < 0) return;                       // 면접일 칸도 없으면 readTable_ 이 맨 오른쪽에 만든다
+  sh.insertColumnAfter(d + 1);
+  sh.getRange(1, d + 2).setValue('1차 발표일');
+  if (sh.getLastRow() > 1) sh.getRange(2, d + 2, sh.getLastRow() - 1, 1).setNumberFormat('yyyy. mm. dd');
+}
 function normCell_(key, v) {
   if (v === null || v === undefined) return '';
   if (key === 'date') return fmtDay_(v);
+  if (key === 'firstAnnounce') { if (/없음/.test(String(v))) return '없음'; return v === '' ? '' : fmtDay_(v); }
   // 회차 칸은 '1차', '4차 이상' 처럼 글자로 적혀 있을 수 있다. 앞의 숫자만 뽑아 쓴다.
   // (숫자로 못 읽으면 매번 '값이 달라졌다'고 보고 다시 쓰려 해서 데이터 확인 규칙과 부딪힌다)
   if (key === 'round') { const m = String(v).match(/\d+/); return m ? Number(m[0]) : String(v).trim(); }
@@ -1494,6 +1568,7 @@ function writeRound_(sh, table, rowNum, n) {
 }
 function toCell_(key, v) {
   if (key === 'date') return parseDay_(v) || v || '';
+  if (key === 'firstAnnounce') return v === '없음' ? '없음' : (parseDay_(v) || v || '');
   if (key === 'studentNo' && /^\d+$/.test(String(v))) return Number(v);
   if (key === 'round' && /^\d+$/.test(String(v))) return Number(v);
   return v == null ? '' : v;

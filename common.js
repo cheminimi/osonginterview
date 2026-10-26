@@ -725,6 +725,22 @@ export function recommendedModes(st) {
   if (!out.length) out.push("document", "personality");
   return [...new Set(out)];
 }
+// ---- 제시문 세트 (2026-10-26) — questions/{id} type "passage" 에 학교·전형·주제·문항 목록·숙독/답변 시간
+//   univ(학교, 필수) · admission(전형) · topic(주제, 필수) · items [{ q }](문항, 순서 = 번호) · prepSec(숙독) · answerSec(답변, 세트 합)
+//   text 는 1번 문항과 같은 값(예전 화면 호환). 학교가 없는 예전 제시문은 부스·연습에서 쓰지 않는다
+export const PASSAGE_MAX_ITEMS = 10;
+/** 문항 목록 [{ q }] — 빈 문항은 뺀다 */
+export function passageItems(q) {
+  return (Array.isArray(q?.items) ? q.items : []).map((x) => ({ q: String((x && typeof x === "object" ? x.q : x) || "").trim() })).filter((x) => x.q);
+}
+/** 부스·연습에서 쓸 수 있는 제시문인지 (학교·주제·제시문·문항 1개 이상·숙독·답변 시간이 모두 있음) */
+export function passageReady(q) {
+  return !!q && q.type === "passage" && !!String(q.univ || "").trim() && !!String(q.topic || "").trim() && !!String(q.passage || "").trim()
+    && passageItems(q).length > 0 && Number(q.prepSec) > 0 && Number(q.answerSec) > 0;
+}
+/** 학교·전형 한 줄 이름 ("가나대 · 학생부종합 (면접형)") */
+export const passageSchool = (q) => [q?.univ, q?.admission].map((x) => String(x || "").trim()).filter(Boolean).join(" · ");
+
 /** '제시문 · MMI' 에서 먼저 고를 쪽: 특별 트랙이 MMI 만이면 "mmi", 아니면 "passage" */
 export function pmKindOf(st) {
   const sp = st?.special || "";

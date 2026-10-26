@@ -200,7 +200,7 @@
 import {
   db, requireRole, mountAccountMenu, collection, doc, setDoc, getDocs, query, where, onSnapshot, esc, $, $$, toast, showError, loadInterviewsFor, cachedCollection,
   CRITERIA, STAGES, TYPES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes, icon, isoDay, initials,
-  railHead, railFoot, tabButton, wireRailMe, setHead, writeBatch, serverTimestamp, confirmBox, pqStats, isStudentPq
+  railHead, railFoot, tabButton, wireRailMe, setHead, writeBatch, serverTimestamp, confirmBox, pqStats, isStudentPq, passageReady
 } from "./common.js";
 import { mountSchedule, BOOK_STAGES, stageTeachers, ACTIVE, DONE, STATUS } from "./schedule.js";
 import { isBoothSession, boothViewHtml, aiReportState, replaceAiReport } from "./booth-view.js";
@@ -273,15 +273,16 @@ const modes = [
   { mode: "personal", title: "내 생기부 면접", desc: "선생님이 준비한 질문과 내가 만든 질문", n: personal.length, badge: "document" },
   { mode: "document", title: "학생부 공통 질문", desc: "지원동기·학업계획·활동 질문", n: bank.filter((q) => q.type === "document" && relevant(q)).length, badge: "document" },
   // 제시문 · MMI 는 한 장으로 묶고 들어가서 둘 중 하나를 고른다. 기본 인성은 따로 (2026-10-06)
-  { mode: "pm", title: "제시문 · MMI", desc: "준비 시간 동안 읽고 정리한 뒤 답변", n: bank.filter((q) => q.type === "passage" || q.type === "mmi").length, badge: "passage",
-    split: [["제시문", bank.filter((q) => q.type === "passage").length, "p"], ["MMI", bank.filter((q) => q.type === "mmi").length, "m"]] },
+  // 제시문은 학교·주제·문항·시간이 모두 있는 것만 (예전 양식은 연습에서 쓰지 않음, 2026-10-26)
+  { mode: "pm", title: "제시문 · MMI", desc: "준비 시간 동안 읽고 정리한 뒤 답변", n: bank.filter((q) => passageReady(q) || q.type === "mmi").length, badge: "passage",
+    split: [["제시문", bank.filter(passageReady).length, "p"], ["MMI", bank.filter((q) => q.type === "mmi").length, "m"]] },
   { mode: "personality", title: "기본 인성", desc: "가치관·경험·대인관계 질문", n: bank.filter((q) => q.type === "personality").length, badge: "personality" }
 ].sort((a, b) => (rec.includes(b.mode) ? 1 : 0) - (rec.includes(a.mode) ? 1 : 0));
 const MODE_IC = { personal: "note", document: "book", pm: "list", personality: "heart" };
 const secTxt = (n) => n >= 60 && n % 60 === 0 ? `${n / 60}분` : `${n}초`;
 const MODE_TIME = {
   personal: `답변 ${secTxt(TYPES.document.answer)}씩`, document: `답변 ${secTxt(TYPES.document.answer)}씩`,
-  pm: `제시문 준비 ${secTxt(TYPES.passage.prep)} · MMI 준비 ${secTxt(TYPES.mmi.prep)}`,
+  pm: `제시문 시간은 문제마다 · MMI 준비 ${secTxt(TYPES.mmi.prep)}`,
   personality: `답변 ${secTxt(TYPES.personality.answer)}씩`
 };
 // 선생님이 넣은 예상질문 (학생이 만든 것 제외)

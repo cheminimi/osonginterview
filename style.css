@@ -1639,3 +1639,16 @@ body.nd .rv-qa-view b { display: inline-block; width: 26px; margin-left: 0; colo
 body.nd .rv-qa-view .a b { margin-left: -26px; color: var(--olive); }
 body.nd .rx-chk { display: flex; gap: 6px; align-items: center; font-size: .9rem; white-space: nowrap; }
 body.nd .rx-chk input { width: auto; }
+
+/* 질문은행 제시문 세트 — 학교·전형·주제 · 문항 1·2·3번 (2026-10-26) */
+body.nd .pb-school { font-weight: 700; }
+body.nd .pb-warn { background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 7px 10px; font-size: .84rem; margin-top: 6px; }
+body.nd .pb-items { margin: 6px 0 4px; padding-left: 22px; font-size: .92rem; }
+body.nd .pb-items li { margin: 2px 0; }
+body.nd .pb-ed { display: grid; gap: 8px; margin-bottom: 8px; }
+body.nd .pb-row { display: flex; gap: 8px; align-items: flex-start; }
+body.nd .pb-row > b { flex: none; width: 34px; padding-top: 9px; font-size: .88rem; color: var(--accent); }
+body.nd .pb-row textarea { flex: 1; min-width: 0; min-height: 52px; }
+body.nd .pb-btns { flex: none; display: flex; gap: 3px; padding-top: 4px; }
+body.nd .pb-btns .btn-sm { min-width: 30px; padding-left: 0; padding-right: 0; }
+@media (max-width: 720px) { body.nd .pb-row { flex-wrap: wrap; } body.nd .pb-btns { margin-left: 42px; } }

@@ -54,6 +54,18 @@
   .kind-pick .k-passage { background: #efe9f4; color: #6a4e86; } .kind-pick .k-mmi { background: var(--warn-bg); color: var(--warn); }
   .kind-pick button.on { border-color: var(--black, var(--accent-fill)); background: var(--accent-faint); box-shadow: inset 0 0 0 1px var(--black, var(--accent-fill)); }
   .kind-pick button:disabled { opacity: .45; cursor: default; }
+  /* 제시문 세트: 학교·전형 카드 · 문항 단계 (2026-10-26) */
+  .school-pick { display: grid; gap: 8px; margin: 10px 0 4px; }
+  .school-pick button { font: inherit; text-align: left; border: 1.5px solid var(--line); background: #fff; border-radius: 14px; padding: 11px 14px; display: grid; gap: 2px; cursor: pointer; color: var(--ink); min-width: 0; }
+  .school-pick button b { font-size: .98rem; } .school-pick button span { font-size: .8rem; color: var(--ink-3); }
+  .school-pick button.on { border-color: var(--black, var(--accent-fill)); background: var(--accent-faint); box-shadow: inset 0 0 0 1px var(--black, var(--accent-fill)); }
+  .school-pick .mine { font-size: .7rem; font-weight: 700; background: var(--ok-bg); color: var(--ok); border-radius: 99px; padding: 1px 7px; vertical-align: 2px; margin-left: 4px; }
+  .p-steps { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 14px; }
+  .p-steps span { font-size: .8rem; font-weight: 700; border-radius: 99px; padding: 3px 11px; background: #e3e6ec; color: var(--ink-3); }
+  .p-steps span.done { background: #dfe8f6; color: var(--accent); } .p-steps span.now { background: var(--accent); color: #fff; } .p-steps span.skip { text-decoration: line-through; }
+  .p-head { font-size: .86rem; color: var(--ink-2); } .p-head b { color: var(--ink); }
+  .p-list { margin: 0; padding-left: 26px; line-height: 1.7; } .p-list li::marker { font-weight: 700; color: var(--accent); }
+  .p-end { background: var(--warn-bg); color: var(--warn); border-radius: 12px; padding: 12px 14px; font-weight: 700; }
   .kind-pick .rec { font-size: .68rem; font-weight: 700; background: var(--lime, var(--ok-bg)); color: var(--black, var(--ok)); border-radius: 99px; padding: 1px 7px; vertical-align: 2px; }
 </style>
 <script>
@@ -203,15 +215,19 @@
 <script type="app-module">
 import {
   db, requireRole, collection, doc, getDocs, addDoc, updateDoc, serverTimestamp, loadInterviewsFor, cachedCollection,
-  esc, $, toast, showError, TYPES, typeBadge, fmtSec, shuffle, icon, pmKindOf
+  esc, $, toast, showError, TYPES, typeBadge, fmtSec, shuffle, icon, pmKindOf, passageReady, passageItems, passageSchool
 } from "./common.js";
 
 const { user, profile } = await requireRole("student");
 document.getElementById("logoutBtn").onclick = async () => {
   if (confirm("로그아웃할까요? 진행 중인 연습은 지금까지 자동 저장된 곳까지 남습니다.")) (await import("./common.js")).logout();
 };
-let depts = [];
-try { depts = (await loadInterviewsFor(profile.studentNo)).map((u) => u.dept || "").filter(Boolean); } catch (e) { console.warn(e); }
+let depts = [], myUnivs = [];
+try {
+  const ivs = await loadInterviewsFor(profile.studentNo);
+  depts = ivs.map((u) => u.dept || "").filter(Boolean);
+  myUnivs = ivs.map((u) => String(u.univ || "").trim()).filter(Boolean);      // 제시문 학교 고르기의 '내 지원 대학'
+} catch (e) { console.warn(e); }
 // mode: personal · document · pm(제시문 · MMI — 들어와서 kind 로 둘 중 하나) · personality(기본 인성만)
 // 예전 주소 mode=passage / mode=mmi 는 pm 으로 열고 그쪽을 고른 상태로
 const modeParam = new URLSearchParams(location.search).get("mode") || "document";
@@ -232,13 +248,19 @@ const pmPools = { passage: [], mmi: [] };      // 제시문 · MMI: 둘을 따�
 try {
   if (mode === "personal") {
     const snap = await getDocs(collection(db, "students", profile.studentNo, "personalQuestions"));
-    pool = snap.docs.map((d) => ({ id: d.id, source: "personal", type: "document", ...d.data() }));
+    pool = snap.docs.map((d) => {
+      const q = { id: d.id, source: "personal", type: "document", ...d.data() };
+      // 선생님이 보낸 제시문 세트(문항 여러 개)는 한 번에 답하는 한 문항으로 (문항을 번호 붙여 이어 씀)
+      const its = q.type === "passage" ? passageItems(q) : [];
+      if (its.length > 1) q.text = its.map((x, i) => `${i + 1}. ${x.q}`).join("\n");
+      return q;
+    });
   } else {
     const all = await cachedCollection("questions");   // 질문은행: 바뀌었을 때만 서버에서 받음
     const relevant = (q) => !q.majors?.length || depts.some((d) => q.majors.some((m) => d.includes(m)));
     const bankQ = all.map((q) => ({ ...q, source: "bank" }));
     if (isPm) {
-      pmPools.passage = bankQ.filter((q) => q.type === "passage");
+      pmPools.passage = bankQ.filter(passageReady);     // 학교·주제·문항·시간이 모두 있는 제시문만 (예전 양식은 쓰지 않음)
       pmPools.mmi = bankQ.filter((q) => q.type === "mmi");
       if (!pmPools[kind].length) kind = kind === "mmi" ? "passage" : "mmi";   // 고른 쪽에 질문이 없으면 다른 쪽
       mode = kind; pool = pmPools[kind];
@@ -257,14 +279,35 @@ if (!pool.length) {
 // ---------- 설정 화면 (제시문 · MMI 는 맨 위에서 둘 중 하나를 고르고, 고르면 다시 그린다)
 const settings = { count: Math.min(5, pool.length), follow: true, tts: hasTTS, stt: !!SR, timeScale: 1 };
 const KIND = {
-  passage: { title: "제시문 면접", time: `제시문 읽고 준비 ${TYPES.passage.prep / 60}분 · 답변 ${TYPES.passage.answer / 60}분` },
+  passage: { title: "제시문 면접", time: "학교별 · 문항 차례로" },
   mmi: { title: "MMI", time: `상황 읽고 준비 ${TYPES.mmi.prep / 60}분 · 답변 ${TYPES.mmi.answer / 60}분` }
 };
 const kindPick = () => !isPm ? "" : `<div class="kind-pick">${["passage", "mmi"].map((k) => `
   <button type="button" class="${k === kind ? "on" : ""}" data-kind="${k}" ${pmPools[k].length ? "" : "disabled"}>
     <b>${KIND[k].title}${k === pmKindOf(profile) && (profile.special || "").match(/제시문|MMI/) ? ' <span class="rec">내 트랙</span>' : ""}</b>
-    <span>${pmPools[k].length ? KIND[k].time : "아직 질문이 없어요"}</span><em class="k-${k}">${pmPools[k].length}문항</em></button>`).join("")}</div>`;
+    <span>${pmPools[k].length ? KIND[k].time : "아직 질문이 없어요"}</span><em class="k-${k}">${pmPools[k].length}${k === "passage" ? "개" : "문항"}</em></button>`).join("")}</div>`;
+// ---------- 제시문: 학교·전형 묶음 (같은 학교·전형끼리 한 카드)
+const minTxt = (sec) => { const n = Math.round(Number(sec) || 0), m = Math.floor(n / 60), r = n % 60; return m && r ? `${m}분 ${r}초` : m ? `${m}분` : `${r}초`; };
+const rangeTxt = (list, k) => { const v = [...new Set(list.map((q) => Number(q[k])))].sort((a, b) => a - b); return v.length > 1 ? `${minTxt(v[0])}~${minTxt(v[v.length - 1])}` : minTxt(v[0]); };
+function schoolGroups() {
+  const by = new Map();
+  pool.forEach((q) => { const key = `${String(q.univ).trim()}|${String(q.admission || "").trim()}`; if (!by.has(key)) by.set(key, { key, univ: String(q.univ).trim(), name: passageSchool(q), list: [] }); by.get(key).list.push(q); });
+  const mine = (g) => myUnivs.includes(g.univ);
+  return [...by.values()].sort((a, b) => (mine(b) ? 1 : 0) - (mine(a) ? 1 : 0) || a.name.localeCompare(b.name, "ko")).map((g) => ({ ...g, mine: mine(g) }));
+}
+function schoolPick() {
+  const gs = schoolGroups();
+  if (settings.group == null || (settings.group && !gs.some((g) => g.key === settings.group))) settings.group = (gs.find((g) => g.mine) || (gs.length === 1 ? gs[0] : null))?.key || "";
+  const card = (g) => `<button type="button" class="${settings.group === g.key ? "on" : ""}" data-group="${esc(g.key)}"><b>${esc(g.name)}${g.mine ? '<span class="mine">내 지원 대학</span>' : ""}</b>
+    <span>제시문 ${g.list.length}개 · 숙독 ${rangeTxt(g.list, "prepSec")} · 답변 ${rangeTxt(g.list, "answerSec")}</span></button>`;
+  if (gs.length === 1) return `<div class="opt" style="display:block"><b>학교·전형</b><div class="muted">${esc(gs[0].name)} · 제시문 ${gs[0].list.length}개 · 숙독 ${rangeTxt(gs[0].list, "prepSec")} · 답변 ${rangeTxt(gs[0].list, "answerSec")}</div></div>`;
+  return `<div class="opt" style="display:block"><b>어느 학교 제시문으로 할까요?</b>
+    <div class="school-pick">${gs.map(card).join("")}
+      <button type="button" class="${settings.group === "" ? "on" : ""}" data-group=""><b>아무거나</b><span>모든 제시문 중 하나</span></button></div></div>`;
+}
+
 function renderSetup() {
+if (mode === "passage") return renderPassageSetup();
 const timeText = mode === "passage" ? `준비 ${TYPES.passage.prep / 60}분 · 답변 ${TYPES.passage.answer / 60}분 기본 (문항별 설정 우선)`
   : mode === "mmi" ? `준비 ${TYPES.mmi.prep / 60}분 · 답변 ${TYPES.mmi.answer / 60}분 기본 (문항별 설정 우선)` : "유형별 기본 답변시간 사용";
 app.innerHTML = `
@@ -298,6 +341,35 @@ $("#start").onclick = async () => {
   $("#start").disabled = true;
   await begin();
 };
+}
+// 제시문: 문항 수·시간은 고르지 않음 — 고른 학교·전형의 제시문 하나를 선생님이 정한 시간(숙독+답변)으로
+function renderPassageSetup() {
+  app.innerHTML = `
+  <div class="card">
+    <h1>${esc(MODE_LABEL.pm)}</h1>
+    <p class="muted" style="margin:0">무엇을 연습할지 고르세요.</p>${kindPick()}
+    <p class="muted">제시문 ${pool.length}개 중에서 고른 학교·전형의 제시문 하나로 연습해요. 숙독 시간 동안 제시문과 문항을 읽고, 문항을 1번부터 차례로 답해요.
+      시간은 선생님이 정한 숙독·답변 시간 그대로예요. 답변 시간은 모든 문항을 합친 시간이라, 다 되면 남은 문항은 건너뛰어요.</p>
+    ${schoolPick()}
+    <div class="opt"><input type="checkbox" id="optFollow" ${settings.follow ? "checked" : ""}><div class="grow"><b>꼬리질문</b><div class="muted">마지막 문항까지 답하고 답변 시간이 1분 넘게 남으면 하나</div></div></div>
+    <div class="opt"><input type="checkbox" id="optTts" ${hasTTS ? (settings.tts ? "checked" : "") : "disabled"}><div class="grow"><b>문항 읽어주기</b><div class="muted">${hasTTS ? "면접관처럼 문항을 소리로 들려줍니다 (제시문은 읽지 않아요)" : "이 브라우저는 지원하지 않아요"}</div></div></div>
+    <div class="opt"><input type="checkbox" id="optStt" ${SR ? (settings.stt ? "checked" : "") : "disabled"}><div class="grow"><b>음성 받아쓰기</b><div class="muted">${SR ? "말한 내용이 자동으로 답변란에 기록됩니다 (마이크 권한 필요)" : "크롬/엣지에서만 지원돼요. 답변은 직접 입력하세요"}</div></div></div>
+    <div style="margin-top:18px"><button class="btn-primary btn-lg" id="start">제시문 면접 시작</button></div>
+  </div>`;
+  document.querySelectorAll("[data-kind]").forEach((b) => b.onclick = () => {
+    if (b.dataset.kind === kind || !pmPools[b.dataset.kind].length) return;
+    kind = mode = b.dataset.kind; pool = pmPools[kind];
+    settings.count = Math.min(5, pool.length);
+    renderSetup();
+  });
+  document.querySelectorAll("[data-group]").forEach((b) => b.onclick = () => { settings.group = b.dataset.group; renderSetup(); });
+  $("#start").onclick = async () => {
+    settings.follow = $("#optFollow").checked;
+    settings.tts = $("#optTts").checked;
+    settings.stt = $("#optStt").checked;
+    $("#start").disabled = true;
+    await beginPassage();
+  };
 }
 renderSetup();
 
@@ -345,11 +417,150 @@ function save() {
   return saving;
 }
 
+// ---------- 제시문 세트 (2026-10-26): 숙독 → 1번부터 한 문항씩 → 답변 시간(세트 합)이 다 되면 끊고 남은 문항 건너뜀 → 시간이 1분 넘게 남으면 꼬리질문
+// 기록: 문항마다 items 한 줄(type "passage" · pNo · pOf, 1번 줄에만 passage·prepSec·prepUsedSec, answerSec = 세트 답변 시간)
+//       + 맨 위 passageSet { qid, univ, admission, topic, n, readSec, readUsedSec, answerSec, answerUsedSec, done, timeUp } — 부스 기록과 같은 모양
+const FOLLOW_MIN_LEFT = 60;           // 세트 끝 꼬리질문: 남은 답변 시간이 이 초 이상일 때만
+const TIME_UP_LINE = "시간이 다 돼서 여기까지 할게요.";
+let pset = null, phaseDone = false;
+async function beginPassage() {
+  const gs = schoolGroups();
+  const cand = settings.group ? (gs.find((g) => g.key === settings.group)?.list || pool) : pool;
+  const q = shuffle(cand)[0];
+  const qs = passageItems(q).map((x) => x.q);
+  pset = { src: q, q: qs, n: qs.length, used: 0, followNow: false,
+    rec: { qid: q.id, univ: String(q.univ || "").trim(), admission: String(q.admission || "").trim(), topic: String(q.topic || "").trim(), n: qs.length,
+      readSec: Number(q.prepSec), readUsedSec: 0, answerSec: Number(q.answerSec), answerUsedSec: 0, done: false, timeUp: false } };
+  items = [];
+  try {
+    sessionRef = await addDoc(collection(db, "sessions"), {
+      studentUid: user.uid, studentName: profile.name || "", studentNo: profile.studentNo,
+      major: depts.join(", "), track: profile.track || "",
+      mode: "passage", modeLabel: MODE_LABEL.passage, status: "in_progress",
+      items, passageSet: pset.rec, startedAt: serverTimestamp(), updatedAt: serverTimestamp()
+    });
+  } catch (e) {
+    showError(e, "면접 기록 생성");
+    $("#start").disabled = false;
+    return;
+  }
+  readPhase();
+}
+const saveSet = () => { if (!sessionRef) return Promise.resolve(); return updateDoc(sessionRef, { passageSet: pset.rec, updatedAt: serverTimestamp() }).catch((e) => console.warn("passageSet", e)); };
+function readPhase() {
+  const r = pset.rec;
+  app.innerHTML = `${progressBar()}
+    <div class="card stack">
+      <div class="row"><span class="phase">숙독 시간 · 답변 ${fmtSec(r.answerSec)}</span> ${typeBadge("passage")}</div>
+      <div class="p-head"><b>${esc(passageSchool(r))}</b> · ${esc(r.topic)}</div>
+      <div class="timer-wrap"><div class="ring" id="ring"></div>
+        <div class="muted">제시문과 문항을 읽고 생각을 정리하세요. 다 읽었으면 [다 읽었어요]를 누르세요. 시간이 다 되면 1번 문항으로 넘어가요.</div></div>
+      <div class="passage">${esc(pset.src.passage)}</div>
+      <div><b>문항</b><ol class="p-list">${pset.q.map((x) => `<li>${esc(x)}</li>`).join("")}</ol></div>
+      <div><label>메모</label><textarea id="memo" placeholder="핵심 개념, 답변 순서, 근거…"></textarea></div>
+      <div class="row"><div class="spacer"></div><button class="btn-primary" id="next">다 읽었어요 · 1번 시작</button></div>
+    </div>`;
+  let done = false;
+  const elapsed = startTimer(r.readSec, $("#ring"), (used) => { if (used >= r.readSec) finish(); });
+  function finish() {
+    if (done) return; done = true; stopTimer();
+    r.readUsedSec = Math.min(r.readSec, Math.round(elapsed()));
+    pset.memo = $("#memo").value;
+    askItem(0);
+  }
+  $("#next").onclick = finish;
+}
+// k번 문항 (0부터). 세트 시계는 pset.used 에서 이어서 셈
+function askItem(k) {
+  const r = pset.rec, text = pset.q[k];
+  const it = { source: pset.src.source || "bank", qid: pset.src.id, type: "passage", text, pNo: k + 1, pOf: pset.n, answerSec: r.answerSec,
+    ...(k === 0 ? { passage: pset.src.passage || "", prepSec: r.readSec, prepUsedSec: r.readUsedSec, prepMemo: pset.memo || "" } : {}),
+    followUp: "", answer: "", usedSec: 0, followAnswer: "", followUsedSec: 0 };
+  items.push(it); idx = k;
+  setAnswerScreen(it, false, `${k + 1}번 문항입니다. ${text}`);
+}
+// 답변 화면 (문항 · 꼬리질문 공용). 남은 답변 시간 = 세트 답변 시간 − 이미 쓴 시간
+function setAnswerScreen(it, isFollow, say) {
+  const r = pset.rec, last = !isFollow && it.pNo === pset.n;
+  const qText = isFollow ? it.followUp : it.text;
+  app.innerHTML = `${progressBar()}
+    <div class="card stack">
+      <div class="row"><span class="phase">${isFollow ? "꼬리질문" : `${it.pNo}번 문항 · ${it.pNo}/${pset.n}`} · 답변 시간 ${fmtSec(r.answerSec)} (문항 모두 합쳐서)</span> ${typeBadge("passage")}</div>
+      <div class="question pre">${esc(qText)}</div>
+      <details><summary class="muted">제시문 다시 보기</summary><div class="passage" style="margin-top:8px">${esc(pset.src.passage)}</div></details>
+      ${pset.memo ? `<details><summary class="muted">내 메모</summary><div class="pre" style="margin-top:6px">${esc(pset.memo)}</div></details>` : ""}
+      <div class="timer-wrap"><div class="ring" id="ring"></div>
+        <div><div class="muted">남은 답변 시간이에요. 다 되면 그 자리에서 끝나고 남은 문항은 건너뛰어요.</div>
+        <div class="mic" id="mic" ${settings.stt && SR ? "" : "hidden"}><span class="dot"></span> 받아쓰기</div></div></div>
+      <div>
+        <textarea class="answer-box" id="answer" placeholder="${settings.stt && SR ? "말하면 여기에 받아써집니다. 직접 고쳐도 돼요." : "답변을 입력하세요."}"></textarea>
+        <div class="interim" id="interim"></div>
+      </div>
+      <div class="row">
+        ${hasTTS && settings.tts ? `<button id="replay" class="btn-sm">🔊 문항 다시 듣기</button>` : ""}
+        <div class="spacer"></div>
+        <button class="btn-primary" id="done">${isFollow || last ? "답변 마치기" : `다음 문항 (${it.pNo + 1}번) →`}</button>
+      </div>
+    </div>`;
+  const ta = $("#answer");
+  speak(say || qText);
+  $("#replay") && ($("#replay").onclick = () => speak(say || qText));
+  const sttDelay = settings.tts && hasTTS ? Math.min(6000, 800 + (say || qText).length * 90) : 0;
+  const sttTimer = setTimeout(() => startDictation(ta, $("#interim"), $("#mic")), sttDelay);
+  const start = pset.used;
+  let ended = false;
+  const elapsed = startTimer(r.answerSec, $("#ring"), (used) => { if (used >= r.answerSec) end(true); }, start);
+  function end(timeUp) {
+    if (ended) return; ended = true;
+    clearTimeout(sttTimer);
+    stopDictation(); stopTimer(); if (hasTTS) speechSynthesis.cancel();
+    const pending = $("#interim").textContent.trim();
+    const text = (ta.value.trim() + (pending ? " " + pending : "")).trim();
+    const total = Math.min(r.answerSec, elapsed());
+    const used = Math.max(0, Math.round(total - start));
+    if (isFollow) { it.followAnswer = text; it.followUsedSec = used; } else { it.answer = text; it.usedSec = used; }
+    pset.used = total; r.answerUsedSec = Math.round(total);
+    if (timeUp) { r.timeUp = true; it.timeUp = true; }
+    r.done = items.length === pset.n && !!items[pset.n - 1]?.answer;
+    save().catch(() => {}); saveSet();
+    if (timeUp) return timeUpScreen();
+    if (!isFollow && it.pNo < pset.n) return askItem(it.pNo);
+    if (!isFollow) return afterItems();
+    pset.followNow = false; reviewPhase();
+  }
+  $("#done").onclick = () => end(false);
+}
+// 마지막 문항까지 답함 → 시간이 1분 넘게 남았고 등록된 꼬리질문이 있으면 하나
+function afterItems() {
+  const r = pset.rec, left = r.answerSec - pset.used, fu = pset.src.followUps || [];
+  if (settings.follow && fu.length && left >= FOLLOW_MIN_LEFT) {
+    const it = items[items.length - 1];
+    it.followUp = fu[Math.floor(Math.random() * fu.length)];
+    pset.followNow = true;
+    return setAnswerScreen(it, true);
+  }
+  reviewPhase();
+}
+// 답변 시간이 다 됨 — 말하던 답변은 거기까지 저장하고, 남은 문항은 건너뜀
+function timeUpScreen() {
+  const inFollow = pset.followNow;
+  pset.followNow = false; phaseDone = true;
+  const left = pset.n - items.length;
+  speak(TIME_UP_LINE);
+  app.innerHTML = `${progressBar()}
+    <div class="card stack">
+      <div class="p-end">${TIME_UP_LINE}</div>
+      <p class="muted" style="margin:0">${left ? `${items.length + 1}${left > 1 ? `~${pset.n}` : ""}번 문항은 묻지 않고 넘어가요. ` : ""}${inFollow ? "꼬리질문" : `${items.length}번`} 답변은 여기까지 저장했어요.</p>
+      <div class="row"><div class="spacer"></div><button class="btn-primary" id="toReview">결과 보기</button></div>
+    </div>`;
+  $("#toReview").onclick = () => reviewPhase();
+}
+
 // ---------- 타이머
 let timer = null;
-function startTimer(total, el, onTick) {
+function startTimer(total, el, onTick, offset = 0) {   // offset: 이미 쓴 시간(초) — 제시문 세트는 문항이 바뀌어도 한 시계로 셈
   stopTimer();
-  const t0 = performance.now();
+  const t0 = performance.now() - offset * 1000;
   const R = 42, C = 2 * Math.PI * R;
   el.innerHTML = `<svg width="96" height="96"><circle cx="48" cy="48" r="${R}" fill="none" stroke="#e2e5ec" stroke-width="7"/>
     <circle class="bar" cx="48" cy="48" r="${R}" fill="none" stroke="#41639b" stroke-width="7" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="0"/></svg><div class="num"></div>`;
@@ -426,6 +637,9 @@ function stopDictation() {
 
 // ---------- 문항 진행
 function progressBar() {
+  if (pset) return `<div class="p-steps">${Array.from({ length: pset.n }, (_, k) => { const it = items[k];
+    const st = it && (k < items.length - 1 || phaseDone || pset.followNow) ? "done" : it ? "now" : phaseDone ? "skip" : "";
+    return `<span class="${st}">${k + 1}번${st === "done" ? " ✓" : ""}</span>`; }).join("")}${pset.followNow ? '<span class="now">꼬리질문</span>' : ""}</div>`;
   return `<div class="progress">${items.map((_, i) => `<span class="${i < idx ? "done" : i === idx ? "now" : ""}"></span>`).join("")}</div>`;
 }
 
@@ -504,18 +718,24 @@ function answerPhase(it, which) {
 // 생기부 근거 — 연습 기록에는 남기지 않고, 불러온 예상질문에서 찾아 확인 화면에만 보여 준다
 const basisOf = (it) => (mode === "personal" && pool.find((q) => q.id === it.qid)?.basis) || "";
 function reviewPhase() {
+  if (pset) phaseDone = true;
+  const skipped = pset ? pset.q.slice(items.length) : [];
   app.innerHTML = `${progressBar()}
     <div class="card stack">
       <h1>수고했어요!</h1>
+      ${pset ? `<div class="p-head"><b>${esc(passageSchool(pset.src))}</b> · ${esc(pset.src.topic || "")}<br>
+        숙독 ${fmtSec(pset.rec.readUsedSec)} / ${fmtSec(pset.rec.readSec)} · 답변 ${fmtSec(pset.rec.answerUsedSec)} / ${fmtSec(pset.rec.answerSec)} · 문항 ${pset.n}개 중 ${items.filter((x) => x.answer).length}개 답변${pset.rec.timeUp ? " · 시간이 다 돼서 마침" : ""}</div>` : ""}
       <p class="muted">받아쓰기가 틀린 부분은 고쳐도 됩니다. 단, 내용을 새로 덧붙이진 마세요 — 실제로 말한 답변이 피드백 대상이에요.</p>
       ${items.map((it, i) => `
         <div class="q-item">
-          <div class="row">${typeBadge(it.type)} <span class="muted">Q${i + 1} · ${it.usedSec}초 / ${it.answerSec}초 ${it.usedSec > it.answerSec ? '<span class="badge badge-red">시간 초과</span>' : ""}</span></div>
+          <div class="row">${typeBadge(it.type)} <span class="muted">${it.pNo ? `${it.pNo}번 · ${fmtSec(it.usedSec)}${it.timeUp ? ' <span class="badge badge-orange">시간 끝에서 끊김</span>' : ""}`
+            : `Q${i + 1} · ${it.usedSec}초 / ${it.answerSec}초 ${it.usedSec > it.answerSec ? '<span class="badge badge-red">시간 초과</span>' : ""}`}</span></div>
           <div class="q-text" style="margin:6px 0">${esc(it.text)}</div>
           ${basisOf(it) ? `<div class="basis-box">${icon("note", 17)}<span><b>생기부 근거</b> · ${esc(basisOf(it))}</span></div>` : ""}
           <textarea data-i="${i}" data-f="answer">${esc(it.answer)}</textarea>
           ${it.followUp ? `<div style="margin:8px 0 4px"><b>꼬리질문</b> ${esc(it.followUp)}</div><textarea data-i="${i}" data-f="followAnswer">${esc(it.followAnswer)}</textarea>` : ""}
         </div>`).join("")}
+      ${skipped.map((q, k) => `<div class="q-item"><div class="row">${typeBadge("passage")} <span class="muted">${items.length + k + 1}번 · 시간이 다 돼서 못 했어요</span></div><div class="q-text muted" style="margin-top:6px">${esc(q)}</div></div>`).join("")}
       ${items.some(basisOf) ? '<p class="muted" style="margin:0">근거는 답을 다 한 뒤에만 보여요. 내 답이 생기부 내용을 잘 담았는지 비교해 보세요.</p>' : ""}
       <div class="grid grid-2">
         <div><label>잘한 점</label><textarea id="good" placeholder="예: 두괄식으로 결론부터 말했다"></textarea></div>
@@ -528,7 +748,7 @@ function reviewPhase() {
     $("#submit").disabled = true;
     try {
       await updateDoc(sessionRef, {
-        items, reflection: { good: $("#good").value.trim(), improve: $("#improve").value.trim() },
+        items, ...(pset ? { passageSet: pset.rec } : {}), reflection: { good: $("#good").value.trim(), improve: $("#improve").value.trim() },
         status: "submitted", submittedAt: serverTimestamp(), updatedAt: serverTimestamp()
       });
       try { localStorage.removeItem(LS_KEY()); } catch (_) {}

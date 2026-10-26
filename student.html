@@ -200,7 +200,7 @@
 import {
   db, requireRole, mountAccountMenu, collection, doc, setDoc, getDocs, query, where, onSnapshot, esc, $, $$, toast, showError, loadInterviewsFor, cachedCollection,
   CRITERIA, STAGES, TYPES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes, icon, isoDay, initials,
-  railHead, railFoot, tabButton, wireRailMe, setHead, writeBatch, serverTimestamp, confirmBox, pqStats, isStudentPq, passageReady, updateDoc
+  railHead, railFoot, tabButton, wireRailMe, setHead, writeBatch, serverTimestamp, confirmBox, pqStats, isStudentPq, passageReady, updateDoc, announceFailed, deleteField
 } from "./common.js";
 import { mountSchedule, BOOK_STAGES, stageTeachers, ACTIVE, DONE, STATUS } from "./schedule.js";
 import { isBoothSession, boothViewHtml, aiReportState, replaceAiReport } from "./booth-view.js";
@@ -435,7 +435,7 @@ function ddayPill() {
   const next = nextInterview(me);
   if (!next) return "";
   const nd = dday(next);
-  const u = (me.universities || []).find((x) => x.date && isoDay(x.date) === isoDay(next));
+  const u = (me.universities || []).find((x) => x.date && !announceFailed(x) && isoDay(x.date) === isoDay(next));
   const dl = nd === 0 ? "D-DAY" : "D-" + nd, md = `${next.getMonth() + 1}/${next.getDate()}`, w = WEEKD[next.getDay()];
   const name = u ? `${u.univ || ""} ${u.dept || ""}`.trim() : "대학 면접";
   return `<div class="pill-dday" title="다음 대학 면접"><i></i><span class="lg">${esc(name)} <b>${dl}</b> <span class="dt">· ${md}(${w})</span></span>
@@ -508,7 +508,7 @@ function reviewOpen(u) {
 // 면접이 끝났고(당일 18시부터) 아직 안 쓴 것
 function pendingReviews() {
   return (me.universities || [])
-    .filter((u) => reviewOpen(u) && !reviewOf(u))
+    .filter((u) => reviewOpen(u) && !reviewOf(u) && !announceFailed(u))   // 1차 불합격한 대학은 후기 요청 안 함
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 const snoozed = () => { try { return JSON.parse(localStorage.getItem(SNOOZE_KEY) || "{}"); } catch (e) { return {}; } };
@@ -636,7 +636,7 @@ function homeData() {
   const now = new Date();
   const next = nextInterview(me);
   const nd = next ? dday(next) : null;
-  const nextU = (me.universities || []).find((u) => u.date && next && isoDay(u.date) === isoDay(next));
+  const nextU = (me.universities || []).find((u) => u.date && next && !announceFailed(u) && isoDay(u.date) === isoDay(next));
   // 선생님이 완료 처리한 면접은 '다가오는 / 잡힌 일정'에서 빠진다
   const up = (bookings || []).filter((b) => ACTIVE(b.status) && !DONE(b) && b.date >= today)
     .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
@@ -692,9 +692,9 @@ const tomorrowIso = () => { const d = new Date(); d.setDate(d.getDate() + 1); re
 function todayRows() {
   const t = isoDay(), tm = tomorrowIso(), unis = me.universities || [], out = [];
   unis.forEach((u) => { if (u.firstAnnounce === t) out.push({ k: "ann", u }); });
-  unis.forEach((u) => { if (u.date && isoDay(u.date) === t) out.push({ k: "iv", u }); });
+  unis.forEach((u) => { if (u.date && isoDay(u.date) === t && !announceFailed(u)) out.push({ k: "iv", u }); });
   unis.forEach((u) => { if (u.firstAnnounce === tm) out.push({ k: "tann", u }); });
-  unis.forEach((u) => { if (u.date && isoDay(u.date) === tm) out.push({ k: "tiv", u }); });
+  unis.forEach((u) => { if (u.date && isoDay(u.date) === tm && !announceFailed(u)) out.push({ k: "tiv", u }); });
   return out;
 }
 function todayCardHtml() {
@@ -732,11 +732,13 @@ async function setAnnounce(id, r) {
     Object.assign(u, { announceResult: r, announceAt: at });
     toast(r === "pass" ? "축하해요! 선생님께도 알려 드릴게요." : "알려 줘서 고마워요.");
   } catch (e) { showError(e, "발표 결과 저장"); }
-  renderHome();
+  renderHome(); applyHead();
 }
 // 지원 대학 줄의 1차 발표일 — 비어 있으면 '1차 발표일 입력', 있으면 날짜 + 수정, '없음' = 1단계 없이 면접
-const faText = (u) => u.firstAnnounce === "없음" ? "1단계 없음" : u.firstAnnounce ? `1차 발표 ${mdw(u.firstAnnounce)}` : "";
-const faBtn = (u) => `<button type="button" class="fa-ed${u.firstAnnounce ? "" : " add"}" data-fa="${esc(u.id)}">${u.firstAnnounce ? `${esc(faText(u))} · 수정` : "+ 1차 발표일 입력"}</button>`;
+const RES_TXT = { pass: "합격", fail: "불합격" };
+const faText = (u) => u.firstAnnounce === "없음" ? "1단계 없음"
+  : [u.firstAnnounce ? `1차 발표 ${mdw(u.firstAnnounce)}` : "", RES_TXT[u.announceResult] || ""].filter(Boolean).join(" · ");
+const faBtn = (u) => `<button type="button" class="fa-ed${faText(u) ? "" : " add"}" data-fa="${esc(u.id)}">${faText(u) ? `${esc(faText(u))} · 수정` : "+ 1차 발표일 입력"}</button>`;
 function openAnnounceEdit(id) {
   const u = uniOf(id); if (!u) return;
   document.getElementById("faSheet")?.remove();
@@ -745,6 +747,8 @@ function openAnnounceEdit(id) {
     <h3 id="faT">${esc(u.univ || "")} 1차 발표일</h3>
     <p class="muted">${esc([u.dept, u.admission].filter(Boolean).join(" · "))}<br>모르면 비워 두세요. 넣은 날짜는 선생님 화면과 시트에도 그대로 보여요.</p>
     <input type="date" id="faDate" value="${esc(cur)}" aria-label="1차 발표일">
+    ${u.firstAnnounce === "없음" ? "" : `<div class="fa-res"><b>1차 결과</b><span class="muted">발표가 난 뒤에 골라 주세요. 언제든 고칠 수 있어요.</span>
+      <div class="fa-seg">${[["pass", "합격"], ["fail", "불합격"], ["", "아직·모름"]].map(([k, t]) => `<button type="button" data-res="${k}" class="${(u.announceResult || "") === k ? "on" : ""}">${t}</button>`).join("")}</div></div>`}
     <div class="fa-btns"><button type="submit" class="btn-primary" id="faSave">저장</button>
       <button type="button" id="faNone">1단계 없이 면접</button>
       ${u.firstAnnounce ? '<button type="button" id="faClear">비우기</button>' : ""}
@@ -768,6 +772,19 @@ function openAnnounceEdit(id) {
   $(".fa-sheet", bg).onsubmit = (e) => { e.preventDefault(); const v = $("#faDate", bg).value; if (!v) return toast("날짜를 골라 주세요.", "error"); save(v); };
   $("#faNone", bg).onclick = () => save("없음");
   $("#faClear", bg)?.addEventListener("click", () => save(""));
+  // 1차 결과 — 불합격이면 그 대학은 앞으로 볼 면접·면접 알림·후기 요청에서 빠진다. 합격으로 고치면 담당 선생님께 알림(30분 안)
+  $$("[data-res]", bg).forEach((b) => b.onclick = async () => {
+    const r = b.dataset.res;
+    if ((u.announceResult || "") === r) return;
+    $$("button", bg).forEach((x) => x.disabled = true);
+    try {
+      const at = Date.now();
+      await updateDoc(doc(db, "interviews", id), r ? { announceResult: r, announceAt: at } : { announceResult: deleteField(), announceAt: deleteField() });
+      if (r) Object.assign(u, { announceResult: r, announceAt: at }); else { delete u.announceResult; delete u.announceAt; }
+      toast(r === "pass" ? "합격으로 적었어요. 선생님께도 알려 드릴게요." : r === "fail" ? "불합격으로 적었어요. 이 대학 면접은 일정에서 빠져요." : "결과를 비웠어요.");
+      close(); renderHome(); applyHead();   // 맨 위 '다음 면접' 알약도 다시
+    } catch (e) { $$("button", bg).forEach((x) => x.disabled = false); showError(e, "1차 결과 저장"); }
+  });
   $("#faDate", bg).focus();
 }
 
@@ -834,6 +851,7 @@ function fbCardHtml() {
 
 // 지원 대학 오른쪽 끝 (D-day / 후기 쓰기 / 후기 작성함)
 function uniEnd(u, withDate) {
+  if (announceFailed(u)) return `<em class="uem out">1차 불합격</em>`;
   const past = reviewOpen(u);
   const d = dday(u.date);
   if (reviewOf(u)) return `<button type="button" class="uem ok" data-rv="${esc(u.id)}" title="후기 다시 보기">후기 작성함</button>`;
@@ -903,8 +921,8 @@ function homeWide({ today, up }) {
     </div>
 
     ${unis.length ? `<div class="univ2"><span class="lab">지원 대학</span>${unis.map((u) => {
-      const past = u.date && isoDay(u.date) < today;
-      return `<span class="uchip uni-row ${past ? "past" : ""}">${esc(`${u.univ || ""} ${u.dept || ""}`.trim())}${past && !u.firstAnnounce ? "" : faBtn(u)}${uniEnd(u, true)}</span>`;
+      const past = (u.date && isoDay(u.date) < today) || announceFailed(u);
+      return `<span class="uchip uni-row ${past ? "past" : ""}">${esc(`${u.univ || ""} ${u.dept || ""}`.trim())}${past && !u.firstAnnounce && !u.announceResult ? "" : faBtn(u)}${uniEnd(u, true)}</span>`;
     }).join("")}</div>` : ""}`;
 }
 function bindWide() { /* 컴퓨터 화면 전용 클릭은 없음 */ }
@@ -970,10 +988,10 @@ function homeNarrow({ today, up }) {
 
     ${unis.length ? `<section class="p-card"><h3>지원 대학 <small>${unis.length}곳</small></h3>
       ${unis.map((u) => {
-        const past = u.date && isoDay(u.date) < today;
+        const past = (u.date && isoDay(u.date) < today) || announceFailed(u);
         const dt = toDateSafe(u.date);
         return `<div class="urow uni-row ${past ? "past" : ""}"><div class="ud">${dt ? `${dt.getMonth() + 1}/${dt.getDate()}<small>${WD[dt.getDay()]}</small>` : "-"}</div>
-          <div class="un"><b>${esc(`${u.univ || ""} ${u.dept || ""}`.trim())}</b><small>${esc([u.admission, u.format].filter(Boolean).join(" · "))}</small>${past && !u.firstAnnounce ? "" : faBtn(u)}</div>${uniEnd(u, false)}</div>`;
+          <div class="un"><b>${esc(`${u.univ || ""} ${u.dept || ""}`.trim())}</b><small>${esc([u.admission, u.format].filter(Boolean).join(" · "))}</small>${past && !u.firstAnnounce && !u.announceResult ? "" : faBtn(u)}</div>${uniEnd(u, false)}</div>`;
       }).join("")}</section>` : ""}`;
 }
 function bindNarrow() { /* 휴대폰 화면 전용 클릭은 없음 */ }

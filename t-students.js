@@ -1,6 +1,6 @@
 import {
   db, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, $, $$, esc, toast, showError, fmtDate, fmtDay, ddayBadge,
-  TRACKS, SPECIALS, STAGES, nextInterview, serverTimestamp, icon, dday, initials, writeBatch
+  TRACKS, SPECIALS, STAGES, nextInterview, serverTimestamp, icon, dday, initials, writeBatch, deleteField
 } from "./common.js";
 import { S, register, rerender, myName, myRoles, stageChips, nextBadge, openModal, closeModal, switchTab, readForm, opt, attachInterviews, loadAllSessions, RECENT_DAYS } from "./t-core.js";
 import { requestSync } from "./sync.js";
@@ -259,7 +259,7 @@ export async function openStudent(no) {
     <div class="section-title"><h3>지원 대학 · 면접일</h3><span class="muted">시트 '앱연동_면접일'과 연동</span>
       <div class="spacer"></div><button class="btn-sm" id="addIv">+ 대학 추가</button></div>
     ${(s.universities || []).length ? `<div class="table-wrap"><table><thead><tr><th>면접일</th><th>1차 발표</th><th>대학</th><th>학과</th><th>전형</th><th>면접 유형</th><th></th></tr></thead><tbody>
-      ${s.universities.map((u) => `<tr><td class="nowrap">${u.date ? `${ddayBadge(u.date)} ${fmtDay(u.date)}` : "-"}</td>
+      ${s.universities.map((u) => `<tr${u.announceResult === "fail" ? ' class="iv-out"' : ""}><td class="nowrap">${u.date ? `${ddayBadge(u.date)} ${fmtDay(u.date)}` : "-"}</td>
         <td class="nowrap">${announceCell(u)}</td><td>${esc(u.univ)}</td><td>${esc(u.dept)}</td><td>${esc(u.admission)}</td><td>${esc(u.format)}</td>
         <td class="nowrap"><button class="btn-sm" data-iv="${u.id}">수정</button></td></tr>`).join("")}
       </tbody></table></div>` : '<div class="muted">등록된 면접일이 없습니다.</div>'}
@@ -424,6 +424,8 @@ function openInterviewForm(st, iv) {
       <div class="field"><label>면접일 *</label><input type="date" name="date" value="${esc(iv?.date || "")}" required></div>
       <div class="field"><label>1차 발표일</label><input type="date" name="firstAnnounce" value="${esc(/^\d{4}-\d{2}-\d{2}$/.test(iv?.firstAnnounce || "") ? iv.firstAnnounce : "")}">
         <label class="inline-check" style="margin-top:6px"><input type="checkbox" name="noFirst" ${iv?.firstAnnounce === "없음" ? "checked" : ""}> 1단계 없이 면접 (발표 없음)</label></div>
+      <div class="field"><label>1차 결과</label><select name="announceResult">${opt([["", "아직·모름"], ["pass", "합격"], ["fail", "불합격"]], iv?.announceResult || "")}</select>
+        <div class="muted" style="font-size:.8rem;margin-top:3px">불합격이면 이 대학 면접은 다가오는 면접·면접 알림·후기 요청에서 빠져요</div></div>
     </div>
     <label class="inline-check" id="ivSameWrap" hidden><input type="checkbox" name="sameAll"> <span id="ivSameTxt"></span></label>
     ${iv?.updatedBy ? `<p class="muted">마지막 수정: ${esc(iv.updatedBy)}${iv.updatedAt ? " · " + esc(new Date(iv.updatedAt).toLocaleString("ko-KR")) : ""}</p>` : ""}
@@ -457,9 +459,19 @@ function openInterviewForm(st, iv) {
       firstAnnounce, updatedAt: Date.now(), updatedBy: by
     };
     const others = f.sameAll ? sameOthers() : [];
+    // 1차 결과를 바꿨을 때만 (선생님이 넣은 합격은 담당 선생님 알림을 보내지 않게 announceNotifiedAt 도 함께)
+    if ((iv?.announceResult || "") !== (f.announceResult || "")) {
+      const at = Date.now();
+      Object.assign(data, f.announceResult ? { announceResult: f.announceResult, announceAt: at, announceNotifiedAt: at }
+        : { announceResult: deleteField(), announceAt: deleteField() });
+    }
     $("#ivSave", body).disabled = true;
     try {
-      if (iv) { await updateDoc(doc(db, "interviews", iv.id), data); Object.assign(iv, data); }
+      if (iv) {
+        await updateDoc(doc(db, "interviews", iv.id), data);
+        Object.assign(iv, data);
+        if (!f.announceResult) { delete iv.announceResult; delete iv.announceAt; }
+      }
       else {
         const ref = await addDoc(collection(db, "interviews"), data);
         S.interviews.push({ id: ref.id, ...data });

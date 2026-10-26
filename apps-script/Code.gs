@@ -20,7 +20,7 @@
  *     확정되면 '모의 면접 기록'에 예정 행 자동 추가 (앱 → 시트 한 방향)
  */
 
-const SCRIPT_VERSION = 'v14 (2026-10-26)';   // 동기화 결과창에 표시됩니다
+const SCRIPT_VERSION = 'v15 (2026-10-26)';   // 동기화 결과창에 표시됩니다
 
 // ===================== 설정 (직접 입력) =====================
 const CONFIG = {
@@ -788,6 +788,7 @@ function notifyUnivDay_(out, today, eve) {
   if (eve) { const d = new Date(); d.setDate(d.getDate() + 1); day = Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd'); }
   fsQuery_('interviews', 'date', 'EQUAL', day, 300).forEach(function (x) {
     const iv = x.fields, u = iv.univ || '대학';
+    if (iv.announceResult === 'fail') return;          // (v15) 1차 불합격한 대학 면접은 알리지 않음
     pushTo_('student', iv.studentNo, eve
       ? { title: '내일 ' + u + ' 면접이에요', body: '수험표·신분증·장소를 확인해 두세요', url: 'student.html', tag: 'ive_' + x.id }
       : { title: '오늘 ' + u + ' 면접이에요 💪', body: '준비한 답변 한 번만 훑어보고 가요', url: 'student.html', tag: 'ivd_' + x.id }, out);
@@ -916,6 +917,7 @@ function notifyReviewDue_(out, ago) {
   const day = Utilities.formatDate(d, tz, 'yyyy-MM-dd');
   fsQuery_('interviews', 'date', 'EQUAL', day, 200).forEach(function (x) {
     const iv = x.fields;
+    if (iv.announceResult === 'fail') return;          // (v15) 1차 불합격한 대학은 후기 요청 안 함
     let has = null;
     try { has = fsGet_('reviews/' + x.id); } catch (e) {}
     if (has) return;

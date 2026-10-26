@@ -1674,7 +1674,7 @@ body.nd .pb-btns .btn-sm { min-width: 30px; padding-left: 0; padding-right: 0; }
 #homeBody button.ta-p { cursor: pointer; }
 #homeBody .ta-line { margin-top: 12px; display: flex; align-items: center; gap: 8px; font-size: .84rem; padding: 9px 4px 2px; border: 0; border-top: 1px solid rgba(255,255,255,.3); border-radius: 0; cursor: pointer; width: 100%; background: none; color: #fff; font-family: inherit; text-align: left; min-height: 0; }
 #homeBody .ta-line:hover .go { text-decoration: underline; }
-#homeBody .ta-line .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#homeBody .ta-line .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 2px 0 2px 2px; }   /* 점의 흰 테두리가 잘리지 않게 (2026-10-26) */
 #homeBody .ta-line .ta-dot { width: 7px; height: 7px; margin: 0 5px 1px 0; }
 #homeBody .ta-line .go { font-weight: 700; white-space: nowrap; }
 @media (max-width: 720px) { #homeBody .ta-srow { grid-template-columns: 62px minmax(0, 1fr) auto; gap: 8px; padding-left: 12px; } }
@@ -1742,3 +1742,11 @@ body.nd .fa-sheet { background: #fff; border-radius: 20px; padding: 18px; width:
 body.nd .fa-sheet h3 { margin: 0 0 6px; font-size: 1.1rem; }
 body.nd .fa-sheet .muted { margin: 0 0 12px; font-size: .84rem; line-height: 1.5; }
 body.nd .fa-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+/* 1차 불합격 · 결과 고치기 (2026-10-26) */
+#homeBody .uem.out { font-style: normal; font-size: .72rem; font-weight: 700; background: var(--chip); color: var(--ink-3); border-radius: 99px; padding: 3px 9px; white-space: nowrap; }
+body.nd .fa-res { margin-top: 14px; display: grid; gap: 4px; }
+body.nd .fa-res b { font-size: .9rem; } body.nd .fa-res .muted { font-size: .8rem; }
+body.nd .fa-seg { display: inline-flex; border: 1px solid var(--line); border-radius: 99px; padding: 2px; margin-top: 4px; width: fit-content; }
+body.nd .fa-seg button { font: inherit; font-size: .84rem; border: 0; background: transparent; border-radius: 99px; padding: 5px 12px; min-height: 0; color: var(--ink-2); cursor: pointer; }
+body.nd .fa-seg button.on { background: var(--black, #121316); color: #fff; }
+body.nd tr.iv-out td { opacity: .5; }   /* 학생 상세 지원 대학 표: 1차 불합격 줄 */

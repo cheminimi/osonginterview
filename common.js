@@ -681,11 +681,14 @@ export function ddayBadge(v) {
   const cls = n <= 7 ? "red" : n <= 21 ? "orange" : "blue";
   return `<span class="badge badge-${cls}">${n === 0 ? "D-DAY" : "D-" + n}</span>`;
 }
+/** 1차 불합격(학생·선생님이 결과를 '불합격'으로 남긴 대학) — 앞으로 볼 면접·면접 알림·후기 요청에서 뺀다 (2026-10-26) */
+export const announceFailed = (u) => u?.announceResult === "fail";
 // 학생의 다음 면접일 (지원 대학 면접일·최초 면접일 중 오늘 이후 가장 가까운 날)
 export function nextInterview(st) {
-  // 대학별 면접일이 있으면 그것만, 없을 때만 최초 면접일을 쓴다
-  const list = (st.universities || []).map((u) => u.date).filter(Boolean);
-  const dates = (list.length ? list : [st.firstInterview]).map(toDate).filter(Boolean);
+  // 대학별 면접일이 있으면 그것만, 없을 때만 최초 면접일을 쓴다. 1차 불합격한 대학은 뺀다
+  const dated = (st.universities || []).filter((u) => u.date);
+  const list = dated.filter((u) => !announceFailed(u)).map((u) => u.date);
+  const dates = (dated.length ? list : [st.firstInterview]).map(toDate).filter(Boolean);
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const up = dates.filter((d) => d >= today).sort((a, b) => a - b);
   return up[0] || null;

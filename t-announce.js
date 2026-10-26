@@ -43,7 +43,7 @@ function rowsOf(day) {
       r: x.announceResult || "", at: Number(x.announceAt) || 0, rv: rv?.id || "" });
   };
   (st.iv[`firstAnnounce:${d}`] || []).forEach((x) => add("ann", x));
-  (st.iv[`date:${d}`] || []).forEach((x) => add("iv", x));
+  (st.iv[`date:${d}`] || []).forEach((x) => { if (x.announceResult !== "fail") add("iv", x); });   // 1차 불합격한 대학 면접은 빼기
   return out;
 }
 const isMine = (no) => { const me = myName(); if (!me) return true; const s = S.students.find((x) => String(x.studentNo) === no); return !!s && myRoles(s, me).length > 0; };

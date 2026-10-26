@@ -153,7 +153,7 @@ function renderMissing({ y, u, who, kw }) {
   const today = isoDay();
   const miss = (S.interviews || []).filter((iv) => {
     const no = String(iv.studentNo || "");
-    if (!active.has(no) || !reviewOpen(iv)) return false;
+    if (!active.has(no) || !reviewOpen(iv) || iv.announceResult === "fail") return false;   // 1차 불합격한 대학은 후기 대상 아님
     if (y && String(yearOf(iv)) !== y) return false;
     if (u && iv.univ !== u) return false;
     if (who === "mine" && me && !mine(no)) return false;

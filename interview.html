@@ -226,7 +226,7 @@ let depts = [], myUnivs = [];
 try {
   const ivs = await loadInterviewsFor(profile.studentNo);
   depts = ivs.map((u) => u.dept || "").filter(Boolean);
-  myUnivs = ivs.map((u) => String(u.univ || "").trim()).filter(Boolean);      // 제시문 학교 고르기의 '내 지원 대학'
+  myUnivs = ivs.filter((u) => u.announceResult !== "fail").map((u) => String(u.univ || "").trim()).filter(Boolean);      // 제시문 학교 고르기의 '내 지원 대학' (1차 불합격 대학은 빼기)
 } catch (e) { console.warn(e); }
 // mode: personal · document · pm(제시문 · MMI — 들어와서 kind 로 둘 중 하나) · personality(기본 인성만)
 // 예전 주소 mode=passage / mode=mmi 는 pm 으로 열고 그쪽을 고른 상태로

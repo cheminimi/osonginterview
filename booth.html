@@ -202,6 +202,13 @@
   .bk-band.info { background: var(--accent-faint); color: var(--accent); border: 1px solid var(--accent-line); }
   .bk-card .ico.bk { background: var(--warn-bg); color: var(--warn); }
   .bk-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  /* 제시문 세트: 학교 고르기 · 숙독 문항 목록 · 문항 단계 */
+  .ycard .mine { font-style: normal; font-size: .72rem; background: var(--ok-bg); color: var(--ok); border-radius: 999px; padding: 2px 8px; margin-left: 6px; }
+  .pq-list { margin: 0; padding: 10px 14px 10px 34px; border: 1px solid var(--accent-line); background: var(--accent-faint); border-radius: 10px; display: grid; gap: 6px; font-size: .98rem; line-height: 1.55; }
+  .pq-list li::marker { font-weight: 800; color: var(--accent); }
+  .psteps { display: flex; gap: 6px; flex-wrap: wrap; }
+  .psteps span { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 2px 12px; font-size: .82rem; font-weight: 700; color: var(--ink-3); }
+  .psteps span.on { background: var(--accent-fill); border-color: var(--accent-fill); color: #fff; } .psteps span.ok { background: var(--ok-bg); border-color: var(--ok-bg); color: var(--ok); }
   .rseg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   .rseg button { border: 1px solid var(--line); background: #fff; border-radius: 12px; padding: 10px 12px; display: grid; gap: 2px; text-align: left; font: inherit; cursor: pointer; min-width: 0; }
   .rseg button b { font-size: .95rem; } .rseg button span { font-size: .78rem; color: var(--ink-3); }
@@ -498,7 +505,8 @@
 import {
   auth, db, signIn, signOut, resolveLoginEmail, requireRole, clearDataCache,
   collection, doc, getDoc, getDocs, addDoc, updateDoc, setDoc, serverTimestamp, cachedCollection, loadInterviewsFor,
-  recommendedModes, pmKindOf, esc, $, $$, toast, showError, TYPES, fmtSec, shuffle, isAdminEmail, query, where, isoDay
+  recommendedModes, pmKindOf, esc, $, $$, toast, showError, TYPES, fmtSec, shuffle, isAdminEmail, query, where, isoDay,
+  passageReady, passageItems, passageSchool
 } from "./common.js";
 import { daySlots, slotId, boothConfigOf } from "./booth-booking.js";   // 부스 예약 칸 계산 (스튜디오 예약 화면과 같은 계산)
 import { scheduleConfigOf } from "./schedule.js";
@@ -528,6 +536,9 @@ const CONFIG = {
   bookEarlyMin: 10,     // 내 예약 시작 이만큼(분) 전부터 '내 예약 시간'으로 봄
   bookGraceMin: 10,     // 다른 학생 예약 시작 뒤 이만큼(분) 안이면 안내+확인, 지나면 빈 부스로 보고 안내 없이
   bookSoonMin: 20,      // 다른 학생 예약이 이만큼(분) 안에 시작하면 한 줄 안내 + 시간 추천을 그 전까지로
+  // 제시문 세트 (2026-10-26): 숙독·답변 시간은 질문은행에 교사가 넣은 값 (기본값 없음)
+  setFollowMin: 60,     // 마지막 문항까지 답하고 세트 답변 시간이 이만큼(초) 남으면 꼬리질문 하나
+  readWarnAt: 60,       // 숙독 시간이 이만큼(초) 남으면 "1분 남았어요" 한 번 (숙독이 이보다 짧으면 안 함)
   minLeft: 60,          // (첫·마지막 질문을 끈 시험에서만) 남은 시간이 이보다 적으면 새 질문·꼬리질문 없이 마침
   closingAt: 90,        // 남은 시간이 이보다 적으면 새 질문 대신 마지막 질문 ("마지막으로 하고 싶은 말이 있나요?")
   closingAnswer: 60, closingMax: 90,           // 마지막 질문 답변 기준·최대 (초)
@@ -557,7 +568,7 @@ const IV_TYPES = [
   { k: "personal", label: "내 생기부 면접", desc: "내 예상질문" },
   { k: "document", label: "학생부 공통 질문", desc: "지원 학과에 맞는 학생부 질문" },
   // 제시문 · MMI 는 한 카드로 묶고 그 안에서 하나만 고른다 (둘을 함께 고르지 않음 · 2026-10-06)
-  { k: "passage", group: "pm", label: "제시문 면접", desc: "읽고 준비 5분 · 답변 5분" },
+  { k: "passage", group: "pm", label: "제시문 면접", desc: "학교 고르기 → 숙독 → 문항 차례로" },
   { k: "mmi", group: "pm", label: "MMI 면접", desc: "상황 읽고 준비 2분 · 답변 3분" },
   { k: "personality", label: "기본 인성", desc: "가치관·경험·대인관계 질문" }
 ];
@@ -661,6 +672,12 @@ const KW = {
 const SAY = {
   pick: "오늘 면접관을 골라 주세요. 한 명 또는 두 명을 말하거나 눌러 주세요.",
   bookMine: (b) => `${b.start}부터 ${b.end}까지 예약돼 있어요.`,
+  school: "어느 학교 제시문으로 할까요? 학교 이름을 말하거나 눌러 주세요.",
+  schoolDone: (name) => `${name} 제시문으로 할게요.`,
+  read: (t) => `제시문과 문항을 읽고 ${t} 동안 생각을 정리해 주세요. 다 됐으면 '다 읽었어요'라고 말해 주세요.`,
+  readLeft: "숙독 시간이 1분 남았어요.",
+  setItem: (n, q) => `${n}번 문항입니다. ${q}`,
+  timeUp: "시간이 다 돼서 여기까지 할게요.",
   bookOther: "지금은 다른 학생 예약 시간이에요. 예약한 학생이 오면 자리를 비켜 주세요. 괜찮으면 '네'라고 말하거나 '확인하고 시작'을 눌러 주세요.",
   greet: (n) => `${n ? n + " 학생, " : ""}반가워요. 면접을 시작할까요?`,
   greetAgain: "면접을 시작할까요? '네' 또는 '아니요'라고 말해 주세요.",
@@ -1246,7 +1263,7 @@ async function stopRec(rec, keep, it, which) {
 
 // ---------- 저장 — 답한 문항이 생긴 뒤에만 sessions 에 만든다 ----------
 const ITEM_KEYS = ["source", "qid", "type", "text", "passage", "prepSec", "thinkSec", "answerSec", "followUp", "prepMemo", "answer", "usedSec",
-  "followAnswer", "followUsedSec", "m", "followM", "askedBy", "followAskedBy", "thinkUsedSec", "thinkMore", "prepUsedSec", "gaze", "followGaze", "followSource", "followRule", "followModel", "slot"];
+  "followAnswer", "followUsedSec", "m", "followM", "askedBy", "followAskedBy", "thinkUsedSec", "thinkMore", "prepUsedSec", "gaze", "followGaze", "followSource", "followRule", "followModel", "slot", "pNo", "pOf", "timeUp"];
 function cleanItems() {
   return items.filter((it) => it.answered).map((it) => {
     const o = {};
@@ -1267,7 +1284,7 @@ function cleanItems() {
 function sessionBase() {
   const p = ctx.profile;
   return { studentUid: ctx.user.uid, studentName: p.name || "", studentNo: p.studentNo, track: p.track || "",
-    mode: "booth", modeLabel: "면접 부스", types, interviewers, planSec, ...bookingFields(), ...(sttOff ? { sttOff: true } : {}), ...sessionKeywords(), ...sessionGaze(), ...(quick ? { quickSummary: { praise: quick.praise, improve: quick.improve } } : {}) };
+    mode: "booth", modeLabel: "면접 부스", types, interviewers, planSec, ...bookingFields(), ...(passageRec ? { passageSet: { ...passageRec } } : {}), ...(sttOff ? { sttOff: true } : {}), ...sessionKeywords(), ...sessionGaze(), ...(quick ? { quickSummary: { praise: quick.praise, improve: quick.improve } } : {}) };
 }
 function sessionGaze() {   // 답변 전체 평균 응시율·벗어남 합 (시선 분석을 못 했으면 gazeOff)
   const gs = items.filter((it) => it.answered).flatMap((it) => [it.gaze, it.followGaze]).filter(Boolean);
@@ -1287,7 +1304,7 @@ function saveProgress() {
     const list = cleanItems();
     if (!list.length || finished) return;
     if (!sessionRef) sessionRef = await addDoc(collection(db, "sessions"), { ...sessionBase(), items: list, status: "in_progress", startedAt: serverTimestamp(), updatedAt: serverTimestamp() });
-    else await updateDoc(sessionRef, { items: list, updatedAt: serverTimestamp() });
+    else await updateDoc(sessionRef, { items: list, ...(passageRec ? { passageSet: { ...passageRec } } : {}), updatedAt: serverTimestamp() });
   }).catch((e) => console.warn("save", e));
   return storeQ;
 }
@@ -1850,9 +1867,15 @@ async function startSession() {
     if (!(await greetPhase())) return resetBooth();
     await checkPhase();
     types = await typesPhase();
-    pool = types.flatMap((k) => shuffle(poolBy[k] || []));   // 유형별로 차례대로, 유형 안에서는 무작위
-    const min = await timePhase();
-    await runInterview(min);
+    pset = types.includes("passage") ? await schoolPhase() : null;     // 제시문: 학교·전형 고르기 → 그 안에서 세트 하나
+    if (types.includes("passage") && !pset) types = types.filter((k) => k !== "passage");
+    // 유형별로 차례대로, 유형 안에서는 무작위. 제시문은 세트 하나를 자리표로 넣음
+    pool = types.flatMap((k) => k === "passage" ? [{ type: "passageSet", text: "" }] : shuffle(poolBy[k] || []));
+    frameOn = FRAME && !types.every((k) => PM.includes(k));          // 제시문·MMI 만 고르면 자기소개·마지막 질문 없음
+    // 제시문만 골랐으면 면접 시간을 묻지 않고 교사가 정한 숙독+답변 시간. 섞어 골랐으면 고른 시간에 세트 시간을 더함
+    const onlySet = types.length === 1 && types[0] === "passage";
+    const min = onlySet ? 0 : await timePhase();
+    await runInterview(min * 60 + setSec());
   } catch (e) {
     if (e instanceof Abort) return;
     console.error(e);
@@ -1888,13 +1911,19 @@ async function loadPool() {
       loadInterviewsFor(p.studentNo).catch(() => [])
     ]);
     depts = ivs.map((u) => u.dept || "").filter(Boolean);
+    myUnivs = ivs.map((u) => String(u.univ || "").trim()).filter(Boolean);          // 제시문 학교 고르기에서 '내 지원 대학' 표시
     const relevant = (q) => !q.majors?.length || depts.some((d) => q.majors.some((m) => d.includes(m)));
     // 스튜디오 혼자 연습(interview.html)과 같은 규칙
     const bankQ = bank.filter((q) => q.text).map((q) => ({ ...q, source: "bank" }));
     // 예상질문: 선생님 질문(by 없음 = 선생님) + 선생님이 검토한 학생 질문만. 생기부 근거(basis)·학생 원문(origText)은 부스에서 쓰지 않으므로 여기서 버림
     basisOf.clear();
     const personalQ = pq.filter((q) => q.text && (q.by !== "student" || q.reviewedAt))
-      .map(({ basis, origText, ...q }) => { if (basis && q.id) basisOf.set(q.id, String(basis)); return { ...q, source: "personal", type: "document" }; });
+      .map(({ basis, origText, ...q }) => {
+        if (basis && q.id) basisOf.set(q.id, String(basis));
+        // 질문은행에서 보낸 제시문 세트는 문항을 '1. … 2. …'로 이어 한 질문으로 (스튜디오 혼자 연습과 같음)
+        const its = q.type === "passage" ? passageItems(q) : [];
+        return { ...q, ...(its.length > 1 ? { text: its.map((x, i) => `${i + 1}. ${x.q}`).join(" ") } : {}), source: "personal", type: "document" };
+      });
     // 첫 질문: 지원 학과가 있으면 자기소개·지원동기 중 무작위, 없으면 자기소개 → 예상질문 → 질문은행 → 기본 문구
     const framing = (q) => FRAME && [FRAME_Q.intro, FRAME_Q.motive, FRAME_Q.closing].some((f) => f.find.test(q.text));
     frameQ = { opening: null, closing: null };
@@ -1907,7 +1936,7 @@ async function loadPool() {
     poolBy = {
       personal: personalQ.filter((q) => !framing(q)),            // 첫·마지막 질문과 겹치는 것은 중간에 내지 않음
       document: bankQ.filter((q) => q.type === "document" && relevant(q) && !framing(q)),
-      passage: bankQ.filter((q) => q.type === "passage" && q.passage),
+      passage: bank.filter(passageReady).map((q) => ({ ...q, source: "bank" })),   // 학교·주제·문항·숙독/답변 시간이 모두 있는 제시문만 (예전 양식은 쓰지 않음)
       mmi: bankQ.filter((q) => q.type === "mmi"),
       personality: bankQ.filter((q) => q.type === "personality")
     };
@@ -2213,7 +2242,7 @@ async function typesPhase() {
     return `<div class="ycard ypm ${on ? "on" : ""} ${n("pm") ? "" : "dis"}" data-card="pm" role="button" tabindex="0">
       <b>제시문 · MMI${PM.some((k) => recd.includes(k)) ? `<em>추천</em>` : ""}</b>
       <div class="ysub">${PM.map((k) => { const t = IV_TYPES.find((x) => x.k === k);
-        return `<button type="button" class="${on === k ? "on" : ""}" data-card="${k}" ${n(k) ? "" : "disabled"}><b>${k === "mmi" ? "MMI" : "제시문"}</b><span>${n(k) ? `${t.desc.replace(/^.*?(준비)/, "$1")}<br>${n(k)}개` : "질문 없음"}</span></button>`; }).join("")}</div></div>`;
+        return `<button type="button" class="${on === k ? "on" : ""}" data-card="${k}" ${n(k) ? "" : "disabled"}><b>${k === "mmi" ? "MMI" : "제시문"}</b><span>${n(k) ? `${k === "mmi" ? t.desc.replace(/^.*?(준비)/, "$1") : "숙독 → 문항 차례로"}<br>${n(k)}개` : "질문 없음"}</span></button>`; }).join("")}</div></div>`;
   };
   const draw = () => {
     setPhase("types", true);
@@ -2276,7 +2305,7 @@ async function timePhase() {
       <div class="tcards">${CONFIG.planMin.map((m) => `<button type="button" class="tcard ${m === sel ? "on" : ""}" data-card="${m}"><b>${m}분</b><span>“${m}분”${m === def ? (fit && m === fit ? " · 추천" : " · 기본") : ""}</span></button>`).join("")}</div>
       <div class="info"><p>질문 수는 정해져 있지 않아요. <b>답변을 짧게 하면 더 많은 질문</b>을, 길게 하면 적은 질문을 받아요.</p>
         <p class="m">남은 시간이 1분보다 적으면 새 질문 없이 마쳐요. 답변 중에 시간이 다 되면 그 답변까지는 들어요.</p>
-        ${types.includes("passage") ? `<p><b>제시문 면접을 골랐어요.</b> 준비 5분·답변 5분이라 <b>20분</b>을 권해요.</p>` : ""}
+        ${pset ? `<p id="setTime"><b>제시문 세트 ${minText(setSec())}</b>(숙독 ${minText(pset.prepSec)} · 답변 ${minText(pset.answerSec)})은 고른 시간에 <b>따로 더해져요</b>.</p>` : ""}
         ${fit ? `<p id="bkTime"><b>${esc(booking.nextStart)}부터 다른 학생 예약이 있어요.</b> 그 전에 마치려면 <b>${fit}분</b>을 권해요.</p>` : ""}</div>
       ${lstat(`듣는 중 · 대답이 없으면 ${def}분으로 시작해요`)}`);
   };
@@ -2302,27 +2331,34 @@ async function timePhase() {
 
 // ---------- 질문 루프 ----------
 const leftSec = () => planSec - (now() - tStart);
-async function runInterview(min) {
-  planSec = min * 60; tStart = now();
+async function runInterview(sec) {
+  planSec = sec; tStart = now();
   clearInterval(hdTimer); hdTimer = setInterval(drawHeader, 250); drawHeader();
   let reason = "", closingDone = false, closeReason = "";
   ruleUsed = new Set(); quick = null;
-  if (FRAME && frameQ.opening) pool.unshift(frameQ.opening);     // 첫 질문: 자기소개 또는 지원동기
+  if (frameOn && frameQ.opening) pool.unshift(frameQ.opening);     // 첫 질문: 자기소개 또는 지원동기
+  setPending = !!pset;
   while (!reason) {
     let q;
-    if (FRAME) {
-      const end = !items.length ? "" : leftSec() < CONFIG.closingAt ? "time" : !pool.length ? "questions" : "";
+    if (frameOn) {
+      const end = !items.length ? "" : freeLeft() < CONFIG.closingAt ? "time" : !pool.length ? "questions" : "";
       if (end) {                                   // 시간이 1분 30초 아래거나 질문을 다 썼으면 → 마지막 질문 하고 마침
         if (closingDone || !frameQ.closing) { reason = end; break; }
         q = frameQ.closing; closingDone = true; closeReason = end;
       } else q = pool.shift();
     } else {
-      if (items.length && leftSec() < CONFIG.minLeft) { reason = "time"; break; }
+      if (items.length && freeLeft() < CONFIG.minLeft && !(pool[0]?.type === "passageSet")) { reason = "time"; break; }
       q = pool.shift();
     }
     if (!q) { reason = "questions"; break; }
+    if (q.type === "passageSet") {                           // 제시문 세트 (숙독 → 문항 차례로) — 세트 시간은 따로 잡혀 있음
+      setPending = false;
+      const s = await runPassageSet();
+      if (s !== "done") { reason = s === "end" ? "asked" : "noreply"; break; }
+      continue;
+    }
     const prepNeed = CONFIG.typePrep[q.type] || 0;
-    if (prepNeed && leftSec() < prepNeed + CONFIG.prepMinAnswer) continue;   // 준비할 시간이 모자라면 이 질문은 건너뜀
+    if (prepNeed && freeLeft() < prepNeed + CONFIG.prepMinAnswer) continue;   // 준비할 시간이 모자라면 이 질문은 건너뜀
     const it = makeItem(q); items.push(it); it._t0 = now();
     it.askedBy = panel.nextSpeaker().id;                     // 두 명이면 질문마다 번갈아
     const r = await askPhase(it, "main", items.length === 1);
@@ -2330,7 +2366,7 @@ async function runInterview(min) {
     it.answered = true; saveProgress();
     if (it.slot === "closing") { it._t1 = now(); reason = closeReason || "time"; break; }
     // 꼬리질문도 남은 시간 안에서만 (마지막 질문 몫을 남김), 본 질문을 한 사람이 묻는다
-    const fol = leftSec() >= (FRAME ? CONFIG.followMinLeft : CONFIG.minLeft) ? await pickFollowUp(it) : null;   // AI 를 기다리는 동안 면접관은 듣는 모습 그대로
+    const fol = freeLeft() >= (frameOn ? CONFIG.followMinLeft : CONFIG.minLeft) ? await pickFollowUp(it) : null;   // AI 를 기다리는 동안 면접관은 듣는 모습 그대로
     if (fol) { it.followUp = fol.text; it.followSource = fol.source; if (fol.rule) it.followRule = fol.rule; if (fol.model) it.followModel = fol.model; saveProgress(); }   // 고른 꼬리질문도 바로 기록에
     if (it.followUp) {
       it.followAskedBy = it.askedBy;
@@ -2341,6 +2377,153 @@ async function runInterview(min) {
     it._t1 = now();
   }
   await finish(reason);
+}
+// =====================================================================
+// 6-1. 제시문 세트 (2026-10-26, 설계 handoff/specs/claude_booth-passage-sets-design.md)
+//   학교·전형 고르기 → 숙독(제시문+문항 목록) → 1번부터 한 문항씩(생각 시간 없이) → 세트 답변 시간이 다 되면 끊고 "시간이 다 돼서 여기까지 할게요"
+//   → 마지막 문항까지 했고 1분 이상 남으면 꼬리질문 하나(등록 → AI). 숙독·답변 시간은 질문은행에 교사가 넣은 값 (common.js passageReady 통과한 것만)
+//   기록은 혼자 연습(interview.html)과 같은 모양: items 문항마다 pNo·pOf(1번 줄에만 passage·prepSec·prepUsedSec, answerSec = 세트 답변 시간), 맨 위 passageSet
+// =====================================================================
+let pset = null, passageRec = null, myUnivs = [], frameOn = FRAME, setPending = false;
+const setSec = () => pset ? Number(pset.prepSec) + Number(pset.answerSec) : 0;
+const freeLeft = () => leftSec() - (setPending ? setSec() : 0);      // 세트 앞의 다른 질문은 세트 몫을 남기고
+const minText = (s) => { s = Math.round(Number(s) || 0); const m = Math.floor(s / 60), r = s % 60; return m && r ? `${m}분 ${r}초` : m ? `${m}분` : `${r}초`; };
+const setSteps = (it, isF) => !it.pNo ? "" : `<div class="psteps">${Array.from({ length: it.pOf }, (_, i) =>
+  `<span class="${!isF && i + 1 === it.pNo ? "on" : i + 1 <= it.pNo ? "ok" : ""}">${i + 1}번${i + 1 < it.pNo || (isF && i + 1 <= it.pNo) ? " ✓" : ""}</span>`).join("")}${isF ? `<span class="on">꼬리질문</span>` : ""}</div>`;
+function schoolGroups() {
+  const by = new Map();
+  (poolBy.passage || []).forEach((q) => {
+    const key = `${String(q.univ).trim()}|${String(q.admission || "").trim()}`;
+    if (!by.has(key)) by.set(key, { key, univ: String(q.univ).trim(), adm: String(q.admission || "").trim(), name: passageSchool(q), list: [] });
+    by.get(key).list.push(q);
+  });
+  return [...by.values()].map((g) => ({ ...g, mine: myUnivs.includes(g.univ) })).sort((a, b) => (b.mine - a.mine) || a.name.localeCompare(b.name, "ko"));
+}
+// 학교·전형 카드 → 그 안에서 제시문 하나 (대답이 없으면 내 지원 대학 → 없으면 아무거나 · 하나뿐이면 묻지 않음)
+async function schoolPhase() {
+  const gs = schoolGroups(), by = (panel.members[1] || panel.members[0]).id;
+  const pickOf = (g) => shuffle([...(g ? g.list : poolBy.passage || [])])[0] || null;
+  if (gs.length <= 1) return pickOf(gs[0]);
+  const def = gs.find((g) => g.mine) || null;
+  let sel = "";
+  const card = (g) => `<button type="button" class="ycard ${sel === g.key ? "on" : ""}" data-card="${esc(g.key)}"><b>${esc(g.name)}${g.mine ? `<em class="mine">내 지원 대학</em>` : ""}</b>
+      <span>제시문 ${g.list.length}개${g.list.length === 1 ? ` · 숙독 ${minText(g.list[0].prepSec)} · 답변 ${minText(g.list[0].answerSec)}` : ""}</span></button>`;
+  const draw = () => {
+    setPhase("school", true);
+    side(`<div class="phase-l">제시문 면접 · 학교·전형</div><h1 class="ttl">어느 학교 제시문으로 할까요?</h1>
+      <div class="ycards">${gs.map(card).join("")}<button type="button" class="ycard ${sel === "any" ? "on" : ""}" data-card="any"><b>아무거나</b><span>모든 제시문 중 하나</span></button></div>
+      <div class="info"><p>고른 학교·전형 안에서 제시문 하나를 골라요. 숙독·답변 시간은 그 제시문에 선생님이 정한 시간이에요.</p></div>
+      ${lstat(`듣는 중 · “${gs[0].univ}” 또는 “아무거나” · 대답이 없으면 ${def ? `내 지원 대학(${def.name})` : "아무거나"}로 해요`)}`);
+  };
+  const done = async (g) => {
+    sel = g ? g.key : "any"; draw();
+    await say(SAY.schoolDone(g ? g.name : "아무 학교"), { by, cap: "제시문 고르기" });
+    return pickOf(g);
+  };
+  evq.length = 0; draw(); stt.start();
+  await say(SAY.school, { by, cap: "제시문 고르기" });
+  let until = now() + CONFIG.noReply;
+  while (true) {
+    const e = await nextUntil(until);
+    if (e.type === "tick") return done(def);
+    if (e.type === "card") return done(gs.find((g) => g.key === e.value) || null);
+    let c = e.type === "btn" ? e.name : null;
+    if (e.type === "text" && e.final) {
+      const n = norm(e.text);
+      const hit = gs.filter((g) => n.includes(norm(g.univ)));
+      if (hit.length) return done(hit.find((g) => g.adm && n.includes(norm(g.adm))) || hit[0]);
+      if (cmdOf(e.text, ["random"], false)) return done(null);
+      c = cmdOf(e.text, ["next", "yes", "again", "end"], false);
+      if (c === "yes") c = "next";
+    }
+    if (c === "next") return done(def);
+    if (c === "again") { await say(SAY.school, { by, cap: "제시문 고르기" }); until = now() + CONFIG.noReply; }
+    if (c === "end") { await quitConfirm(by); draw(); until = now() + CONFIG.noReply; }
+  }
+}
+// 숙독: 제시문 + 학교·주제 + 문항 목록. 녹화 안 함. '다 읽었어요'·[다음] 이면 일찍 끝, 시간이 다 되면 저절로 1번 문항
+async function readPhase(by) {
+  const q = pset, total = Number(q.prepSec), qs = passageItems(q).map((x) => x.q);
+  const t0 = now(), until = t0 + total;
+  let warned = total <= CONFIG.readWarnAt + 15;
+  const draw = () => {
+    setPhase("read");
+    side(`<div class="phase-l" id="phaseL">제시문 · 숙독 · ${esc(passageSchool(q))} · ${esc(q.topic)}</div>
+      <details class="psg" open><summary>제시문</summary><div class="psg-t">${esc(q.passage)}</div></details>
+      <ol class="pq-list" id="pqList">${qs.map((x) => `<li>${esc(x)}</li>`).join("")}</ol>
+      <div class="clock-row"><span class="clock" id="clock">${fmtSec(Math.max(0, Math.ceil(until - now())))}</span><span class="clock-s">숙독 시간 남음 · 답변은 문항 모두 합쳐 ${minText(q.answerSec)}</span></div>
+      <div class="track"><i id="trk"></i></div>
+      ${lstat("다 됐으면 “다 읽었어요”라고 말하거나 [다음]을 누르세요. 숙독하는 동안은 녹화하지 않아요")}`, true, "다 읽었어요");
+    panel.all("listening"); panel.caption("숙독 시간");
+  };
+  const prompt = async () => { await say(SAY.read(minText(total)), { by, cap: "숙독 안내" }); panel.caption("숙독 시간"); };
+  draw(); stt.start(); await prompt();
+  const fin = (v) => { passageRec.readUsedSec = Math.min(total, Math.round(now() - t0)); return v; };
+  while (true) {
+    const left = until - now();
+    const c1 = $("#clock"); if (c1) c1.textContent = fmtSec(Math.max(0, Math.ceil(left)));
+    const tr = $("#trk"); if (tr) tr.style.width = Math.min(100, (now() - t0) / total * 100) + "%";
+    if (left <= 0) return fin("done");
+    if (!warned && left <= CONFIG.readWarnAt) { warned = true; await say(SAY.readLeft, { by, cap: "숙독 시간" }); panel.caption("숙독 시간"); continue; }
+    const e = await next(Math.min(250, left * 1000 / FAST));
+    const c = e.type === "btn" ? e.name : e.type === "text" && e.final ? cmdOf(e.text, ["next", "end", "again"], true) : null;
+    if (c === "next") return fin("done");
+    if (c === "again") await prompt();
+    if (c === "end") {
+      const r = await confirmPhase({ by, n: items.filter((x) => x.answered).length, qn: "제시문 숙독" });
+      if (r === "yes") return fin("end");
+      draw();
+    }
+  }
+}
+// 세트 끝 꼬리질문: 등록된 꼬리질문 → 없으면 AI (규칙 꼬리질문은 제시문에 안 씀)
+async function pickSetFollow(it) {
+  const fu = (pset.followUps || []).filter(Boolean);
+  if (fu.length) return { text: fu[Math.floor(Math.random() * fu.length)], source: "teacher" };
+  const words = String(it.answer || "").split(/\s+/).filter(Boolean).length;
+  if (AI_ON && !sttOff && words >= RULE_FOLLOW.minWords) {
+    try { const r = await ai.nextFollowUp(it, it.answer); if (r) return { text: r.text, source: "ai", model: r.model }; } catch (e) { console.warn("ai follow", e); }
+    if (aborted) throw new Abort();
+  }
+  return null;
+}
+// 세트 하나: "done" | "end"(면접 종료) | "noreply"
+async function runPassageSet() {
+  const q = pset, qs = passageItems(q).map((x) => x.q), n = qs.length, by0 = panel.nextSpeaker().id;
+  passageRec = { qid: q.id || "", univ: String(q.univ || "").trim(), admission: String(q.admission || "").trim(), topic: String(q.topic || "").trim(), n,
+    readSec: Number(q.prepSec), readUsedSec: 0, answerSec: Number(q.answerSec), answerUsedSec: 0, done: false, timeUp: false };
+  if ((await readPhase(by0)) === "end") return "end";
+  let used = 0, last = null;
+  const timeUp = async (it) => { it.timeUp = true; passageRec.timeUp = true; saveProgress(); await say(SAY.timeUp, { by: it.askedBy, cap: "시간 끝" }); it._t1 = now(); return "done"; };
+  for (let k = 0; k < n; k++) {
+    const it = makeItem({ ...q, text: qs[k] });
+    Object.assign(it, { pNo: k + 1, pOf: n, thinkSec: 0, prepSec: k ? 0 : passageRec.readSec, prepUsedSec: k ? 0 : passageRec.readUsedSec,
+      passage: k ? "" : q.passage, answerSec: passageRec.answerSec, _passage: q.passage, _maxSec: passageRec.answerSec - used, _prepped: true });
+    items.push(it); it._t0 = now();
+    it.askedBy = k ? panel.nextSpeaker().id : by0;                      // 두 명이면 문항마다 번갈아
+    const r = await askPhase(it, "main", false);
+    if (r !== "done") { items.pop(); return r; }
+    it.answered = true; last = it;
+    used += it.usedSec; passageRec.answerUsedSec = Math.min(passageRec.answerSec, Math.round(used));
+    passageRec.done = k === n - 1;
+    if (it._timeUp) return timeUp(it);                                  // 답변 시간 끝 → 남은 문항은 건너뜀
+    saveProgress(); it._t1 = now();
+  }
+  const left = passageRec.answerSec - used;
+  if (last && left >= CONFIG.setFollowMin) {
+    const fol = await pickSetFollow(last);
+    if (fol) {
+      Object.assign(last, { followUp: fol.text, followSource: fol.source, followAskedBy: last.askedBy, _followMax: left });
+      if (fol.model) last.followModel = fol.model;
+      saveProgress();
+      const f = await askPhase(last, "follow");
+      if (f !== "done") { clearFollow(last); saveProgress(); return f; }
+      used += last.followUsedSec; passageRec.answerUsedSec = Math.min(passageRec.answerSec, Math.round(used));
+      if (last._followTimeUp) return timeUp(last);
+      saveProgress(); last._t1 = now();
+    }
+  }
+  return "done";
 }
 function clearFollow(it) { it.followUp = ""; it.followAnswer = ""; it.followUsedSec = 0; it.followM = null; delete it.followAskedBy; delete it.followSource; delete it.followRule; delete it.followModel; }
 
@@ -2354,11 +2537,11 @@ async function askPhase(it, which, first = false) {
   }
   while (true) {
     setPhase("ask"); renderAsk(it, which);
-    await say(text, { by, cap: "질문하는 중" });
+    await say(!isF && it.pNo ? SAY.setItem(it.pNo, text) : text, { by, cap: "질문하는 중" });
     dropText();
     if (!rec) rec = startRec();                              // 읽기가 끝난 순간부터 녹화 (생각 중 첫 마디도 담기게)
     stt.start();
-    let r = isF || it.prepSec ? { go: "listen" } : await thinkPhase(it, by, first);
+    let r = isF || it.prepSec || it.pNo ? { go: "listen" } : await thinkPhase(it, by, first);   // 꼬리질문·준비가 있는 질문·제시문 문항은 생각 시간 없이
     first = false;
     if (r?.go === "listen") r = await listenPhase(it, which, by, r.carry || [], !!r.started);
     if (r === "again") continue;
@@ -2374,7 +2557,7 @@ async function askPhase(it, which, first = false) {
     return "done";
   }
 }
-const passageBox = (it, open = true) => it.passage ? `<details class="psg" ${open ? "open" : ""}><summary>제시문 ${open ? "" : "다시 보기"}</summary><div class="psg-t">${esc(it.passage)}</div></details>` : "";
+const passageBox = (it, open = true) => { const p = it.passage || it._passage; return p ? `<details class="psg" ${open ? "open" : ""}><summary>제시문 ${open ? "" : "다시 보기"}</summary><div class="psg-t">${esc(p)}</div></details>` : ""; };
 // 제시문 읽기(5분)·MMI 상황 읽기(2분) — 녹화 전. "다음"/"다 읽었어요"로 일찍 끝냄
 async function preparePhase(it, by) {
   const isP = it.type === "passage", total = it.prepSec, min = Math.round(total / 60);
@@ -2410,7 +2593,7 @@ async function preparePhase(it, by) {
 }
 function renderAsk(it, which) {
   const isF = which === "follow";
-  side(`<div class="phase-l" id="phaseL">${isF ? "꼬리질문" : "질문"} ${qNo(it)}${!isF && it.slot === "closing" ? " · 마지막 질문" : !isF && it.source === "personal" ? " · 내 예상질문" : ""}</div>
+  side(`${setSteps(it, isF)}<div class="phase-l" id="phaseL">${it.pNo ? (isF ? "제시문 꼬리질문" : `제시문 ${it.pNo}번 문항 · ${it.pNo}/${it.pOf}`) : `${isF ? "꼬리질문" : "질문"} ${qNo(it)}`}${!isF && it.slot === "closing" ? " · 마지막 질문" : !isF && it.source === "personal" ? " · 내 예상질문" : ""}</div>
     ${isF ? `<div class="qprev">앞 질문 — ${esc(it.text)}</div>` : ""}
     <div class="qtext" id="qtext">${esc(isF ? it.followUp : it.text)}</div>
     ${!isF ? passageBox(it, false) : ""}
@@ -2464,15 +2647,16 @@ async function thinkPhase(it, by, first) {
 
 async function listenPhase(it, which, by, carry, started) {
   const isF = which === "follow", text = isF ? it.followUp : it.text, limit = isF ? 60 : it.answerSec;
-  const maxSec = it.slot === "closing" && !isF ? CONFIG.closingMax : !isF && CONFIG.typeAnswerMax[it.type] || CONFIG.answerMax;   // 제시문 5분, 마지막 질문 1분 30초, 나머지 3분
+  // 제시문 문항: 세트에 남은 답변 시간까지 (다 되면 끊음) · 마지막 질문 1분 30초 · 나머지 3분
+  const maxSec = it.pNo ? Math.max(1, isF ? it._followMax : it._maxSec) : it.slot === "closing" && !isF ? CONFIG.closingMax : !isF && CONFIG.typeAnswerMax[it.type] || CONFIG.answerMax;
   setPhase("listen", true);
-  side(`<div class="listen" style="display:contents">
-    <div class="phase-l" id="phaseL">${isF ? "꼬리질문" : "질문"} ${qNo(it)} · 답변</div>
+  side(`<div class="listen" style="display:contents">${setSteps(it, isF)}
+    <div class="phase-l" id="phaseL">${it.pNo ? (isF ? "제시문 꼬리질문 · 답변" : `제시문 ${it.pNo}번 문항 · 답변`) : `${isF ? "꼬리질문" : "질문"} ${qNo(it)} · 답변`}</div>
     <div class="qtext sm" id="qtext">${esc(text)}</div>
     ${!isF ? passageBox(it, false) : ""}
     <div class="clock-row"><span class="clock" id="clock">0:00</span><span class="clock-s">답변한 시간</span></div>
     <div id="ansTrack"><div class="track"><i id="trk"></i></div>
-      <div class="track-l"><span>0:00</span><span>보통 ${fmtSec(limit)} 안팎</span><span>${fmtSec(maxSec)} 최대</span></div></div>
+      <div class="track-l">${it.pNo ? `<span>0:00</span><span>남은 답변 시간 ${fmtSec(maxSec)} (문항 모두 합쳐 ${fmtSec(it.answerSec)})</span><span>${fmtSec(maxSec)}에서 끝</span>` : `<span>0:00</span><span>보통 ${fmtSec(limit)} 안팎</span><span>${fmtSec(maxSec)} 최대</span>`}</div></div>
     ${sttOk ? `<div class="live" id="live"><div class="live-h" id="sttS"><i></i>받아쓰는 중</div><p id="liveT"></p></div>
       <p class="hint" id="lhint">답변을 마치면 <b>‘이상입니다’</b>라고 말하거나 <b>[다음]</b>을 누르세요. ${CONFIG.silenceAdvanceMs / 1000}초 동안 조용해도 다음으로 넘어가요.</p>`
       : `<p class="hint" id="lhint">받아쓰기 없이 진행하고 있어요. 답변을 마치면 <b>[다음]</b>을 누르세요. ${CONFIG.silenceAdvanceMs / 1000}초 동안 조용해도 다음으로 넘어가요.</p>`}</div>`, true, sttOk ? "이상입니다" : "");
@@ -2493,7 +2677,7 @@ async function listenPhase(it, which, by, carry, started) {
       el = now() - t0;
       const c1 = $("#clock"); if (c1) c1.textContent = fmtSec(el);
       const tr = $("#trk"); if (tr) tr.style.width = Math.min(100, el / maxSec * 100) + "%";
-      if (el >= maxSec) break;
+      if (el >= maxSec) { if (it.pNo) it[isF ? "_followTimeUp" : "_timeUp"] = true; break; }   // 제시문 세트 답변 시간 끝 → 끊음
       if (!first) {
         if (now() - quietFrom >= CONFIG.preSilence) {
           if (++misses >= CONFIG.noReplyMax) { out = "noreply"; break; }
@@ -2527,7 +2711,7 @@ async function listenPhase(it, which, by, carry, started) {
   } finally { frameSink = null; }
   const g = gaze.stop();
   if (out !== "done") return out;
-  const used = Math.round(el);
+  const used = it.pNo ? Math.min(Math.round(el), Math.round(maxSec)) : Math.round(el);   // 제시문 문항은 세트에 남은 답변 시간을 넘지 않게
   // 마지막 말이 받아쓰기에 들어올 시간을 조금 준다
   if (sttOk) { await sleepReal(700); if (aborted) throw new Abort(); }
   const isCmd = (t) => cmdOf(t, ["next", "end", "again"], true);
@@ -2651,7 +2835,7 @@ function kwBlock(q, answer) {
     <p class="kw-hint">답변에서 많이 쓴 낱말이에요.${qk.length ? ` 질문의 핵심어가 들어 있는지 확인해 보세요.
       <span class="kw-q">질문 핵심어: ${qk.map((k) => `<span class="${k.hit ? "hit" : "miss"}">${esc(k.w)}${k.hit ? " ✓" : ""}</span>`).join(" · ")}</span>` : ""}</p></div>`;
 }
-const typeLabelOf = (it) => it.slot === "opening" ? "첫 질문" : it.slot === "closing" ? "마지막 질문" : it.source === "personal" ? "내 생기부" : it.type === "passage" ? "제시문" : it.type === "mmi" ? "MMI" : it.type === "personality" ? "인성" : "학생부 공통";
+const typeLabelOf = (it) => it.slot === "opening" ? "첫 질문" : it.slot === "closing" ? "마지막 질문" : it.pNo ? `제시문 ${it.pNo}번` : it.source === "personal" ? "내 생기부" : it.type === "passage" ? "제시문" : it.type === "mmi" ? "MMI" : it.type === "personality" ? "인성" : "학생부 공통";
 function timeChart(done) {
   const rows = done.map((it) => {
     const th = (it.thinkUsedSec || 0) + (it.prepUsedSec || 0), a = it.usedSec || 0, f = it.followUsedSec || 0;   // 준비 시간은 '생각·준비'에 함께
@@ -2669,7 +2853,8 @@ function timeChart(done) {
   const axis = [0, 1, 2, 3].map((k) => `<span>${fmtSec(total * k / 3)}</span>`).join("");
   const leftAtEnd = Math.max(0, planSec - usedTotalSec);
   const why = endReason === "time" ? `남은 시간 ${fmtSec(leftAtEnd)} — 다음 질문을 받기엔 부족해서 여기서 마쳤어요.`
-    : endReason === "questions" ? "준비된 질문을 모두 해서 마쳤어요." : "‘면접 종료’로 여기서 마쳤어요.";
+    : endReason === "questions" ? (passageRec?.timeUp && !done.some((x) => !x.pNo) ? "" : "준비된 질문을 모두 해서 마쳤어요.") : "‘면접 종료’로 여기서 마쳤어요.";
+  const setNote = passageRec ? ` 제시문(${passageSchool(passageRec)} · ${passageRec.topic}) 숙독 ${fmtSec(passageRec.readUsedSec)} / ${fmtSec(passageRec.readSec)} · 답변 ${fmtSec(passageRec.answerUsedSec)} / ${fmtSec(passageRec.answerSec)}${passageRec.timeUp ? ` — 답변 시간이 다 돼서 ${done.filter((x) => x.pNo).length}번 문항까지 했어요${done.filter((x) => x.pNo).length < passageRec.n ? " (남은 문항은 건너뜀)" : ""}.` : "."}` : "";
   const more = rows.map((r, i) => r.it.thinkMore ? `Q${i + 1}` : "").filter(Boolean);
   return `<section class="tchart"><div class="tchart-h"><h2>질문별로 쓴 시간</h2>
       <div class="legend"><span><i class="s-think"></i>생각·준비</span><span><i class="s-ans"></i>답변</span><span><i class="s-fol"></i>꼬리질문 답변</span><span><i class="s-gap"></i>질문 읽기 등</span><span><i class="s-rest"></i>남은 시간</span></div></div>
@@ -2679,7 +2864,7 @@ function timeChart(done) {
         <td>${fmtSec(r.th)}</td><td>${fmtSec(r.a)}</td><td>${r.it.followUp ? fmtSec(r.f) : "–"}</td><td class="n">${fmtSec(r.sum)}</td>
         <td><div class="mini"><i style="width:${r.sum / maxSum * 100}%"></i></div></td></tr>`).join("")}
     </tbody></table>
-    <p class="tnote">${why}${more.length ? ` ${more.join("·")} 의 생각 시간에는 “잠시만요” ${CONFIG.thinkMore}초가 들어 있어요.` : ""}</p></section>`;
+    <p class="tnote">${why}${setNote}${more.length ? ` ${more.join("·")} 의 생각 시간에는 “잠시만요” ${CONFIG.thinkMore}초가 들어 있어요.` : ""}</p></section>`;
 }
 // 즉석 요약 (규칙) — AI 가 켜져 있고 답을 주면 그것을 먼저
 function makeQuickSummary() {
@@ -2695,7 +2880,7 @@ function makeQuickSummary() {
   const keyHit = sttOff ? [] : reg.map((it) => { const q = questionKeys(it.text, it.answer); return q.length ? q.some((k) => k.hit) : null; }).filter((x) => x !== null);
   let praise = QUICK.praise.done;
   if (cpms.length && cpms.every(inRange)) praise = QUICK.praise.speed;
-  else if (reg.length && !over.length) praise = QUICK.praise.inTime;
+  else if (reg.length && !over.length && !passageRec?.timeUp) praise = QUICK.praise.inTime;   // 제시문 답변 시간이 다 돼 끊겼으면 '시간 안에'라고 하지 않음
   else if (pausesAll <= 1) praise = QUICK.praise.noPause;
   else if (keyHit.length && keyHit.filter(Boolean).length * 2 >= keyHit.length) praise = QUICK.praise.keys;
   const fill = {}; ms.forEach((m) => Object.entries(m.fillers || {}).forEach(([w, n]) => { fill[w] = (fill[w] || 0) + n; }));

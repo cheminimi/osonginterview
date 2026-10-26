@@ -26,7 +26,7 @@ const gzCls = (p) => (p >= GAZE.ok ? "good" : p >= GAZE.mid ? "note" : "bad");
 const gzSumCls = (p) => (p >= GAZE.ok ? "ok" : p >= GAZE.mid ? "mid" : "bad");
 const fillerList = (f) => Object.entries(f && typeof f === "object" ? f : {}).filter(([, n]) => num(n) != null);
 const topFillers = (f, min = 3) => fillerList(f).filter(([, n]) => n >= min).sort((a, b) => b[1] - a[1]).slice(0, 3);
-const typeLabelOf = (it) => it.slot === "opening" ? "첫 질문" : it.slot === "closing" ? "마지막 질문" : it.source === "personal" ? "내 생기부"
+const typeLabelOf = (it) => it.slot === "opening" ? "첫 질문" : it.slot === "closing" ? "마지막 질문" : it.pNo ? `제시문 ${it.pNo}번` : it.source === "personal" ? "내 생기부"
   : it.type === "passage" ? "제시문" : it.type === "mmi" ? "MMI" : it.type === "personality" ? "인성" : "학생부 공통";
 
 // ---------------- AI 피드백 (aiReport) ----------------
@@ -193,6 +193,7 @@ function followTag(it, teacher) {
 const ansBox = (t) => `<div class="bv-ans">${t ? esc(t) : `<span class="muted">받아쓴 답변이 없어요</span>`}</div>`;
 function itemCard(s, it, i, { teacher, itemExtra }) {
   const head = [`질문 ${i + 1}`, typeLabelOf(it), ivLabel(it.askedBy)].filter(Boolean).join(" · ");
+  const set = !!it.pNo;      // 제시문 세트 문항: 제시문은 세트 머리에 한 번만, 답변 시간은 세트 합이라 문항별 기준 없음
   const fol = it.followUp ? `<div class="bv-fol">
       <div class="bv-qn">꼬리질문 ${followTag(it, teacher)}</div>
       <div class="bv-qt">${esc(it.followUp)}</div>
@@ -200,15 +201,53 @@ function itemCard(s, it, i, { teacher, itemExtra }) {
       ${ansBox(it.followAnswer)}
       ${s.sttOff ? "" : kwBlock(it.followKeywords, it.followQuestionKeys)}${gzTip(it.followGaze)}</div>` : "";
   return `<article class="bv-card bv-q">
-    <div class="bv-qn">${esc(head)}</div>
+    <div class="bv-qn">${esc(head)}${it.timeUp ? `<span class="bv-cut">시간 끝에서 끊김</span>` : ""}</div>
     <div class="bv-qt">${esc(it.text || "")}</div>
-    ${it.passage ? `<details class="bv-psg"><summary>제시문 보기</summary><div class="bv-ans">${esc(it.passage)}</div></details>` : ""}
-    ${chips(it.m, it.usedSec, it.answerSec, it.gaze)}
+    ${it.passage && !set ? `<details class="bv-psg"><summary>제시문 보기</summary><div class="bv-ans">${esc(it.passage)}</div></details>` : ""}
+    ${chips(it.m, it.usedSec, set ? null : it.answerSec, it.gaze)}
     ${ansBox(it.answer)}
     ${s.sttOff ? "" : kwBlock(it.keywords, it.questionKeys)}${gzTip(it.gaze)}
     ${fol}
     ${itemExtra ? itemExtra(i) || "" : ""}
   </article>`;
+}
+
+// ---------------- 제시문 세트 묶기 (2026-10-26, 부스 v1.8) ----------------
+// 같은 제시문(qid)의 pNo 1·2·3… 문항 앞에 머리 한 장(학교·전형·주제 · 숙독/답변 시간 · n문항 중 m · 제시문 보기),
+// 뒤에 묻지 못한 문항 줄(passageSet.n 보다 적게 물었을 때). 묻지 못한 문항의 글은 기록에 없어서 번호만
+function passageHead(s, group) {
+  const first = group[0], ps = s.passageSet && (!s.passageSet.qid || s.passageSet.qid === first.qid) ? s.passageSet : null;
+  const n = num(ps?.n) || num(first.pOf) || group.length;
+  const school = [ps?.univ, ps?.admission].filter(Boolean).join(" · ");
+  const answered = group.filter((it) => it.answer || num(it.usedSec)).length;
+  const timeUp = ps ? !!ps.timeUp : group.some((it) => it.timeUp);
+  const t = [];
+  if (ps && num(ps.readSec)) t.push(`숙독 ${sec(ps.readUsedSec)} / ${sec(ps.readSec)}`);
+  if (ps && num(ps.answerSec)) t.push(`답변 ${sec(ps.answerUsedSec)} / ${sec(ps.answerSec)}`);
+  t.push(`${n}문항 중 ${answered}`);
+  if (timeUp) t.push("시간 끝");
+  const psg = group.find((it) => it.passage)?.passage;
+  return `<section class="bv-card bv-pset"><div class="bv-pset-h"><span class="bv-ptag">제시문</span>${school ? `<b>${esc(school)}</b>` : ""}${ps?.topic ? `<span>${esc(ps.topic)}</span>` : ""}</div>
+    <p class="bv-pset-t">${esc(t.join(" · "))}</p>
+    ${psg ? `<details class="bv-psg"><summary>제시문 보기</summary><div class="bv-ans">${esc(psg)}</div></details>` : ""}</section>`;
+}
+const missedRows = (from, to) => Array.from({ length: Math.max(0, to - from) }, (_, k) =>
+  `<article class="bv-card bv-q bv-miss"><div class="bv-qn">제시문 ${from + k + 1}번</div><div class="muted">답변 시간이 다 돼서 묻지 못했어요</div></article>`).join("");
+/** 문항 카드 목록 — 제시문 세트는 머리 + 1·2·3번 + 묻지 못한 문항으로 묶음. 그 밖의 질문은 지금처럼 */
+function itemCards(s, items, opts) {
+  let html = "";
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (!it.pNo) { html += itemCard(s, it, i, opts); continue; }
+    let j = i;
+    while (j + 1 < items.length && items[j + 1].pNo && items[j + 1].qid === it.qid && items[j + 1].pNo > items[j].pNo) j++;
+    const group = items.slice(i, j + 1);
+    html += passageHead(s, group) + group.map((g, k) => itemCard(s, g, i + k, opts)).join("");
+    const ps = s.passageSet && (!s.passageSet.qid || s.passageSet.qid === it.qid) ? s.passageSet : null;
+    html += missedRows(group[group.length - 1].pNo, num(ps?.n) || num(it.pOf) || 0);
+    i = j;
+  }
+  return html;
 }
 
 /**
@@ -224,7 +263,7 @@ export function boothViewHtml(s, { teacher = false, top = "", itemExtra = null }
     ${aiReportHtml(s)}
     ${sumHtml(s, items)}
     ${timeChart(s, items)}
-    ${items.length ? items.map((it, i) => itemCard(s, it, i, { teacher, itemExtra })).join("") : `<div class="bv-card muted">답한 질문이 없어요.</div>`}
+    ${items.length ? itemCards(s, items, { teacher, itemExtra }) : `<div class="bv-card muted">답한 질문이 없어요.</div>`}
   </div>`;
 }
 /** 열려 있는 화면의 AI 피드백 자리만 바꿈 — 지금 그 기록이 열려 있을 때만 (다른 기록으로 바뀌었으면 그대로 둠) */

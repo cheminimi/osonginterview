@@ -1449,6 +1449,12 @@ body.nd .pq-note { font-size: .78rem; color: var(--ink-3); text-align: right; ma
 .bv-qt { font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
 .bv-psg summary { font-size: .82rem; color: var(--ink-3); cursor: pointer; }
 .bv-psg .bv-ans { margin-top: 6px; }
+.bv-pset { display: grid; gap: 6px; border-left: 4px solid #a98fc4; }     /* 제시문 세트 머리 (2026-10-26) */
+.bv-pset-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: .95rem; }
+.bv-pset-h .bv-ptag { font-size: .72rem; font-weight: 700; background: #efe9f4; color: #6a4e86; border-radius: 999px; padding: 1px 8px; }
+.bv-pset-t { margin: 0; font-size: .84rem; color: var(--ink-2); }
+.bv-cut { font-size: .7rem; font-weight: 700; background: var(--warn-bg); color: var(--warn); border-radius: 999px; padding: 1px 7px; margin-left: 6px; }
+.bv-miss { opacity: .7; }
 .bv-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .bv-chips span { font-size: .78rem; border-radius: 999px; padding: 3px 10px; background: var(--chip); color: var(--ink-2); max-width: 100%; overflow-wrap: anywhere; }
 .bv-chips .good { background: var(--ok-bg); color: var(--ok); }

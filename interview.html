@@ -248,13 +248,7 @@ const pmPools = { passage: [], mmi: [] };      // 제시문 · MMI: 둘을 따�
 try {
   if (mode === "personal") {
     const snap = await getDocs(collection(db, "students", profile.studentNo, "personalQuestions"));
-    pool = snap.docs.map((d) => {
-      const q = { id: d.id, source: "personal", type: "document", ...d.data() };
-      // 선생님이 보낸 제시문 세트(문항 여러 개)는 한 번에 답하는 한 문항으로 (문항을 번호 붙여 이어 씀)
-      const its = q.type === "passage" ? passageItems(q) : [];
-      if (its.length > 1) q.text = its.map((x, i) => `${i + 1}. ${x.q}`).join("\n");
-      return q;
-    });
+    pool = snap.docs.map((d) => ({ id: d.id, source: "personal", type: "document", ...d.data() }));
   } else {
     const all = await cachedCollection("questions");   // 질문은행: 바뀌었을 때만 서버에서 받음
     const relevant = (q) => !q.majors?.length || depts.some((d) => q.majors.some((m) => d.includes(m)));

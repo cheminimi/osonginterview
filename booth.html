@@ -1918,12 +1918,7 @@ async function loadPool() {
     // 예상질문: 선생님 질문(by 없음 = 선생님) + 선생님이 검토한 학생 질문만. 생기부 근거(basis)·학생 원문(origText)은 부스에서 쓰지 않으므로 여기서 버림
     basisOf.clear();
     const personalQ = pq.filter((q) => q.text && (q.by !== "student" || q.reviewedAt))
-      .map(({ basis, origText, ...q }) => {
-        if (basis && q.id) basisOf.set(q.id, String(basis));
-        // 질문은행에서 보낸 제시문 세트는 문항을 '1. … 2. …'로 이어 한 질문으로 (스튜디오 혼자 연습과 같음)
-        const its = q.type === "passage" ? passageItems(q) : [];
-        return { ...q, ...(its.length > 1 ? { text: its.map((x, i) => `${i + 1}. ${x.q}`).join(" ") } : {}), source: "personal", type: "document" };
-      });
+      .map(({ basis, origText, ...q }) => { if (basis && q.id) basisOf.set(q.id, String(basis)); return { ...q, source: "personal", type: "document" }; });   // 내 생기부 면접에는 제시문이 없음 — 한 질문 그대로 (2026-10-26 사용자, 혼자 연습과 같음)
     // 첫 질문: 지원 학과가 있으면 자기소개·지원동기 중 무작위, 없으면 자기소개 → 예상질문 → 질문은행 → 기본 문구
     const framing = (q) => FRAME && [FRAME_Q.intro, FRAME_Q.motive, FRAME_Q.closing].some((f) => f.find.test(q.text));
     frameQ = { opening: null, closing: null };

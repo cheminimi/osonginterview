@@ -506,7 +506,7 @@ import {
   auth, db, signIn, signOut, resolveLoginEmail, requireRole, clearDataCache,
   collection, doc, getDoc, getDocs, addDoc, updateDoc, setDoc, serverTimestamp, cachedCollection, loadInterviewsFor,
   recommendedModes, pmKindOf, esc, $, $$, toast, showError, TYPES, fmtSec, shuffle, isAdminEmail, query, where, isoDay,
-  passageReady, passageItems, passageSchool
+  passageReady, passageItems, passageSchool, announceFailed
 } from "./common.js";
 import { daySlots, slotId, boothConfigOf } from "./booth-booking.js";   // 부스 예약 칸 계산 (스튜디오 예약 화면과 같은 계산)
 import { scheduleConfigOf } from "./schedule.js";
@@ -1911,7 +1911,7 @@ async function loadPool() {
       loadInterviewsFor(p.studentNo).catch(() => [])
     ]);
     depts = ivs.map((u) => u.dept || "").filter(Boolean);
-    myUnivs = ivs.map((u) => String(u.univ || "").trim()).filter(Boolean);          // 제시문 학교 고르기에서 '내 지원 대학' 표시
+    myUnivs = ivs.filter((u) => !announceFailed(u)).map((u) => String(u.univ || "").trim()).filter(Boolean);   // 제시문 학교 고르기의 '내 지원 대학' (1차 불합격 대학은 빼기 — 혼자 연습과 같음)
     const relevant = (q) => !q.majors?.length || depts.some((d) => q.majors.some((m) => d.includes(m)));
     // 스튜디오 혼자 연습(interview.html)과 같은 규칙
     const bankQ = bank.filter((q) => q.text).map((q) => ({ ...q, source: "bank" }));

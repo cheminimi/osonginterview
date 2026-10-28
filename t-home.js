@@ -7,7 +7,7 @@
 //
 // 한 번에 한 쪽만 DOM에 들어가므로 id 가 겹치지 않는다.
 // 너비가 바뀌면 matchMedia 로 한 번만 다시 그린다(리스너는 모듈당 1개, 구독은 건드리지 않음).
-import { $, $$, esc, icon, isoDay, fmtDay, fmtDate, dday, nextInterview, toDate, initials } from "./common.js";
+import { $, $$, esc, icon, isoDay, fmtDay, fmtDate, dday, nextInterview, toDate, initials, announceFailed } from "./common.js";
 import { S, register, rerender, myName, myRoles, switchTab, setDot, opt, applyHead, pqWaitStudents } from "./t-core.js";
 import { openStudent } from "./t-students.js";
 import { openMeetingForm, recordWrittenFor } from "./t-meetings.js";
@@ -340,7 +340,7 @@ function renderRows(scope) {
   $("#hBody", root).innerHTML = `<div class="tr th"><span>학생</span><span>지원 대학</span><span>최근 활동</span><span>1 · 2 · 3차</span><span></span></div>` + list.slice(0, 12).map((s) => {
     const iv = nextInterview(s);
     const n = iv ? dday(iv) : null;
-    const u = iv ? (s.universities || []).find((x) => x.date && isoDay(x.date) === isoDay(iv)) : null;
+    const u = iv ? (s.universities || []).find((x) => x.date && !announceFailed(x) && isoDay(x.date) === isoDay(iv)) : null;
     const lastSess = S.sessions.filter((x) => x.studentNo === s.studentNo && x.status === "submitted")
       .sort((a, b) => (b.submittedAt?.seconds || 0) - (a.submittedAt?.seconds || 0))[0];
     const lastMeet = S.meetings.filter((m) => m.studentNo === s.studentNo && !m.planned)
@@ -441,7 +441,7 @@ function soonHtml(list) {
   const me = myName();
   return list.map(({ s, d }) => {
     const n = dday(d);
-    const u = (s.universities || []).find((x) => x.date && fmtDay(x.date) === fmtDay(d));
+    const u = (s.universities || []).find((x) => x.date && !announceFailed(x) && fmtDay(x.date) === fmtDay(d));
     const roles = myRoles(s, me);
     return `<button type="button" class="srow3 ${n <= 7 ? "hot" : ""}" data-no="${esc(s.studentNo)}">
       <span class="dd"><b>${n === 0 ? "D-DAY" : "D-" + n}</b><span>${dayOnly(d)}</span></span>

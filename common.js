@@ -450,6 +450,8 @@ export function openAccountSheet(ctx, opts = {}) {
 export const CACHED = ["students", "staff", "interviews", "meetings", "questions", "availability"];
 // 자주 바뀌는 목록은 바뀐 문서만 받아 합친다 (이 필드에 수정 시각(ms)을 항상 기록)
 const INCREMENTAL = { meetings: "updatedAtMs", interviews: "updatedAt" };
+// 표시가 같아도 열 때마다 바뀐 문서만 확인하는 목록 — 학생이 면접일 문서(1차 발표일·결과)를 바꿔도 규칙상 표시를 못 남김 (2026-10-28)
+const ALWAYS_CHECK = ["interviews"];
 const CLOCK_SLACK = 15 * 60 * 1000;   // 기기 시계 차이 대비 여유
 const PUBLIC_CACHE = ["questions", "availability"];   // 개인정보 아님 → 기기에 오래 보관
 const CACHE_PREFIX = "c1:";
@@ -564,7 +566,7 @@ export async function cachedCollection(name, { force = false } = {}) {
   if (!force && ver !== null && store) {
     try { c = JSON.parse(store.getItem(key) || "null"); } catch (_) { c = null; }
     if (c && Date.now() - c.at >= CACHE_TTL) c = null;
-    if (c && c.v === ver) { readStats.cache[name] = c.rows.length; return reviveTs(c.rows); }
+    if (c && c.v === ver && !ALWAYS_CHECK.includes(name)) { readStats.cache[name] = c.rows.length; return reviveTs(c.rows); }
     // 바뀐 문서만 받아 합치기
     const f = INCREMENTAL[name];
     if (c && f && Array.isArray(c.rows)) {

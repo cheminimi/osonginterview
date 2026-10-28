@@ -5,6 +5,7 @@ import { S, register, rerender, openModal, closeModal, opt, myRoles, loadAllSess
 import { feedbackPrompt } from "./prompts.js";
 import { queueNotify } from "./notify.js";
 import { isBoothSession, boothViewHtml, refreshAiReport, aiReportMaybeComing, replaceAiReport } from "./booth-view.js";
+import { mathHtml } from "./math.js";
 
 let root;
 export function init(el) {
@@ -60,8 +61,8 @@ export function openReview(id) {
     : (s.items || []).map((it, i) => `
       <div class="q-item" style="margin-top:12px">
         <div class="row">${typeBadge(it.type)} <span class="muted">Q${i + 1} · ${it.usedSec}초 / ${it.answerSec}초</span>${it.usedSec > it.answerSec ? ' <span class="badge badge-red">초과</span>' : ""}</div>
-        <div class="q-text pre" style="margin-top:6px">${esc(it.text)}</div>
-        ${it.passage ? `<details><summary class="muted">제시문</summary><div class="ans">${esc(it.passage)}</div></details>` : ""}
+        <div class="q-text pre" style="margin-top:6px">${it.type === "passage" ? mathHtml(it.text) : esc(it.text)}</div>
+        ${it.passage ? `<details><summary class="muted">제시문</summary><div class="ans">${it.type === "passage" ? mathHtml(it.passage) : esc(it.passage)}</div></details>` : ""}
         ${it.prepMemo ? `<details><summary class="muted">학생 메모</summary><div class="ans">${esc(it.prepMemo)}</div></details>` : ""}
         <div class="ans">${esc(it.answer) || '<span class="muted">(답변 없음)</span>'}</div>
         ${it.followUp ? `<div><b>꼬리질문</b> ${esc(it.followUp)} <span class="muted">(${it.followUsedSec}초)</span></div><div class="ans">${esc(it.followAnswer) || '<span class="muted">(답변 없음)</span>'}</div>` : ""}

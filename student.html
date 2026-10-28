@@ -204,6 +204,7 @@ import {
 } from "./common.js";
 import { mountSchedule, BOOK_STAGES, stageTeachers, ACTIVE, DONE, STATUS } from "./schedule.js";
 import { isBoothSession, boothViewHtml, aiReportState, replaceAiReport } from "./booth-view.js";
+import { mathHtml } from "./math.js";
 import { mountBoothBooking, mountSchedSwitch } from "./booth-booking.js";
 import { registerSW, mountInstallTip, showInstallTipAgain, isStandalone } from "./pwa.js";
 import { pushState, pushOn, enablePush, disablePush, refreshPush, wasAsked, markAsked, onPushOpen } from "./push.js";
@@ -1144,7 +1145,7 @@ function openSession(s) {
     ${(s.items || []).map((it, i) => `
       <div class="q-item" style="margin-top:12px">
         <div class="row">${typeBadge(it.type)} <span class="muted">Q${i + 1} · ${it.usedSec ?? 0}초 사용 / 제한 ${it.answerSec}초</span></div>
-        <div class="q-text pre" style="margin-top:6px">${esc(it.text)}</div>
+        <div class="q-text pre" style="margin-top:6px">${it.type === "passage" ? mathHtml(it.text) : esc(it.text)}</div>
         <div class="ans">${esc(it.answer) || '<span class="muted">(답변 없음)</span>'}</div>
         ${it.followUp ? `<div style="margin-top:8px"><b>꼬리질문</b> ${esc(it.followUp)}</div><div class="ans">${esc(it.followAnswer) || '<span class="muted">(답변 없음)</span>'}</div>` : ""}
         ${fb.itemComments?.[i] ? `<div class="fb-box"><b>선생님</b> <span class="pre">${esc(fb.itemComments[i])}</span></div>` : ""}

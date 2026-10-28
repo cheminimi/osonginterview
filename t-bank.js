@@ -5,6 +5,7 @@ import {
 } from "./common.js";
 import { S, register, openModal, closeModal, readForm, lines, opt, ensureBank } from "./t-core.js";
 import { bankPrompt } from "./prompts.js";
+import { mathHtml, hasMath, MATH_INSERTS, MATH_HELP } from "./math.js";
 import { SEED_QUESTIONS } from "./seed-questions.js";
 import { savePersonal } from "./t-questions.js";
 
@@ -100,8 +101,8 @@ function passageRow(q) {
     <div class="q-meta" style="margin-top:4px">${esc(meta)}</div>
     ${ready ? "" : `<div class="pb-warn">${old ? "예전 양식 — 부스·연습에서 쓰지 않아요. 학교·주제·문항·시간을 넣어 다시 저장하거나 지워 주세요."
       : "빈 칸이 있어 부스·연습에서 쓰지 않아요 — 학교·주제·제시문·문항·숙독·답변 시간을 모두 넣어 주세요."}</div>`}
-    ${!old && its.length ? `<ol class="pb-items">${its.map((x) => `<li>${esc(x.q)}</li>`).join("")}</ol>` : old ? `<div class="pre muted" style="margin-top:6px;font-size:.9rem">${esc(q.text || "")}</div>` : ""}
-    ${q.passage ? `<details><summary class="muted">제시문 보기</summary><div class="pre ans">${esc(q.passage)}</div></details>` : ""}
+    ${!old && its.length ? `<ol class="pb-items">${its.map((x) => `<li>${mathHtml(x.q)}</li>`).join("")}</ol>` : old ? `<div class="pre muted" style="margin-top:6px;font-size:.9rem">${esc(q.text || "")}</div>` : ""}
+    ${q.passage ? `<details><summary class="muted">제시문 보기</summary><div class="pre ans">${mathHtml(q.passage)}</div></details>` : ""}
     ${q.intent ? `<div class="q-meta">의도: ${esc(q.intent)}</div>` : ""}`;
 }
 
@@ -158,11 +159,22 @@ function edit(q = null) {
     </div>
     <div class="field"><label>대상 학과 키워드 (쉼표 구분, 비우면 계열 전체)</label><input name="majors" value="${esc((v.majors || []).join(", "))}" placeholder="화학, 약학"></div>
     <div class="field" data-np="1"><label>질문 *</label><textarea name="text" style="min-height:70px">${esc(v.text)}</textarea></div>
-    <div class="field"><label data-plabel="1">제시문 / MMI 상황 <span class="muted">(학생부·인성은 비워두기)</span></label><textarea name="passage" style="min-height:120px">${esc(v.passage)}</textarea></div>
+    <div class="field"><label data-plabel="1">제시문 / MMI 상황 <span class="muted">(학생부·인성은 비워두기)</span></label>
+      <div class="mt-bar" data-p="1">${MATH_INSERTS.map(([t, c]) => `<button type="button" class="btn-sm" data-mins="${esc(c)}">${esc(t)}</button>`).join("")}
+        <span class="muted">수식은 <code>$ … $</code> 안에 — 아래 '수식 넣는 법'</span></div>
+      <textarea name="passage" style="min-height:120px">${esc(v.passage)}</textarea>
+      <div class="mt-prev" data-p="1"><span class="lab">미리 보기 — 학생에게 이렇게 보여요</span><div class="mt-out" id="pbPsgPrev"></div></div></div>
     <div data-p="1">
       <div class="field"><label>문항 * <span class="muted">— 부스·연습에서 1번부터 차례로 물어요 (최대 ${PASSAGE_MAX_ITEMS}개)</span></label>
         <div class="pb-ed" id="pbItems"></div>
-        <button type="button" class="btn-sm" id="pbAdd">+ 문항 추가</button></div>
+        <button type="button" class="btn-sm" id="pbAdd">+ 문항 추가</button>
+        <div class="rv-hint muted" style="font-size:.8rem;margin-top:4px">문항에도 수식을 쓸 수 있어요. 면접관이 소리로 읽을 때 수식 부분은 '수식'이라고 읽어요 (학생은 화면에서 봐요).</div></div>
+      <details class="mt-help"><summary>수식 넣는 법 <span class="muted">— 자주 쓰는 것만. [넣기]를 누르면 커서 자리에 들어가요</span></summary>
+        <table><thead><tr><th>이렇게 쓰면</th><th>이렇게 보여요</th><th></th></tr></thead><tbody>
+        ${MATH_HELP.map(([n, c]) => `<tr><td><b>${esc(n)}</b><br><code>${esc(c)}</code></td><td class="mt-out">${mathHtml(c)}</td><td><button type="button" class="btn-sm" data-mins="${esc(c)}">넣기</button></td></tr>`).join("")}
+        </tbody></table>
+        <p class="muted" style="margin:8px 0 0;font-size:.82rem">· <code>$</code> 두 개 사이가 수식이에요. 글자 사이에 섞어 써도 돼요 · 크게 한 줄로 쓰려면 <code>$$ … $$</code> · 돈 표시 '$' 는 <code>\\$</code><br>
+          · 틀리면 그 부분만 빨갛게 보여요 (저장은 돼요) · 꼬리질문은 소리로 읽으니 수식 없이 말로 써 주세요</p></details>
       <div class="grid grid-2" style="gap:0 14px">
         <div class="field"><label>숙독 시간 * (분)</label><input name="prepMin" type="number" min="0.5" step="0.5" inputmode="decimal" value="${minVal(v.prepSec)}" placeholder="예) 10"><div class="muted" style="font-size:.8rem;margin-top:3px">제시문과 문항을 읽고 생각하는 시간</div></div>
         <div class="field"><label>답변 시간 * (분)</label><input name="answerMin" type="number" min="0.5" step="0.5" inputmode="decimal" value="${minVal(v.answerSec)}" placeholder="예) 7"><div class="muted" style="font-size:.8rem;margin-top:3px">1번부터 마지막 문항까지 모두 합쳐서</div></div>
@@ -179,14 +191,33 @@ function edit(q = null) {
   const box = $("#pbItems", body);
   // 문항 칸: 1번·2번… [↑][↓][×]
   const drawItems = (list) => {
-    box.innerHTML = list.map((t, i) => `<div class="pb-row"><b>${i + 1}번</b><textarea data-it="${i}" rows="2" placeholder="${i + 1}번 문항">${esc(t)}</textarea>
+    box.innerHTML = list.map((t, i) => `<div class="pb-row"><b>${i + 1}번</b><div class="pb-q"><textarea data-it="${i}" rows="2" placeholder="${i + 1}번 문항">${esc(t)}</textarea><div class="mt-out mt-mini" data-prev="${i}"></div></div>
       <span class="pb-btns"><button type="button" class="btn-sm" data-up="${i}" ${i ? "" : "disabled"} aria-label="${i + 1}번 위로">↑</button><button type="button" class="btn-sm" data-dn="${i}" ${i < list.length - 1 ? "" : "disabled"} aria-label="${i + 1}번 아래로">↓</button><button type="button" class="btn-sm" data-x="${i}" aria-label="${i + 1}번 지우기">×</button></span></div>`).join("");
     $("#pbAdd", body).disabled = list.length >= PASSAGE_MAX_ITEMS;
     const cur = () => $$("[data-it]", box).map((t) => t.value);
     $$("[data-up]", box).forEach((b) => b.onclick = () => { const l = cur(), i = Number(b.dataset.up); [l[i - 1], l[i]] = [l[i], l[i - 1]]; drawItems(l); });
     $$("[data-dn]", box).forEach((b) => b.onclick = () => { const l = cur(), i = Number(b.dataset.dn); [l[i + 1], l[i]] = [l[i], l[i + 1]]; drawItems(l); });
     $$("[data-x]", box).forEach((b) => b.onclick = () => { const l = cur(); l.splice(Number(b.dataset.x), 1); drawItems(l.length ? l : [""]); });
+    $$("[data-it]", box).forEach((t) => { t.addEventListener("input", preview); t.addEventListener("focus", () => { lastTa = t; }); });
+    preview();
   };
+  // 수식: 미리 보기 (제시문은 늘, 문항은 수식이 있을 때만) · 넣기 단추는 마지막으로 누른 칸(처음엔 제시문)에
+  const psgTa = $("textarea[name=passage]", body);
+  let lastTa = psgTa;
+  function preview() {
+    const pv = $("#pbPsgPrev", body);
+    if (pv) pv.innerHTML = psgTa.value.trim() ? mathHtml(psgTa.value) : '<span class="muted">제시문을 쓰면 여기에 보여요</span>';
+    $$("[data-it]", box).forEach((t) => { const d = $(`[data-prev="${t.dataset.it}"]`, box); if (d) { d.hidden = !hasMath(t.value); d.innerHTML = d.hidden ? "" : mathHtml(t.value); } });
+  }
+  psgTa.addEventListener("input", preview);
+  psgTa.addEventListener("focus", () => { lastTa = psgTa; });
+  $$("[data-mins]", body).forEach((b) => b.onclick = () => {
+    const t = lastTa && document.body.contains(lastTa) ? lastTa : psgTa, v = b.dataset.mins;
+    const a = t.selectionStart ?? t.value.length, z = t.selectionEnd ?? a;
+    t.value = t.value.slice(0, a) + v + t.value.slice(z);
+    t.focus(); t.selectionStart = t.selectionEnd = a + v.length;
+    preview();
+  });
   drawItems(items0.length ? items0 : [""]);
   $("#pbAdd", body).onclick = () => { const l = $$("[data-it]", box).map((t) => t.value); if (l.length < PASSAGE_MAX_ITEMS) { drawItems([...l, ""]); $$("[data-it]", box).pop()?.focus(); } };
   typeSel.onchange = () => {
@@ -194,7 +225,7 @@ function edit(q = null) {
     $$("[data-p]", body).forEach((x) => x.hidden = !isP);
     $$("[data-np]", body).forEach((x) => x.hidden = isP);
     $("[data-plabel]", body).innerHTML = isP ? "제시문 *" : '제시문 / MMI 상황 <span class="muted">(학생부·인성은 비워두기)</span>';
-    $("[data-flabel]", body).innerHTML = isP ? '꼬리질문 (한 줄에 하나) <span class="muted">— 마지막 문항까지 답하고 시간이 남으면 하나</span>' : "꼬리질문 (한 줄에 하나)";
+    $("[data-flabel]", body).innerHTML = isP ? '꼬리질문 (한 줄에 하나) <span class="muted">— 마지막 문항까지 답하고 시간이 남으면 하나 · 소리로 읽으니 수식 없이 말로</span>' : "꼬리질문 (한 줄에 하나)";
     $("input[name=prepSec]", body).placeholder = `기본 ${t.prep}초`;
     $("input[name=answerSec]", body).placeholder = `기본 ${t.answer}초`;
   };

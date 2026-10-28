@@ -3,6 +3,8 @@
 // 칸이 없는 옛 기록은 그 줄·상자만 숨긴다. 기준 숫자는 booth.html 의 SPEED·GAZE·KW·QUICK 과 같게 맞춘다.
 // aiReport(부스가 자동으로 만든 AI 피드백)와 aiFeedback(선생님이 붙여 넣는 칸)은 서로 다른 칸 — 여기서는 aiReport 만 다룬다.
 import { db, doc, getDoc, esc, fmtSec } from "./common.js";
+import { mathHtml } from "./math.js";   // 제시문 수식 (2026-10-28)
+const qTxt = (it) => it?.type === "passage" ? mathHtml(it.text || "") : esc(it?.text || "");
 
 const SPEED = { low: 250, high: 330 };                         // 분당 글자 수 참고 범위
 const GAZE = { ok: 70, mid: 50, headMoveBig: 8, awayHint: 3 };  // 70% 이상 초록 · 50~70 주황 · 50 미만 빨강
@@ -138,7 +140,7 @@ function timeChart(s, items) {
     <div class="bv-bar">${bar}</div><div class="bv-axis">${axis}</div>
     <table class="bv-t"><thead><tr><th>문항</th><th>질문</th><th class="c-th">생각·준비</th><th>답변</th><th class="c-f">꼬리 답변</th><th>합계</th><th class="c-mini"></th></tr></thead><tbody>
       ${rows.map((r, i) => `<tr><td class="n">Q${i + 1}</td>
-        <td class="q">${r.it.type !== "document" || r.it.source !== "personal" ? `<span class="ytag">${esc(typeLabelOf(r.it))}</span>` : ""}${esc(r.it.text || "")}${i === longest ? `<span class="tag-long">가장 길게 씀</span>` : ""}</td>
+        <td class="q">${r.it.type !== "document" || r.it.source !== "personal" ? `<span class="ytag">${esc(typeLabelOf(r.it))}</span>` : ""}${qTxt(r.it)}${i === longest ? `<span class="tag-long">가장 길게 씀</span>` : ""}</td>
         <td class="c-th">${fmtSec(r.th)}</td><td>${fmtSec(r.a)}</td><td class="c-f">${r.it.followUp ? fmtSec(r.f) : "–"}</td><td class="n">${fmtSec(r.sum)}</td>
         <td class="c-mini"><div class="mini"><i style="width:${(r.sum / maxSum * 100).toFixed(1)}%"></i></div></td></tr>`).join("")}
     </tbody></table>
@@ -202,8 +204,8 @@ function itemCard(s, it, i, { teacher, itemExtra }) {
       ${s.sttOff ? "" : kwBlock(it.followKeywords, it.followQuestionKeys)}${gzTip(it.followGaze)}</div>` : "";
   return `<article class="bv-card bv-q">
     <div class="bv-qn">${esc(head)}${it.timeUp ? `<span class="bv-cut">시간 끝에서 끊김</span>` : ""}</div>
-    <div class="bv-qt">${esc(it.text || "")}</div>
-    ${it.passage && !set ? `<details class="bv-psg"><summary>제시문 보기</summary><div class="bv-ans">${esc(it.passage)}</div></details>` : ""}
+    <div class="bv-qt">${qTxt(it)}</div>
+    ${it.passage && !set ? `<details class="bv-psg"><summary>제시문 보기</summary><div class="bv-ans">${mathHtml(it.passage)}</div></details>` : ""}
     ${chips(it.m, it.usedSec, set ? null : it.answerSec, it.gaze)}
     ${ansBox(it.answer)}
     ${s.sttOff ? "" : kwBlock(it.keywords, it.questionKeys)}${gzTip(it.gaze)}
@@ -229,7 +231,7 @@ function passageHead(s, group) {
   const psg = group.find((it) => it.passage)?.passage;
   return `<section class="bv-card bv-pset"><div class="bv-pset-h"><span class="bv-ptag">제시문</span>${school ? `<b>${esc(school)}</b>` : ""}${ps?.topic ? `<span>${esc(ps.topic)}</span>` : ""}</div>
     <p class="bv-pset-t">${esc(t.join(" · "))}</p>
-    ${psg ? `<details class="bv-psg"><summary>제시문 보기</summary><div class="bv-ans">${esc(psg)}</div></details>` : ""}</section>`;
+    ${psg ? `<details class="bv-psg"><summary>제시문 보기</summary><div class="bv-ans">${mathHtml(psg)}</div></details>` : ""}</section>`;
 }
 const missedRows = (from, to) => Array.from({ length: Math.max(0, to - from) }, (_, k) =>
   `<article class="bv-card bv-q bv-miss"><div class="bv-qn">제시문 ${from + k + 1}번</div><div class="muted">답변 시간이 다 돼서 묻지 못했어요</div></article>`).join("");

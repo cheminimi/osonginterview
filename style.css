@@ -1750,3 +1750,23 @@ body.nd .fa-seg { display: inline-flex; border: 1px solid var(--line); border-ra
 body.nd .fa-seg button { font: inherit; font-size: .84rem; border: 0; background: transparent; border-radius: 99px; padding: 5px 12px; min-height: 0; color: var(--ink-2); cursor: pointer; }
 body.nd .fa-seg button.on { background: var(--black, #121316); color: #fff; }
 body.nd tr.iv-out td { opacity: .5; }   /* 학생 상세 지원 대학 표: 1차 불합격 줄 */
+
+/* 제시문 수식 (2026-10-28) — math.js · 틀린 수식 표시는 연습 화면(interview.html)에서도 써서 범위 없이 */
+.mt-err { color: var(--danger, #c2453c); background: var(--danger-bg, #fbe9e7); border-radius: 4px; padding: 0 3px; }
+.katex { font-size: 1.05em; }
+.katex-display { margin: .4em 0; overflow-x: auto; overflow-y: hidden; }
+body.nd .mt-bar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-bottom: 6px; }
+body.nd .mt-bar .btn-sm { padding: 3px 10px; min-height: 0; font-size: .8rem; }
+body.nd .mt-bar .muted { font-size: .78rem; margin-left: 4px; }
+body.nd .mt-bar code, body.nd .mt-help code { font-size: .8rem; background: var(--chip); border-radius: 6px; padding: 1px 5px; }
+body.nd .mt-prev { background: #fff; border: 1px dashed var(--line); border-radius: 12px; padding: 8px 12px; margin-top: 6px; }
+body.nd .mt-prev .lab { display: block; font-size: .74rem; font-weight: 700; color: var(--ink-3); margin-bottom: 2px; }
+body.nd .mt-out { white-space: pre-wrap; line-height: 1.9; overflow-x: auto; }
+body.nd .mt-mini { font-size: .9rem; background: #fff; border: 1px dashed var(--line); border-radius: 10px; padding: 4px 10px; margin-top: 4px; }
+body.nd .pb-q { flex: 1; min-width: 0; }
+body.nd .pb-q textarea { width: 100%; min-height: 52px; }
+body.nd .mt-help { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; margin: 4px 0 14px; }
+body.nd .mt-help summary { cursor: pointer; font-weight: 700; font-size: .9rem; }
+body.nd .mt-help table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: .86rem; }
+body.nd .mt-help td, body.nd .mt-help th { padding: 6px 8px; border-top: 1px solid var(--line-3); text-align: left; vertical-align: middle; }
+body.nd .mt-help td.mt-out { white-space: normal; }

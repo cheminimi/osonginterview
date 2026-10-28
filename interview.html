@@ -217,6 +217,7 @@ import {
   db, requireRole, collection, doc, getDocs, addDoc, updateDoc, serverTimestamp, loadInterviewsFor, cachedCollection,
   esc, $, toast, showError, TYPES, typeBadge, fmtSec, shuffle, icon, pmKindOf, passageReady, passageItems, passageSchool
 } from "./common.js";
+import { mathHtml, speakText } from "./math.js";   // 제시문 수식 (2026-10-28)
 
 const { user, profile } = await requireRole("student");
 document.getElementById("logoutBtn").onclick = async () => {
@@ -449,8 +450,8 @@ function readPhase() {
       <div class="p-head"><b>${esc(passageSchool(r))}</b> · ${esc(r.topic)}</div>
       <div class="timer-wrap"><div class="ring" id="ring"></div>
         <div class="muted">제시문과 문항을 읽고 생각을 정리하세요. 다 읽었으면 [다 읽었어요]를 누르세요. 시간이 다 되면 1번 문항으로 넘어가요.</div></div>
-      <div class="passage">${esc(pset.src.passage)}</div>
-      <div><b>문항</b><ol class="p-list">${pset.q.map((x) => `<li>${esc(x)}</li>`).join("")}</ol></div>
+      <div class="passage">${mathHtml(pset.src.passage)}</div>
+      <div><b>문항</b><ol class="p-list">${pset.q.map((x) => `<li>${mathHtml(x)}</li>`).join("")}</ol></div>
       <div><label>메모</label><textarea id="memo" placeholder="핵심 개념, 답변 순서, 근거…"></textarea></div>
       <div class="row"><div class="spacer"></div><button class="btn-primary" id="next">다 읽었어요 · 1번 시작</button></div>
     </div>`;
@@ -480,8 +481,8 @@ function setAnswerScreen(it, isFollow, say) {
   app.innerHTML = `${progressBar()}
     <div class="card stack">
       <div class="row"><span class="phase">${isFollow ? "꼬리질문" : `${it.pNo}번 문항 · ${it.pNo}/${pset.n}`} · 답변 시간 ${fmtSec(r.answerSec)} (문항 모두 합쳐서)</span> ${typeBadge("passage")}</div>
-      <div class="question pre">${esc(qText)}</div>
-      <details><summary class="muted">제시문 다시 보기</summary><div class="passage" style="margin-top:8px">${esc(pset.src.passage)}</div></details>
+      <div class="question pre">${mathHtml(qText)}</div>
+      <details><summary class="muted">제시문 다시 보기</summary><div class="passage" style="margin-top:8px">${mathHtml(pset.src.passage)}</div></details>
       ${pset.memo ? `<details><summary class="muted">내 메모</summary><div class="pre" style="margin-top:6px">${esc(pset.memo)}</div></details>` : ""}
       <div class="timer-wrap"><div class="ring" id="ring"></div>
         <div><div class="muted">남은 답변 시간이에요. 다 되면 그 자리에서 끝나고 남은 문항은 건너뛰어요.</div>
@@ -497,9 +498,10 @@ function setAnswerScreen(it, isFollow, say) {
       </div>
     </div>`;
   const ta = $("#answer");
-  speak(say || qText);
-  $("#replay") && ($("#replay").onclick = () => speak(say || qText));
-  const sttDelay = settings.tts && hasTTS ? Math.min(6000, 800 + (say || qText).length * 90) : 0;
+  const sayText = speakText(say || qText);     // 수식 부분은 '수식'으로 읽음
+  speak(sayText);
+  $("#replay") && ($("#replay").onclick = () => speak(sayText));
+  const sttDelay = settings.tts && hasTTS ? Math.min(6000, 800 + sayText.length * 90) : 0;
   const sttTimer = setTimeout(() => startDictation(ta, $("#interim"), $("#mic")), sttDelay);
   const start = pset.used;
   let ended = false;
@@ -724,12 +726,12 @@ function reviewPhase() {
         <div class="q-item">
           <div class="row">${typeBadge(it.type)} <span class="muted">${it.pNo ? `${it.pNo}번 · ${fmtSec(it.usedSec)}${it.timeUp ? ' <span class="badge badge-orange">시간 끝에서 끊김</span>' : ""}`
             : `Q${i + 1} · ${it.usedSec}초 / ${it.answerSec}초 ${it.usedSec > it.answerSec ? '<span class="badge badge-red">시간 초과</span>' : ""}`}</span></div>
-          <div class="q-text" style="margin:6px 0">${esc(it.text)}</div>
+          <div class="q-text" style="margin:6px 0">${it.pNo ? mathHtml(it.text) : esc(it.text)}</div>
           ${basisOf(it) ? `<div class="basis-box">${icon("note", 17)}<span><b>생기부 근거</b> · ${esc(basisOf(it))}</span></div>` : ""}
           <textarea data-i="${i}" data-f="answer">${esc(it.answer)}</textarea>
           ${it.followUp ? `<div style="margin:8px 0 4px"><b>꼬리질문</b> ${esc(it.followUp)}</div><textarea data-i="${i}" data-f="followAnswer">${esc(it.followAnswer)}</textarea>` : ""}
         </div>`).join("")}
-      ${skipped.map((q, k) => `<div class="q-item"><div class="row">${typeBadge("passage")} <span class="muted">${items.length + k + 1}번 · 시간이 다 돼서 못 했어요</span></div><div class="q-text muted" style="margin-top:6px">${esc(q)}</div></div>`).join("")}
+      ${skipped.map((q, k) => `<div class="q-item"><div class="row">${typeBadge("passage")} <span class="muted">${items.length + k + 1}번 · 시간이 다 돼서 못 했어요</span></div><div class="q-text muted" style="margin-top:6px">${mathHtml(q)}</div></div>`).join("")}
       ${items.some(basisOf) ? '<p class="muted" style="margin:0">근거는 답을 다 한 뒤에만 보여요. 내 답이 생기부 내용을 잘 담았는지 비교해 보세요.</p>' : ""}
       <div class="grid grid-2">
         <div><label>잘한 점</label><textarea id="good" placeholder="예: 두괄식으로 결론부터 말했다"></textarea></div>

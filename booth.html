@@ -510,6 +510,7 @@ import {
 } from "./common.js";
 import { daySlots, slotId, boothConfigOf } from "./booth-booking.js";   // 부스 예약 칸 계산 (스튜디오 예약 화면과 같은 계산)
 import { scheduleConfigOf } from "./schedule.js";
+import { mathHtml, speakText } from "./math.js";   // 제시문 수식 ($…$) 그리기·소리로 읽을 말 (스튜디오 혼자 연습과 같은 것)
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 // =====================================================================
@@ -2444,8 +2445,8 @@ async function readPhase(by) {
   const draw = () => {
     setPhase("read");
     side(`<div class="phase-l" id="phaseL">제시문 · 숙독 · ${esc(passageSchool(q))} · ${esc(q.topic)}</div>
-      <details class="psg" open><summary>제시문</summary><div class="psg-t">${esc(q.passage)}</div></details>
-      <ol class="pq-list" id="pqList">${qs.map((x) => `<li>${esc(x)}</li>`).join("")}</ol>
+      <details class="psg" open><summary>제시문</summary><div class="psg-t">${mathHtml(q.passage)}</div></details>
+      <ol class="pq-list" id="pqList">${qs.map((x) => `<li>${mathHtml(x)}</li>`).join("")}</ol>
       <div class="clock-row"><span class="clock" id="clock">${fmtSec(Math.max(0, Math.ceil(until - now())))}</span><span class="clock-s">숙독 시간 남음 · 답변은 문항 모두 합쳐 ${minText(q.answerSec)}</span></div>
       <div class="track"><i id="trk"></i></div>
       ${lstat("다 됐으면 “다 읽었어요”라고 말하거나 [다음]을 누르세요. 숙독하는 동안은 녹화하지 않아요")}`, true, "다 읽었어요");
@@ -2532,7 +2533,7 @@ async function askPhase(it, which, first = false) {
   }
   while (true) {
     setPhase("ask"); renderAsk(it, which);
-    await say(!isF && it.pNo ? SAY.setItem(it.pNo, text) : text, { by, cap: "질문하는 중" });
+    await say(!isF && it.pNo ? SAY.setItem(it.pNo, speakText(text)) : speakText(text), { by, cap: "질문하는 중" });   // 수식은 '수식'으로 읽음
     dropText();
     if (!rec) rec = startRec();                              // 읽기가 끝난 순간부터 녹화 (생각 중 첫 마디도 담기게)
     stt.start();
@@ -2552,7 +2553,10 @@ async function askPhase(it, which, first = false) {
     return "done";
   }
 }
-const passageBox = (it, open = true) => { const p = it.passage || it._passage; return p ? `<details class="psg" ${open ? "open" : ""}><summary>제시문 ${open ? "" : "다시 보기"}</summary><div class="psg-t">${esc(p)}</div></details>` : ""; };
+// 제시문 본문·문항만 수식으로 그림 (다른 유형·꼬리질문은 글자 그대로 — 선생님·학생 글의 $ 가 엉뚱하게 그려지지 않게)
+const isPsg = (it) => it.type === "passage" || !!it.pNo;
+const qHtml = (it) => isPsg(it) ? mathHtml(it.text) : esc(it.text);
+const passageBox = (it, open = true) => { const p = it.passage || it._passage; return p ? `<details class="psg" ${open ? "open" : ""}><summary>제시문 ${open ? "" : "다시 보기"}</summary><div class="psg-t">${mathHtml(p)}</div></details>` : ""; };
 // 제시문 읽기(5분)·MMI 상황 읽기(2분) — 녹화 전. "다음"/"다 읽었어요"로 일찍 끝냄
 async function preparePhase(it, by) {
   const isP = it.type === "passage", total = it.prepSec, min = Math.round(total / 60);
@@ -2561,7 +2565,7 @@ async function preparePhase(it, by) {
     setPhase("prepare");
     side(`<div class="phase-l" id="phaseL">질문 ${qNo(it)} · ${isP ? "제시문 읽고 준비" : "MMI 상황 읽고 준비"}</div>
       ${isP ? passageBox(it) : ""}
-      <div class="qtext sm" id="qtext">${esc(it.text)}</div>
+      <div class="qtext sm" id="qtext">${qHtml(it)}</div>
       <div class="clock-row"><span class="clock" id="clock">${fmtSec(Math.max(0, until - now()))}</span><span class="clock-s">준비 시간 남음</span></div>
       <div class="track"><i id="trk"></i></div>
       ${lstat(`${isP ? "다 읽었으면 “다 읽었어요”" : "준비가 되면 “준비됐어요”"}라고 말하거나 [다음]을 누르세요. 준비하는 동안은 녹화하지 않아요`)}`, true, isP ? "다 읽었어요" : "준비됐어요");
@@ -2589,8 +2593,8 @@ async function preparePhase(it, by) {
 function renderAsk(it, which) {
   const isF = which === "follow";
   side(`${setSteps(it, isF)}<div class="phase-l" id="phaseL">${it.pNo ? (isF ? "제시문 꼬리질문" : `제시문 ${it.pNo}번 문항 · ${it.pNo}/${it.pOf}`) : `${isF ? "꼬리질문" : "질문"} ${qNo(it)}`}${!isF && it.slot === "closing" ? " · 마지막 질문" : !isF && it.source === "personal" ? " · 내 예상질문" : ""}</div>
-    ${isF ? `<div class="qprev">앞 질문 — ${esc(it.text)}</div>` : ""}
-    <div class="qtext" id="qtext">${esc(isF ? it.followUp : it.text)}</div>
+    ${isF ? `<div class="qprev">앞 질문 — ${qHtml(it)}</div>` : ""}
+    <div class="qtext" id="qtext">${isF ? esc(it.followUp) : qHtml(it)}</div>
     ${!isF ? passageBox(it, false) : ""}
     ${lstat("질문을 읽는 동안은 마이크를 잠시 꺼 둬요", false)}`);
 }
@@ -2598,7 +2602,7 @@ function renderAsk(it, which) {
 async function thinkPhase(it, by, first) {
   setPhase("think", true);
   side(`<div class="phase-l" id="phaseL">질문 ${qNo(it)} · 생각할 시간</div>
-    <div class="qtext sm">${esc(it.text)}</div>
+    <div class="qtext sm">${qHtml(it)}</div>
     <div class="clock-row"><span class="clock" id="clock">${fmtSec(CONFIG.think)}</span><span class="clock-s">남음 · <b>바로 답변을 시작해도 돼요</b></span></div>
     <div class="track"><i id="trk"></i></div>
     ${sttOk ? `<div class="cmds"><div class="cmds-h">이렇게 말해도 돼요</div><div class="cmds-g">
@@ -2647,7 +2651,7 @@ async function listenPhase(it, which, by, carry, started) {
   setPhase("listen", true);
   side(`<div class="listen" style="display:contents">${setSteps(it, isF)}
     <div class="phase-l" id="phaseL">${it.pNo ? (isF ? "제시문 꼬리질문 · 답변" : `제시문 ${it.pNo}번 문항 · 답변`) : `${isF ? "꼬리질문" : "질문"} ${qNo(it)} · 답변`}</div>
-    <div class="qtext sm" id="qtext">${esc(text)}</div>
+    <div class="qtext sm" id="qtext">${isF ? esc(text) : qHtml(it)}</div>
     ${!isF ? passageBox(it, false) : ""}
     <div class="clock-row"><span class="clock" id="clock">0:00</span><span class="clock-s">답변한 시간</span></div>
     <div id="ansTrack"><div class="track"><i id="trk"></i></div>
@@ -2855,7 +2859,7 @@ function timeChart(done) {
       <div class="legend"><span><i class="s-think"></i>생각·준비</span><span><i class="s-ans"></i>답변</span><span><i class="s-fol"></i>꼬리질문 답변</span><span><i class="s-gap"></i>질문 읽기 등</span><span><i class="s-rest"></i>남은 시간</span></div></div>
     <div class="tbar">${bar}</div><div class="taxis">${axis}</div>
     <table class="ttable"><thead><tr><th>문항</th><th>질문</th><th>생각·준비</th><th>답변</th><th>꼬리 답변</th><th>합계</th><th></th></tr></thead><tbody>
-      ${rows.map((r, i) => `<tr><td class="n">Q${i + 1}</td><td class="q">${r.it.type !== "document" || r.it.source !== "personal" ? `<span class="ytag">${esc(typeLabelOf(r.it))}</span>` : ""}${esc(r.it.text)}${i === longest ? `<span class="tag">가장 길게 씀</span>` : ""}</td>
+      ${rows.map((r, i) => `<tr><td class="n">Q${i + 1}</td><td class="q">${r.it.type !== "document" || r.it.source !== "personal" ? `<span class="ytag">${esc(typeLabelOf(r.it))}</span>` : ""}${qHtml(r.it)}${i === longest ? `<span class="tag">가장 길게 씀</span>` : ""}</td>
         <td>${fmtSec(r.th)}</td><td>${fmtSec(r.a)}</td><td>${r.it.followUp ? fmtSec(r.f) : "–"}</td><td class="n">${fmtSec(r.sum)}</td>
         <td><div class="mini"><i style="width:${r.sum / maxSum * 100}%"></i></div></td></tr>`).join("")}
     </tbody></table>
@@ -2935,7 +2939,7 @@ function showResults() {
     ${clips.length ? `<p class="hint" id="vidNote">영상에는 생각 시간도 들어 있어요.</p>` : ""}
     ${done.map((it, i) => `<article class="res"><div class="pair">
         <div>${vidBlock(it, "main")}</div>
-        <div><div class="qn">질문 ${i + 1} · ${esc(typeLabelOf(it))} · ${esc(label(it.askedBy))}</div><div class="qt">${esc(it.text)}</div>${passageBox(it, false)}
+        <div><div class="qn">질문 ${i + 1} · ${esc(typeLabelOf(it))} · ${esc(label(it.askedBy))}</div><div class="qt">${qHtml(it)}</div>${passageBox(it, false)}
           ${chips(it.m, it.usedSec, it.answerSec, it.gaze)}
           <div class="ans">${it.answer ? esc(it.answer) : `<span class="hint">받아쓴 답변이 없어요</span>`}</div>${kwBlock(it.text, it.answer)}${gzTip(it.gaze)}</div></div>
       ${it.followUp ? `<div class="pair"><div>${vidBlock(it, "follow")}</div>

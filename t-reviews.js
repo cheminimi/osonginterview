@@ -3,7 +3,7 @@
 // 읽기 사용량: 이 화면을 처음 열 때 한 번만 받아 둔다 (다시 받기 버튼으로 갱신).
 // (2026-10-25) 새 양식: procedure(면접 절차 및 진행 방식) · qa [{q, a}](받은 질문과 실제 답변) · notes(기타 유의사항).
 //   예전 후기의 questions(받은 질문 글)는 그대로 두고 함께 보여 준다.
-import { db, collection, getDocs, $, $$, esc, toast, showError, fmtDay, icon, isoDay } from "./common.js";
+import { db, collection, getDocs, $, $$, esc, toast, showError, fmtDay, icon, isoDay, univName, sameUniv } from "./common.js";
 import { S, register, myName, openModal, closeModal, opt, switchTab } from "./t-core.js";
 import { openStudent } from "./t-students.js";
 import { queueNotify } from "./notify.js";
@@ -77,7 +77,7 @@ const reviewOpen = (iv) => {
   return !!d && (d < today || (d === today && new Date().getHours() >= RV_OPEN_HOUR));
 };
 const sameInterview = (r, iv) => r.id === iv.id || (String(r.studentNo) === String(iv.studentNo)
-  && String(r.univ || "") === String(iv.univ || "") && String(r.dept || "") === String(iv.dept || "")
+  && sameUniv(r.univ, iv.univ) && String(r.dept || "") === String(iv.dept || "")
   && String(r.date || "") === String(iv.date || ""));
 
 // 내 담당 학생인지 (배정표 기준)
@@ -97,7 +97,7 @@ function render() {
   // 고르는 칸 채우기 (고른 값은 유지)
   const yearSel = $("#rvYear", root), univSel = $("#rvUniv", root);
   const years = [...new Set(list0.map(yearOf).filter(Boolean))].sort((a, b) => b - a);
-  const univs = [...new Set(list0.map((r) => r.univ).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
+  const univs = [...new Set(list0.map((r) => univName(r.univ)).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
   if (yearSel.dataset.n !== String(years.length)) {
     yearSel.innerHTML = opt(years.map((y) => [String(y), `${y}학년도`]), yearSel.value || String(years[0] || ""), "전체 학년도");
     yearSel.dataset.n = String(years.length);
@@ -111,7 +111,7 @@ function render() {
   const kw = $("#rvSearch", root).value.trim();
   const list = list0.filter((r) =>
     (!y || String(yearOf(r)) === y)
-    && (!u || r.univ === u)
+    && (!u || univName(r.univ) === u)
     && (who !== "mine" || isMine(r))
     && (!kw || `${r.name || ""}${r.studentNo || ""}${r.univ || ""}${r.dept || ""}${r.questions || ""}${r.helped || ""}${r.regret || ""}${r.procedure || ""}${r.notes || ""}${qaOf(r).map((x) => `${x.q || ""}${x.a || ""}`).join("")}`.includes(kw)));
 
@@ -155,7 +155,7 @@ function renderMissing({ y, u, who, kw }) {
     const no = String(iv.studentNo || "");
     if (!active.has(no) || !reviewOpen(iv) || iv.announceResult === "fail") return false;   // 1차 불합격한 대학은 후기 대상 아님
     if (y && String(yearOf(iv)) !== y) return false;
-    if (u && iv.univ !== u) return false;
+    if (u && univName(iv.univ) !== u) return false;
     if (who === "mine" && me && !mine(no)) return false;
     if (kw && !`${iv.name || ""}${no}${iv.univ || ""}${iv.dept || ""}`.includes(kw)) return false;
     return !reviews.some((r) => sameInterview(r, iv) && hasText(r));

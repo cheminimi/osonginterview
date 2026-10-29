@@ -215,7 +215,7 @@
 <script type="app-module">
 import {
   db, requireRole, collection, doc, getDocs, addDoc, updateDoc, serverTimestamp, loadInterviewsFor, cachedCollection,
-  esc, $, toast, showError, TYPES, typeBadge, fmtSec, shuffle, icon, pmKindOf, passageReady, passageItems, passageSchool
+  esc, $, toast, showError, TYPES, typeBadge, fmtSec, shuffle, icon, pmKindOf, passageReady, passageItems, passageSchool, univName
 } from "./common.js";
 import { mathHtml, speakText } from "./math.js";   // 제시문 수식 (2026-10-28)
 
@@ -227,7 +227,7 @@ let depts = [], myUnivs = [];
 try {
   const ivs = await loadInterviewsFor(profile.studentNo);
   depts = ivs.map((u) => u.dept || "").filter(Boolean);
-  myUnivs = ivs.filter((u) => u.announceResult !== "fail").map((u) => String(u.univ || "").trim()).filter(Boolean);      // 제시문 학교 고르기의 '내 지원 대학' (1차 불합격 대학은 빼기)
+  myUnivs = ivs.filter((u) => u.announceResult !== "fail").map((u) => univName(u.univ)).filter(Boolean);      // 제시문 학교 고르기의 '내 지원 대학' (1차 불합격 대학은 빼기)
 } catch (e) { console.warn(e); }
 // mode: personal · document · pm(제시문 · MMI — 들어와서 kind 로 둘 중 하나) · personality(기본 인성만)
 // 예전 주소 mode=passage / mode=mmi 는 pm 으로 열고 그쪽을 고른 상태로
@@ -286,7 +286,7 @@ const minTxt = (sec) => { const n = Math.round(Number(sec) || 0), m = Math.floor
 const rangeTxt = (list, k) => { const v = [...new Set(list.map((q) => Number(q[k])))].sort((a, b) => a - b); return v.length > 1 ? `${minTxt(v[0])}~${minTxt(v[v.length - 1])}` : minTxt(v[0]); };
 function schoolGroups() {
   const by = new Map();
-  pool.forEach((q) => { const key = `${String(q.univ).trim()}|${String(q.admission || "").trim()}`; if (!by.has(key)) by.set(key, { key, univ: String(q.univ).trim(), name: passageSchool(q), list: [] }); by.get(key).list.push(q); });
+  pool.forEach((q) => { const key = `${univName(q.univ)}|${String(q.admission || "").trim()}`; if (!by.has(key)) by.set(key, { key, univ: univName(q.univ), name: passageSchool(q), list: [] }); by.get(key).list.push(q); });
   const mine = (g) => myUnivs.includes(g.univ);
   return [...by.values()].sort((a, b) => (mine(b) ? 1 : 0) - (mine(a) ? 1 : 0) || a.name.localeCompare(b.name, "ko")).map((g) => ({ ...g, mine: mine(g) }));
 }
@@ -424,7 +424,7 @@ async function beginPassage() {
   const q = shuffle(cand)[0];
   const qs = passageItems(q).map((x) => x.q);
   pset = { src: q, q: qs, n: qs.length, used: 0, followNow: false,
-    rec: { qid: q.id, univ: String(q.univ || "").trim(), admission: String(q.admission || "").trim(), topic: String(q.topic || "").trim(), n: qs.length,
+    rec: { qid: q.id, univ: univName(q.univ), admission: String(q.admission || "").trim(), topic: String(q.topic || "").trim(), n: qs.length,
       readSec: Number(q.prepSec), readUsedSec: 0, answerSec: Number(q.answerSec), answerUsedSec: 0, done: false, timeUp: false } };
   items = [];
   try {

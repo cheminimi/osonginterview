@@ -200,7 +200,7 @@
 import {
   db, requireRole, mountAccountMenu, collection, doc, setDoc, getDocs, query, where, onSnapshot, esc, $, $$, toast, showError, loadInterviewsFor, cachedCollection,
   CRITERIA, STAGES, TYPES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes, icon, isoDay, initials,
-  railHead, railFoot, tabButton, wireRailMe, setHead, writeBatch, serverTimestamp, confirmBox, pqStats, isStudentPq, passageReady, updateDoc, announceFailed, deleteField
+  railHead, railFoot, tabButton, wireRailMe, setHead, writeBatch, serverTimestamp, confirmBox, pqStats, isStudentPq, passageReady, updateDoc, announceFailed, deleteField, sameUniv
 } from "./common.js";
 import { mountSchedule, BOOK_STAGES, stageTeachers, ACTIVE, DONE, STATUS } from "./schedule.js";
 import { isBoothSession, boothViewHtml, aiReportState, replaceAiReport } from "./booth-view.js";
@@ -493,7 +493,7 @@ let wasWide = WIDE.matches;
 const SNOOZE_KEY = `rvSnooze:${me.studentNo}`;
 const schoolYear = () => { const d = new Date(); return d.getMonth() + 1 >= 3 ? d.getFullYear() + 1 : d.getFullYear(); };
 const sameInterview = (r, u) => String(r.studentNo) === String(me.studentNo)
-  && String(r.univ || "") === String(u.univ || "") && String(r.dept || "") === String(u.dept || "")
+  && sameUniv(r.univ, u.univ) && String(r.dept || "") === String(u.dept || "")
   && String(r.date || "") === String(u.date || "");
 function reviewOf(u) {
   if (!u) return null;

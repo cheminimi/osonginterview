@@ -1,7 +1,7 @@
 import {
   db, collection, doc, getDocs, setDoc, updateDoc, deleteDoc, writeBatch, query, where, serverTimestamp,
   $, $$, esc, toast, showError, copyText, issueAccount, loginDocId, randomPw, defaultEmail, createAuthUser,
-  deleteField, TRACKS, SPECIALS, isoDay, confirmBox
+  deleteField, TRACKS, SPECIALS, isoDay, confirmBox, univName
 } from "./common.js";
 import { S, register, rerender, loadAll, openModal, closeModal, opt, studentByNo, myName, readForm } from "./t-core.js";
 import { getDoc, clearDataCache, readStats, getMetaVersions } from "./common.js";
@@ -680,7 +680,7 @@ async function renderReviewExport() {
   await loadReviews();     // 이미 받아 두었으면 다시 읽지 않는다
   const all = S.reviews || [];
   const years = [...new Set(all.map(yearOf).filter(Boolean))].sort((a, b) => b - a);
-  const univs = [...new Set(all.map((r) => r.univ).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
+  const univs = [...new Set(all.map((r) => univName(r.univ)).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
   p.innerHTML = `
     <div class="card">
       <div class="toolbar" style="margin-bottom:12px">
@@ -697,8 +697,8 @@ async function renderReviewExport() {
     </div>`;
   const pick = () => {
     const y = $("#rxYear", p).value, u = $("#rxUniv", p).value, old = $("#rxOld", p).checked;
-    return all.filter((r) => (!y || String(yearOf(r)) === y) && (!u || r.univ === u) && (isNewForm(r) || (old && r.questions)))
-      .sort((a, b) => String(a.univ || "").localeCompare(String(b.univ || ""), "ko") || String(a.date || "").localeCompare(String(b.date || "")));
+    return all.filter((r) => (!y || String(yearOf(r)) === y) && (!u || univName(r.univ) === u) && (isNewForm(r) || (old && r.questions)))
+      .sort((a, b) => univName(a.univ).localeCompare(univName(b.univ), "ko") || String(a.date || "").localeCompare(String(b.date || "")));
   };
   const rowOf = (r, withName) => [...(withName ? [r.studentNo || "", r.name || ""] : []), yearOf(r) || "", r.univ || "", r.dept || "", r.admission || "", r.format || "",
     r.date || "", r.procedure || "", qaText(r), r.notes || ""].map(String);

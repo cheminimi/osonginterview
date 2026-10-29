@@ -1,7 +1,7 @@
 import {
   db, collection, doc, addDoc, updateDoc, deleteDoc, writeBatch, serverTimestamp,
   $, $$, esc, toast, showError, copyText, parseLooseJSON, typeBadge, TYPES, FIELDS, TRACKS,
-  deleteField, passageItems, passageReady, passageSchool, PASSAGE_MAX_ITEMS
+  deleteField, passageItems, passageReady, passageSchool, PASSAGE_MAX_ITEMS, univName
 } from "./common.js";
 import { S, register, openModal, closeModal, readForm, lines, opt, ensureBank } from "./t-core.js";
 import { bankPrompt } from "./prompts.js";
@@ -43,7 +43,7 @@ export function init(el) {
 
 // 시간(초) → "10분" · "1분 30초"
 const minTxt = (sec) => { const n = Math.round(Number(sec) || 0); const m = Math.floor(n / 60), r = n % 60; return m && r ? `${m}분 ${r}초` : m ? `${m}분` : `${r}초`; };
-const schoolsOf = () => [...new Set(S.bank.filter((q) => q.type === "passage").map((q) => String(q.univ || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
+const schoolsOf = () => [...new Set(S.bank.filter((q) => q.type === "passage").map((q) => univName(q.univ)).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
 const isOldPassage = (q) => q.type === "passage" && !String(q.univ || "").trim();
 const searchText = (q) => `${q.text}${q.passage}${(q.majors || []).join()}${q.univ || ""}${q.admission || ""}${q.topic || ""}${passageItems(q).map((x) => x.q).join()}`;
 
@@ -61,7 +61,7 @@ function render() {
   uSel.hidden = !schools.length;
   const t = $("#bType", root).value, f = $("#bField", root).value, u = uSel.value, kw = $("#bSearch", root).value.trim();
   const list = S.bank.filter((q) => (!t || q.type === t) && (!f || q.track === f)
-    && (!u || (q.type === "passage" && String(q.univ || "").trim() === u))
+    && (!u || (q.type === "passage" && univName(q.univ) === u))
     && (!kw || searchText(q).includes(kw)));
   $("#bSelBar", root).hidden = !sel.size;
   $("#bSelCount", root).textContent = `${sel.size}개 선택됨`;
@@ -121,7 +121,7 @@ export function normalizeBank(d) {
   // 제시문: 학교·전형·주제·문항 목록. 숙독·답변 시간은 기본값으로 채우지 않는다 (선생님이 반드시 넣음 — 비면 null)
   const items = passageItems(d).slice(0, PASSAGE_MAX_ITEMS);
   const sec = (x) => { const n = num(x, null); return n != null && n > 0 ? Math.round(n) : null; };
-  return { ...base, univ: String(d.univ || "").trim(), admission: String(d.admission || "").trim(), topic: String(d.topic || "").trim(),
+  return { ...base, univ: univName(d.univ), admission: String(d.admission || "").trim(), topic: String(d.topic || "").trim(),
     items, text: items[0]?.q || base.text, prepSec: sec(d.prepSec), answerSec: sec(d.answerSec) };
 }
 /** 예전 제시문의 text("(1) … (2) …")를 문항으로 나눔 — 줄 머리·띄어쓰기 뒤의 (1) 1. 1) ① 를 경계로 */
@@ -140,7 +140,7 @@ function edit(q = null) {
   const old = isP0 && !String(v.univ || "").trim();
   const items0 = isP0 ? (passageItems(v).length ? passageItems(v).map((x) => x.q) : splitOldPassageText(v.text)) : [];
   const minVal = (sec) => (!old && Number(sec) > 0 ? String(Math.round(Number(sec) / 6) / 10) : "");
-  const univs = [...new Set([...schoolsOf(), ...(S.interviews || []).map((x) => String(x.univ || "").trim()).filter(Boolean)])].sort((a, b) => a.localeCompare(b, "ko"));
+  const univs = [...new Set([...schoolsOf(), ...(S.interviews || []).map((x) => univName(x.univ)).filter(Boolean)])].sort((a, b) => a.localeCompare(b, "ko"));
   const adms = [...new Set([...S.bank.filter((x) => x.type === "passage").map((x) => String(x.admission || "").trim()), ...(S.interviews || []).map((x) => String(x.admission || "").trim())].filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
   const body = openModal(q ? "질문 수정" : "질문 추가", `<form id="f" novalidate>
     <div class="grid grid-2" style="gap:0 14px">

@@ -2,7 +2,7 @@
 // 파란 '오늘 면접' 칸 안에 '내 담당 학생 일정' 줄 + 맨 아래 학교 전체 한 줄 → 누르면 팝업(오늘|내일 · 대학별|내 담당만).
 // 읽기: interviews 캐시는 학생이 결과를 눌러도 '바뀜' 표시를 못 올려서(규칙) 늦게 보일 수 있다 →
 //   오늘·내일 해당 줄만 따로 실시간으로 읽는다 (firstAnnounce == 오늘/내일, date == 오늘/내일) + 오늘 면접 후기(reviews date == 오늘).
-import { db, collection, query, where, onSnapshot, $, $$, esc, isoDay, fmtDay } from "./common.js";
+import { db, collection, query, where, onSnapshot, $, $$, esc, isoDay, fmtDay, univName, sameUniv } from "./common.js";
 import { S, myName, myRoles } from "./t-core.js";
 import { openStudent } from "./t-students.js";
 
@@ -38,8 +38,8 @@ function rowsOf(day) {
   const add = (k, x) => {
     const no = String(x.studentNo || "");
     if (!active.has(no)) return;          // 삭제한 학생은 빼기
-    const rv = k === "iv" ? st.rv.find((r) => r.id === x.id || (String(r.studentNo) === no && r.univ === x.univ && (r.dept || "") === (x.dept || "") && r.date === x.date)) : null;
-    out.push({ k, day, id: x.id, no, nm: active.get(no)?.name || x.name || "", univ: String(x.univ || "").trim(), dept: x.dept || "", admission: x.admission || "",
+    const rv = k === "iv" ? st.rv.find((r) => r.id === x.id || (String(r.studentNo) === no && sameUniv(r.univ, x.univ) && (r.dept || "") === (x.dept || "") && r.date === x.date)) : null;
+    out.push({ k, day, id: x.id, no, nm: active.get(no)?.name || x.name || "", univ: univName(x.univ), dept: x.dept || "", admission: x.admission || "",
       r: x.announceResult || "", at: Number(x.announceAt) || 0, rv: rv?.id || "" });
   };
   (st.iv[`firstAnnounce:${d}`] || []).forEach((x) => add("ann", x));

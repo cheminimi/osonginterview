@@ -683,6 +683,44 @@ export function ddayBadge(v) {
   const cls = n <= 7 ? "red" : n <= 21 ? "orange" : "blue";
   return `<span class="badge badge-${cls}">${n === 0 ? "D-DAY" : "D-" + n}</span>`;
 }
+// ---- 학교 이름 (2026-10-29) — 줄임말·영문·메모가 섞여 들어와도 같은 학교로 묶는다
+//   univName: 정식 이름 ('청주대' → '청주대학교', '카이스트' → '한국과학기술원(KAIST)', '…(재제출)' 메모 빼기)
+//   sameUniv: 같은 학교인지. 한 칸에 여러 학교('청주대, 우송대')는 학교마다 정식 이름으로 바꿔 ', ' 로 잇는다
+const UNIV_ALIAS = {
+  "한국과학기술원(KAIST)": ["KAIST", "카이스트", "한국과학기술원"],
+  "광주과학기술원(GIST)": ["GIST", "지스트", "광주과학기술원"],
+  "대구경북과학기술원(DGIST)": ["DGIST", "디지스트", "대구경북과학기술원"],
+  "울산과학기술원(UNIST)": ["UNIST", "유니스트", "울산과학기술원"],
+  "한국에너지공과대학교(KENTECH)": ["KENTECH", "켄텍", "한국에너지공과대학교", "한국에너지공대"],
+  "포항공과대학교": ["포항공과대학", "포항공대", "POSTECH", "포스텍"],
+  "서울과학기술대학교": ["서울과기대", "과기대", "서울과학기술대"],
+  "한국교원대학교": ["교원대", "교원대학교", "한국교원대"],
+  "공주대학교": ["국립공주대학교", "국립공주대", "공주대"],
+  "건국대학교(글로컬)": ["건국대글로컬", "건국대학교글로컬", "건국대글로컬캠퍼스", "건국대학교글로컬캠퍼스", "건국대(글로컬)", "건국대글로컬(충주캠퍼스)", "건국대충주캠퍼스"],
+  "한국외국어대학교": ["한국외대"],
+  "한국기술교육대학교": ["한기대", "코리아텍"]
+};
+const UNIV_CAMPUS = /캠퍼스|분교|글로컬|세종|원주|미래|ERICA|에리카|천안|충주|안성|죽전|국제|경주|익산/i;   // 괄호 안이 이 말이면 캠퍼스로 보고 남김 ('서울'은 본교라 뺌)
+const UNIV_BY = new Map(Object.entries(UNIV_ALIAS).flatMap(([name, al]) => [name, ...al].map((a) => [a.replace(/\s+/g, "").toUpperCase(), name])));
+export function univName(v) {
+  const t = String(v ?? "").trim();
+  if (!t) return "";
+  if (/[,，/]/.test(t)) return t.split(/[,，/]/).map(univName).filter(Boolean).join(", ");
+  const k = t.replace(/\s+/g, "");
+  const hit = UNIV_BY.get(k.toUpperCase());
+  if (hit) return hit;
+  // 괄호는 빼되(메모), 캠퍼스를 적은 괄호는 이름 뒤에 다시 붙인다 (다른 학교로 봐야 함)
+  let camp = "";
+  let s = k.replace(/\(([^)]*)\)|\[([^\]]*)\]/g, (m, a, b) => { if (UNIV_CAMPUS.test(a || b || "")) camp += `(${(a || b).replace(/캠퍼스$/, "")})`; return ""; }).replace(/댜학교$/, "대학교");
+  if (!s) return t;
+  if (!camp && UNIV_BY.has(s.toUpperCase())) return UNIV_BY.get(s.toUpperCase());
+  if (/교대$/.test(s)) s = s.replace(/교대$/, "교육대학교");        // 청주교대 → 청주교육대학교
+  else if (/여대$/.test(s)) s = s.replace(/여대$/, "여자대학교");   // 성신여대 → 성신여자대학교
+  else if (/대$/.test(s)) s += "학교";                              // 청주대 → 청주대학교
+  s = UNIV_BY.get(s.toUpperCase()) || s;
+  return camp ? UNIV_BY.get((s + camp).toUpperCase()) || s + camp : s;
+}
+export const sameUniv = (a, b) => univName(a) === univName(b);
 /** 1차 불합격(학생·선생님이 결과를 '불합격'으로 남긴 대학) — 앞으로 볼 면접·면접 알림·후기 요청에서 뺀다 (2026-10-26) */
 export const announceFailed = (u) => u?.announceResult === "fail";
 // 학생의 다음 면접일 (지원 대학 면접일·최초 면접일 중 오늘 이후 가장 가까운 날)
@@ -744,7 +782,7 @@ export function passageReady(q) {
     && passageItems(q).length > 0 && Number(q.prepSec) > 0 && Number(q.answerSec) > 0;
 }
 /** 학교·전형 한 줄 이름 ("가나대 · 학생부종합 (면접형)") */
-export const passageSchool = (q) => [q?.univ, q?.admission].map((x) => String(x || "").trim()).filter(Boolean).join(" · ");
+export const passageSchool = (q) => [univName(q?.univ), q?.admission].map((x) => String(x || "").trim()).filter(Boolean).join(" · ");
 
 /** '제시문 · MMI' 에서 먼저 고를 쪽: 특별 트랙이 MMI 만이면 "mmi", 아니면 "passage" */
 export function pmKindOf(st) {

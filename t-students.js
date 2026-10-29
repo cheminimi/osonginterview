@@ -1,6 +1,6 @@
 import {
   db, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, $, $$, esc, toast, showError, fmtDate, fmtDay, ddayBadge,
-  TRACKS, SPECIALS, STAGES, nextInterview, serverTimestamp, icon, dday, initials, writeBatch, deleteField
+  TRACKS, SPECIALS, STAGES, nextInterview, serverTimestamp, icon, dday, initials, writeBatch, deleteField, univName, sameUniv
 } from "./common.js";
 import { S, register, rerender, myName, myRoles, stageChips, nextBadge, openModal, closeModal, switchTab, readForm, opt, attachInterviews, loadAllSessions, RECENT_DAYS } from "./t-core.js";
 import { requestSync } from "./sync.js";
@@ -437,7 +437,7 @@ function openInterviewForm(st, iv) {
   // 같은 대학·전형의 다른 학생 줄 (1차 발표일을 함께 넣을 수 있게)
   const sameOthers = () => {
     const u = $("#ivF [name=univ]", body).value.trim(), a = $("#ivF [name=admission]", body).value.trim();
-    return u ? S.interviews.filter((x) => x.id !== iv?.id && String(x.univ || "").trim() === u && String(x.admission || "").trim() === a) : [];
+    return u ? S.interviews.filter((x) => x.id !== iv?.id && sameUniv(x.univ, u) && String(x.admission || "").trim() === a) : [];
   };
   const drawSame = () => {
     const n = sameOthers().length, a = $("#ivF [name=admission]", body).value.trim();
@@ -455,7 +455,7 @@ function openInterviewForm(st, iv) {
     const firstAnnounce = f.noFirst ? "없음" : (f.firstAnnounce || "");
     const by = myName() || S.ctx.user.email;
     const data = {
-      studentNo: st.studentNo, name: st.name, univ: f.univ, dept: f.dept, admission: f.admission, format: f.format, date: f.date,
+      studentNo: st.studentNo, name: st.name, univ: univName(f.univ), dept: f.dept, admission: f.admission, format: f.format, date: f.date,
       firstAnnounce, updatedAt: Date.now(), updatedBy: by
     };
     const others = f.sameAll ? sameOthers() : [];

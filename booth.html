@@ -506,7 +506,7 @@ import {
   auth, db, signIn, signOut, resolveLoginEmail, requireRole, clearDataCache,
   collection, doc, getDoc, getDocs, addDoc, updateDoc, setDoc, serverTimestamp, cachedCollection, loadInterviewsFor,
   recommendedModes, pmKindOf, esc, $, $$, toast, showError, TYPES, fmtSec, shuffle, isAdminEmail, query, where, isoDay,
-  passageReady, passageItems, passageSchool, announceFailed
+  passageReady, passageItems, passageSchool, announceFailed, univName
 } from "./common.js";
 import { daySlots, slotId, boothConfigOf } from "./booth-booking.js";   // 부스 예약 칸 계산 (스튜디오 예약 화면과 같은 계산)
 import { scheduleConfigOf } from "./schedule.js";
@@ -1912,7 +1912,7 @@ async function loadPool() {
       loadInterviewsFor(p.studentNo).catch(() => [])
     ]);
     depts = ivs.map((u) => u.dept || "").filter(Boolean);
-    myUnivs = ivs.filter((u) => !announceFailed(u)).map((u) => String(u.univ || "").trim()).filter(Boolean);   // 제시문 학교 고르기의 '내 지원 대학' (1차 불합격 대학은 빼기 — 혼자 연습과 같음)
+    myUnivs = ivs.filter((u) => !announceFailed(u)).map((u) => univName(u.univ)).filter(Boolean);   // 제시문 학교 고르기의 '내 지원 대학' (1차 불합격 대학은 빼기 — 혼자 연습과 같음)
     const relevant = (q) => !q.majors?.length || depts.some((d) => q.majors.some((m) => d.includes(m)));
     // 스튜디오 혼자 연습(interview.html)과 같은 규칙
     const bankQ = bank.filter((q) => q.text).map((q) => ({ ...q, source: "bank" }));
@@ -2389,11 +2389,23 @@ const setSteps = (it, isF) => !it.pNo ? "" : `<div class="psteps">${Array.from({
 function schoolGroups() {
   const by = new Map();
   (poolBy.passage || []).forEach((q) => {
-    const key = `${String(q.univ).trim()}|${String(q.admission || "").trim()}`;
-    if (!by.has(key)) by.set(key, { key, univ: String(q.univ).trim(), adm: String(q.admission || "").trim(), name: passageSchool(q), list: [] });
+    const key = `${univName(q.univ)}|${String(q.admission || "").trim()}`;   // '가나대'·'가나대학교'는 한 학교 (혼자 연습과 같음)
+    if (!by.has(key)) by.set(key, { key, univ: univName(q.univ), adm: String(q.admission || "").trim(), name: passageSchool(q), list: [] });
     by.get(key).list.push(q);
   });
   return [...by.values()].map((g) => ({ ...g, mine: myUnivs.includes(g.univ) })).sort((a, b) => (b.mine - a.mine) || a.name.localeCompare(b.name, "ko"));
+}
+// 말로 고를 때 쓰는 이름: 정식 이름 · 괄호 뺀 이름 · 줄인 이름('○○대학교' → '○○대', '○○여자대학교' → '○○여대', '○○교육대학교' → '○○교대') · 괄호 안 영문(KAIST)
+const univShort = (u) => { const b = String(u).replace(/\([^)]*\)/g, ""); return b.replace(/교육대학교$/, "교대").replace(/여자대학교$/, "여대").replace(/대학교$/, "대"); };
+function univSays(u) {
+  const b = String(u).replace(/\([^)]*\)/g, ""), inP = (String(u).match(/\(([A-Za-z]+)\)/) || [])[1];
+  return [...new Set([u, b, univShort(u), inP].filter(Boolean).map(norm))].filter((x) => x.length >= 2);
+}
+// 말한 학교 → 맞는 묶음들. 가장 길게 맞은 이름이 먼저('고려대학교(세종)' vs '고려대학교'). 낱말 하나를 정식 이름으로 바꿔 맞추기도 함('카이스트')
+function univHits(gs, text) {
+  const n = norm(text), words = String(text).split(/\s+/).map((w) => w.replace(/(으로|이요|이랑|로|요|랑)$/, "")).filter(Boolean);
+  return gs.map((g) => ({ g, len: Math.max(0, ...univSays(g.univ).filter((x) => n.includes(x)).map((x) => x.length), ...(words.some((w) => univName(w) === g.univ) ? [1] : [])) }))
+    .filter((x) => x.len > 0).sort((a, b) => b.len - a.len).map((x) => x.g);
 }
 // 학교·전형 카드 → 그 안에서 제시문 하나 (대답이 없으면 내 지원 대학 → 없으면 아무거나 · 하나뿐이면 묻지 않음)
 async function schoolPhase() {
@@ -2409,7 +2421,7 @@ async function schoolPhase() {
     side(`<div class="phase-l">제시문 면접 · 학교·전형</div><h1 class="ttl">어느 학교 제시문으로 할까요?</h1>
       <div class="ycards">${gs.map(card).join("")}<button type="button" class="ycard ${sel === "any" ? "on" : ""}" data-card="any"><b>아무거나</b><span>모든 제시문 중 하나</span></button></div>
       <div class="info"><p>고른 학교·전형 안에서 제시문 하나를 골라요. 숙독·답변 시간은 그 제시문에 선생님이 정한 시간이에요.</p></div>
-      ${lstat(`듣는 중 · “${gs[0].univ}” 또는 “아무거나” · 대답이 없으면 ${def ? `내 지원 대학(${def.name})` : "아무거나"}로 해요`)}`);
+      ${lstat(`듣는 중 · “${univShort(gs[0].univ)}” 또는 “아무거나” · 대답이 없으면 ${def ? `내 지원 대학(${def.name})` : "아무거나"}로 해요`)}`);
   };
   const done = async (g) => {
     sel = g ? g.key : "any"; draw();
@@ -2426,7 +2438,7 @@ async function schoolPhase() {
     let c = e.type === "btn" ? e.name : null;
     if (e.type === "text" && e.final) {
       const n = norm(e.text);
-      const hit = gs.filter((g) => n.includes(norm(g.univ)));
+      const hit = univHits(gs, e.text);
       if (hit.length) return done(hit.find((g) => g.adm && n.includes(norm(g.adm))) || hit[0]);
       if (cmdOf(e.text, ["random"], false)) return done(null);
       c = cmdOf(e.text, ["next", "yes", "again", "end"], false);
@@ -2486,7 +2498,7 @@ async function pickSetFollow(it) {
 // 세트 하나: "done" | "end"(면접 종료) | "noreply"
 async function runPassageSet() {
   const q = pset, qs = passageItems(q).map((x) => x.q), n = qs.length, by0 = panel.nextSpeaker().id;
-  passageRec = { qid: q.id || "", univ: String(q.univ || "").trim(), admission: String(q.admission || "").trim(), topic: String(q.topic || "").trim(), n,
+  passageRec = { qid: q.id || "", univ: univName(q.univ), admission: String(q.admission || "").trim(), topic: String(q.topic || "").trim(), n,
     readSec: Number(q.prepSec), readUsedSec: 0, answerSec: Number(q.answerSec), answerUsedSec: 0, done: false, timeUp: false };
   if ((await readPhase(by0)) === "end") return "end";
   let used = 0, last = null;

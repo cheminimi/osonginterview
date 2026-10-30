@@ -717,7 +717,8 @@ async function renderReviewExport() {
   $("#rxReload", p).onclick = async () => { await loadReviews(true); renderReviewExport(); };
   $("#rxGo", p).onclick = () => {
     const list = pick(), withName = $("#rxName", p).checked;
-    const cell = (v) => `"${String(v).replace(/"/g, '""')}"`;
+    // = + - @ (또는 탭·줄바꿈)로 시작하는 값은 엑셀이 수식으로 실행하지 않게 앞에 ' 를 붙인다 (파일에만, 미리 보기는 그대로)
+    const cell = (v) => { const t = String(v); return `"${(/^[=+\-@\t\r\n]/.test(t) ? "'" + t : t).replace(/"/g, '""')}"`; };
     const lines = [[...(withName ? ["학번", "이름"] : []), ...RVX_HEAD], ...list.map((r) => rowOf(r, withName))].map((row) => row.map(cell).join(","));
     const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");

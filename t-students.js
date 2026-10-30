@@ -202,12 +202,17 @@ function stagePills(s) {
   }).join("");
 }
 
+// 학생 상세 '대면 모의면접 기록'·'말하기 연습' 접기 (2026-10-30): 처음엔 접힘, 펼친 상태는 이 브라우저에 기억
+const foldOpen = (k) => { try { return localStorage.getItem("stFold:" + k) === "1"; } catch { return false; } };
+const foldSave = (k, v) => { try { localStorage.setItem("stFold:" + k, v ? "1" : "0"); } catch {} };
+
 export async function openStudent(no) {
   const s = S.students.find((x) => x.studentNo === no);
   if (!s) return;
   const a = s.assign || {};
   const meets = S.meetings.filter((m) => m.studentNo === no).sort((x, y) => (x.date || "").localeCompare(y.date || ""));
   const sess = S.sessions.filter((x) => x.studentNo === no);
+  const submitted = sess.filter((x) => x.status === "submitted");
   const d = nextInterview(s);
   const bk = (S.bookings || []).filter((b) => b.studentNo === no && (b.status === "requested" || b.status === "confirmed"))
     .sort((x, y) => (x.date + x.start).localeCompare(y.date + y.start));
@@ -264,14 +269,19 @@ export async function openStudent(no) {
         <td class="nowrap"><button class="btn-sm" data-iv="${u.id}">수정</button></td></tr>`).join("")}
       </tbody></table></div>` : '<div class="muted">등록된 면접일이 없습니다.</div>'}
 
-    <div class="section-title"><h3>대면 모의면접 기록</h3>${stageChips(s)}</div>
-    <div id="meetList">${meets.length ? meets.map((m) => meetingSummaryHtml(m)).join("") : '<div class="muted">아직 없습니다.</div>'}</div>
+    <details class="st-fold" data-fold="meet"${foldOpen("meet") ? " open" : ""}><summary><h3>대면 모의면접 기록</h3>${stageChips(s)}<span class="muted">${meets.length}건</span><span class="st-fold-ar" aria-hidden="true"></span></summary>
+      <div class="st-fold-in"><div id="meetList">${meets.length ? meets.map((m) => meetingSummaryHtml(m)).join("") : '<div class="muted">아직 없습니다.</div>'}</div></div>
+    </details>
 
-    <div class="section-title"><h3>말하기 연습</h3><span class="muted">예상질문 ${s.pqCount || 0}개 · 제출 ${sess.filter((x) => x.status === "submitted").length}회${S.sessionsScope === "all" ? "" : ` (최근 ${RECENT_DAYS}일) <a href="#" id="sessAll">전체 보기</a>`}</span>
-      <div class="spacer"></div><button class="btn-sm" id="toQ">예상질문 관리 →</button></div>
-    ${sess.length ? sess.slice(0, 8).map((x) => `<div class="q-item clickable" data-sid="${x.id}" style="cursor:pointer">
-      <b>${esc(x.modeLabel)}</b> <span class="muted">${fmtDate(x.startedAt)} · ${(x.items || []).length}문항</span>
-      ${x.status !== "submitted" ? '<span class="badge badge-gray">미완료</span>' : x.reviewedAt ? '<span class="badge badge-green">검토 완료</span>' : '<span class="badge badge-orange">검토 대기</span>'}</div>`).join("") : '<div class="muted">연습 기록 없음</div>'}
+    <details class="st-fold" data-fold="sess"${foldOpen("sess") ? " open" : ""}><summary><h3>말하기 연습</h3><span class="muted">예상질문 ${s.pqCount || 0}개 · 제출 ${submitted.length}회 · 검토 대기 ${submitted.filter((x) => !x.reviewedAt).length}${S.sessionsScope === "all" ? "" : ` (최근 ${RECENT_DAYS}일)`}</span><span class="st-fold-ar" aria-hidden="true"></span></summary>
+      <div class="st-fold-in">
+        <div class="row st-fold-top">${S.sessionsScope === "all" ? "" : `<span class="muted">최근 ${RECENT_DAYS}일만 보여요 · <a href="#" id="sessAll">전체 보기</a></span>`}
+          <div class="spacer"></div><button class="btn-sm" id="toQ">예상질문 관리 →</button></div>
+        ${sess.length ? sess.slice(0, 8).map((x) => `<div class="q-item clickable" data-sid="${x.id}" style="cursor:pointer">
+          <b>${esc(x.modeLabel)}</b> <span class="muted">${fmtDate(x.startedAt)} · ${(x.items || []).length}문항</span>
+          ${x.status !== "submitted" ? '<span class="badge badge-gray">미완료</span>' : x.reviewedAt ? '<span class="badge badge-green">검토 완료</span>' : '<span class="badge badge-orange">검토 대기</span>'}</div>`).join("") : '<div class="muted">연습 기록 없음</div>'}
+      </div>
+    </details>
 
     <div class="section-title"><h3>교사 메모</h3><span class="muted">학생에게 보이지 않음</span></div>
     <textarea id="noteText" placeholder="메모를 불러오는 중…" readonly></textarea>
@@ -324,6 +334,7 @@ export async function openStudent(no) {
   $("#writeMeet", body).onclick = () => openMeetingForm({ studentNo: no });
   $("#sessAll", body)?.addEventListener("click", async (e) => { e.preventDefault(); try { await loadAllSessions(); refreshDetail(no); } catch (err) { showError(err, "연습 기록 불러오기"); } });
   $("#toQ", body).onclick = () => { closeModal(); switchTab("questions"); selectStudentForQuestions(no); };
+  $$("details.st-fold", body).forEach((el) => el.addEventListener("toggle", () => foldSave(el.dataset.fold, el.open)));
   $$("[data-sid]", body).forEach((el) => el.onclick = () => openReview(el.dataset.sid));
   $$("[data-mid]", body).forEach((el) => el.onclick = () => openMeetingForm({ id: el.dataset.mid }));
 

@@ -1636,6 +1636,17 @@ body.nd .rv-miss > summary .ar { color: var(--ink-3); display: grid; transform: 
 body.nd .rv-miss[open] > summary .ar { transform: rotate(-90deg); }
 body.nd .rv-miss .table-wrap { border-top: 1px solid var(--line); }
 body.nd .rv-miss td.today { color: var(--warn); font-weight: 700; }
+/* 학생 상세 '대면 모의면접 기록'·'말하기 연습' 접기 (2026-10-30) — 접힌 줄에 요약, 오른쪽 끝 펼치기/접기 */
+body.nd .st-fold { background: #fff; border: 1px solid var(--line); border-radius: 18px; margin: 16px 0 0; overflow: hidden; }
+body.nd .st-fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 16px; }
+body.nd .st-fold > summary::-webkit-details-marker { display: none; }
+body.nd .st-fold > summary h3 { margin: 0; font-size: .98rem; }
+body.nd .st-fold > summary .muted { font-size: .85rem; min-width: 0; }
+body.nd .st-fold-ar { margin-left: auto; color: var(--ink-3); font-size: .82rem; white-space: nowrap; }
+body.nd .st-fold-ar::after { content: "펼치기 ▾"; }
+body.nd .st-fold[open] .st-fold-ar::after { content: "접기 ▴"; }
+body.nd .st-fold-in { border-top: 1px solid var(--line); padding: 10px 16px 14px; }
+body.nd .st-fold-top { margin: 0 0 8px; }
 body.nd .rv-miss td.late { color: var(--danger); font-weight: 700; }
 body.nd .rv-miss .sm, body.nd #mBody .muted.sm { font-size: .82rem; }
 body.nd .rv-qa-view p { margin: 0 0 4px; white-space: pre-wrap; }

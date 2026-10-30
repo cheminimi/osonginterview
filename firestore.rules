@@ -189,6 +189,45 @@ service cloud.firestore {
       allow read, write: if isStaff();
     }
 
+    // ================= 학생부 (2026-10-30 3단계) =================
+    // 가림본 학생부: 그 학생 배정 선생님(1차 s1 · 2차 s2 · 3차 s3a·s3b) + 관리자만. 넣기는 1차 담임·관리자.
+    // 동기화 계정(sync)·학생·부스 계정은 못 읽음 → 백업(앱·드라이브)에도 들어가지 않음.
+    // 이름 비교는 앱의 myRoles 와 같은 기준(교사 계정 staff 이름 == 배정 칸). 이름이 비어 있으면 안 됨
+    function staffName() { return get(/databases/$(database)/documents/staff/$(acct().key)).data.get('name', ''); }
+    function recAssign(no) { return get(/databases/$(database)/documents/students/$(no)).data.get('assign', {}); }
+    function assignedTo(no) {
+      let a = recAssign(no);
+      let n = staffName();
+      return n != '' && n in [a.get('s1', ''), a.get('s2', ''), a.get('s3a', ''), a.get('s3b', '')];
+    }
+    function canSeeRecord(no) { return isAdmin() || (hasAcct() && acct().role == 'teacher' && assignedTo(no)); }
+    function canUploadRecord(no) { return isAdmin() || (hasAcct() && acct().role == 'teacher'
+      && staffName() != '' && staffName() == recAssign(no).get('s1', '')); }
+    match /records/{no} {
+      allow read: if canSeeRecord(no);
+      allow create, update: if canUploadRecord(no);
+      allow delete: if isAdmin();
+      // 하이라이트·질문 표시. 남의 것은 자리(sec·row·start·end)·연결(qid)만 고칠 수 있음 — 다시 넣기·질문 공개 때 (사용자 결정 2026-10-30)
+      match /marks/{id} {
+        allow read: if canSeeRecord(no);
+        allow create: if canSeeRecord(no) && request.resource.data.byUid == request.auth.uid;
+        allow update: if canSeeRecord(no) && (resource.data.byUid == request.auth.uid || isAdmin()
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sec', 'row', 'start', 'end', 'qid']));
+        allow delete: if canSeeRecord(no) && (resource.data.byUid == request.auth.uid || isAdmin() || canUploadRecord(no));
+      }
+      // '면접 뒤 공개' 질문 (공개 전). 학생은 못 읽음. 대면 기록 저장 때 같은 차수 다른 선생님 질문도 공개로 옮길 수 있게
+      match /pending/{id} {
+        allow read: if canSeeRecord(no);
+        allow create: if canSeeRecord(no) && request.resource.data.byUid == request.auth.uid;
+        allow update, delete: if canSeeRecord(no);
+      }
+    }
+    // 열람·넣기·지우기·공개 기록. 관리자만 읽음, 지우기 없음 (입시 후 일괄 삭제 때도 남김 — 사용자 결정 2026-10-30)
+    match /recordLogs/{id} {
+      allow create: if canSeeRecord(request.resource.data.studentNo) && request.resource.data.byUid == request.auth.uid;
+      allow read: if isAdmin();
+    }
+
     // 시트 동기화 설정 등. 'schedule'(시간표·장소·동기화 주소)은 학생도 읽기
     match /config/{docId} {
       // push: 웹 푸시 공개 키 (원래 공개되는 값 · 학생도 읽어야 알림을 켤 수 있음)

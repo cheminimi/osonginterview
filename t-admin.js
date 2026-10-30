@@ -4,6 +4,7 @@ import {
   deleteField, TRACKS, SPECIALS, isoDay, confirmBox, univName
 } from "./common.js";
 import { S, register, rerender, loadAll, openModal, closeModal, opt, studentByNo, myName, readForm } from "./t-core.js";
+import { renderRecordAdmin } from "./t-record.js";
 import { getDoc, clearDataCache, readStats, getMetaVersions } from "./common.js";
 import { firebaseConfig } from "./firebase-config.js";
 import { importStaff } from "./importers.js";
@@ -25,6 +26,7 @@ export function init(el) {
       <button data-ad="push">⑥ 휴대폰 알림</button>
       <button data-ad="rvx">⑦ 면접 후기 내보내기</button>
       <button data-ad="booth">⑧ 면접 부스 PC</button>
+      <button data-ad="rec">⑨ 학생부</button>
     </div>
     <div data-adpanel="sync"></div>
     <div data-adpanel="staff" hidden></div>
@@ -33,11 +35,12 @@ export function init(el) {
     <div data-adpanel="backup" hidden></div>
     <div data-adpanel="push" hidden></div>
     <div data-adpanel="rvx" hidden></div>
-    <div data-adpanel="booth" hidden></div>`;
+    <div data-adpanel="booth" hidden></div>
+    <div data-adpanel="rec" hidden></div>`;
   $$("[data-ad]", root).forEach((b) => b.onclick = () => {
     $$("[data-ad]", root).forEach((x) => x.classList.toggle("active", x === b));
     $$("[data-adpanel]", root).forEach((p) => p.hidden = p.dataset.adpanel !== b.dataset.ad);
-    ({ sync: renderSync, sched: renderSched, backup: renderBackup, push: renderPush, rvx: renderReviewExport, booth: renderBoothPcs })[b.dataset.ad]?.();   // 설정 문서는 탭을 열 때만 읽기
+    ({ sync: renderSync, sched: renderSched, backup: renderBackup, push: renderPush, rvx: renderReviewExport, booth: renderBoothPcs, rec: () => renderRecordAdmin($("[data-adpanel=rec]", root)) })[b.dataset.ad]?.();   // 설정 문서는 탭을 열 때만 읽기
   });
   register("admin", render);
 }
@@ -743,7 +746,7 @@ async function renderBackup() {
     <div class="grid grid-2" style="align-items:start">
       <div class="card">
         <h3>백업</h3>
-        <p class="muted" style="margin-top:0">학생·면접일·대면 기록은 구글 시트에도 남지만, <b>말하기 연습 답변 · 예상질문 · 대학 면접 후기 · 대면 기록 선생님 메모 · 일정 · 교사 메모</b>는 앱에만 있어요. 무료 요금제는 자동 백업이 없으니 주기적으로 받아 두세요.</p>
+        <p class="muted" style="margin-top:0">학생·면접일·대면 기록은 구글 시트에도 남지만, <b>말하기 연습 답변 · 예상질문 · 대학 면접 후기 · 대면 기록 선생님 메모 · 일정 · 교사 메모</b>는 앱에만 있어요. 무료 요금제는 자동 백업이 없으니 주기적으로 받아 두세요. <b>학생부(가림본)는 백업하지 않아요.</b></p>
         <dl class="kv"><dt>마지막 드라이브 백업</dt><dd>${last ? `${fmt(last.at)} · ${esc(last.file || "")} · ${last.total || 0}건` : '<span class="muted">아직 없음</span>'}</dd></dl>
         <div class="row" style="margin-top:10px">
           <button class="btn-primary" id="bkDrive">지금 드라이브에 백업</button>

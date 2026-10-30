@@ -3,6 +3,7 @@ import { S, register, rerender, myName, myRoles, setDot, switchTab, applyHead } 
 import { mountSchedule } from "./schedule.js";
 import { mountBoothBooking, mountSchedSwitch } from "./booth-booking.js";
 import { openMeetingForm } from "./t-meetings.js";
+import { mountRecButtons } from "./t-record.js";
 import { $ } from "./common.js";
 
 let sched, booth = null, view = null;
@@ -57,7 +58,12 @@ export function init(el) {
       rerender("home");
       applyHead();
     },
-    openMeeting: (b) => openBookingRecord(b)
+    openMeeting: (b) => openBookingRecord(b),
+    // 일정 상세 [학생부 보기]: 그 차수 담당·관리자이고 학생부가 있을 때만
+    onDetail: (b, el, close) => {
+      const st = S.students.find((x) => x.studentNo === b.studentNo);
+      if (st) mountRecButtons(el, st, { stage: b.stage, viewOnly: true, before: close, preset: { id: "bk_" + b.id, stage: b.stage, date: b.date, teachers: b.teachers, bookingId: b.id } });
+    }
   });
   register("schedule", () => { sched.render(); booth?.render(); });
 }

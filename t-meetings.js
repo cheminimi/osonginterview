@@ -5,6 +5,7 @@ import {
 import { S, register, rerender, myName, openModal, closeModal, readForm, opt, studentOptions, studentByNo } from "./t-core.js";
 import { requestSync } from "./sync.js";
 import { queueNotify } from "./notify.js";
+import { canSeeRec, loadPending, publishPending } from "./t-record.js";
 
 let root;
 export function init(el) {
@@ -236,7 +237,7 @@ export const cachedMeetingNotes = (no) => notesByNo[no] || null;
 export function rowsOf(m, note) {
   const lines = qLines(m?.questions);
   const items = (note?.items || []).filter((i) => i && typeof i.q === "string" && i.q.trim());
-  const copy = (i, q) => ({ id: i?.id || newQid(), q, memo: i?.memo || "", again: !!i?.again, ...(i?.from ? { from: i.from } : {}) });
+  const copy = (i, q) => ({ id: i?.id || newQid(), q, memo: i?.memo || "", again: !!i?.again, ...(i?.from ? { from: i.from } : {}), ...(i?.pend ? { pend: i.pend } : {}), ...(i?.pq ? { pq: i.pq } : {}) });
   if (items.length && items.map((i) => i.q.trim()).join("\n") === lines.join("\n")) return items.map((i) => copy(i, i.q.trim()));
   const pool = items.slice();
   return lines.map((q) => {
@@ -304,16 +305,46 @@ async function addReceivedToPq(no, stage, meetingId, qs) {
   return add.length;
 }
 
+// '지난 면접' (선생님만): 맨 위 '↻ 다시 물어볼 것' + 기록 카드. 대면 기록 창 오른쪽 칸·학생부 화면 '지난 면접' 탭이 같이 씀
+// opts: exceptMid(지금 쓰는 기록) · used(이미 넣은 '다시' 칸 "mid:qid") · put(a) [받은 질문에 넣기]
+export function renderPast(el, no, notes, { exceptMid = "", used = new Set(), put = null, putLabel = "받은 질문에 넣기" } = {}) {
+  const others = S.meetings.filter((x) => String(x.studentNo) === String(no) && !x.planned && x.id !== exceptMid)
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+  const ag = againList(no, notes, exceptMid);
+  let h = '<h4>지난 면접 <span class="mt-lock">선생님만</span></h4>';
+  if (!others.length) h += `<div class="mt-pc muted sm">이 학생의 첫 대면 기록이에요.<br>여기서 <b>↻ 다음 차수에 다시</b>를 누른 질문은 다음 차수 선생님의 이 칸 맨 위에 보여요.</div>`;
+  if (ag.length) h += `<div class="mt-aq"><b>↻ 다시 물어볼 것 ${ag.filter((a) => !used.has(a.mid + ":" + a.qid)).length}</b>${ag.map((a) => `<div class="mt-qa">
+      <span class="badge">${stageLabel(a.stage)} · ${esc(a.by)}</span> <b>${esc(a.q)}</b>${a.memo ? `<div class="mt-m">답 메모 · ${esc(a.memo)}</div>` : ""}
+      ${used.has(a.mid + ":" + a.qid) ? `<div class="mt-done">${putLabel === "받은 질문에 넣기" ? "받은 질문에 넣었어요" : "질문 칸에 넣었어요"} ✓</div>` : put ? `<button type="button" class="btn-sm" data-put="${esc(a.mid)}:${esc(a.qid)}">${esc(putLabel)}</button>` : ""}</div>`).join("")}</div>`;
+  h += others.map((x) => {
+    const n = notes[x.id], rs = rowsOf(x, n);
+    const kv = (k, v) => v ? `<div class="mc-kv"><b>${k}</b> ${esc(v)}</div>` : "";
+    return n ? `<div class="mt-pc"><div class="row"><span class="badge">${stageLabel(x.stage)}</span><b>${fmtDay(x.date)} · ${esc((x.teachers || []).join(", "))}</b></div>
+        ${rs.map((r) => `<div class="mt-qa">${r.again ? "↻ " : ""}${esc(r.q)}${r.memo ? `<div class="mt-m">${esc(r.memo)}</div>` : ""}</div>`).join("")}
+        ${kv("보완할 점", x.improve)}${kv("다음 목표", x.nextGoal)}${kv("선생님 메모", n.note)}</div>`
+      : `<div class="mt-pc legacy"><div class="row"><span class="badge">${stageLabel(x.stage)}</span><b>${fmtDay(x.date)} · ${esc((x.teachers || []).join(", "))}</b></div>
+        ${rs.length ? kv("받은 질문", rs.map((r) => r.q).join(" · ")) : ""}${kv("보완할 점", x.improve)}${kv("다음 목표", x.nextGoal)}</div>`;
+  }).join("");
+  el.innerHTML = h;
+  $$("[data-put]", el).forEach((b) => b.onclick = () => {
+    const [mid, qid] = b.dataset.put.split(":");
+    const a = ag.find((x) => x.mid === mid && x.qid === qid);
+    if (a && put) put(a);
+  });
+  return ag;
+}
+
 // 쓰던 내용 임시 저장 (이 브라우저에만, 저장하면 지움)
 const draftGet = (k) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } };
 const draftPut = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } };
 const draftDel = (k) => { try { localStorage.removeItem(k); } catch {} };
 
 // preset: 일정 탭 '대면 기록 쓰기' → { id: 'bk_예약ID', stage, date, teachers, bookingId }
-export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
+// fromRecord: 학생부 화면 [기록 쓰기 →] → { stage, rows: [{ q, memo, again, pend?, pq?, from? }] } ('물어봄'한 질문 — 글·메모·id 만, 학생부 글은 넘기지 않음)
+export function openMeetingForm({ id = null, studentNo = "", preset = null, fromRecord = null }) {
   const m = id ? S.meetings.find((x) => x.id === id) : null;
   const st0 = studentByNo(m?.studentNo || studentNo);
-  const stage0 = m?.stage || preset?.stage || (st0 ? guessStage(st0) : 1);
+  const stage0 = m?.stage || preset?.stage || fromRecord?.stage || (st0 ? guessStage(st0) : 1);
   const teachers0 = m?.teachers || preset?.teachers || defaultTeachers(st0, stage0);
   const staffNames = [...new Set([...S.staff.map((t) => t.name), ...teachers0])];
   // '내 생기부 면접에도 넣기' 기본값 (사용자 결정 2026-10-30): 새 기록·'일정 확정 · 기록 전'(planned) 자리를 처음 채울 때는 켜짐,
@@ -353,6 +384,8 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
       <div class="muted sm" id="mNoteSt">선생님 메모를 불러오는 중…</div>
     </div>
     <label class="inline-check"><input type="checkbox" name="shared" ${!m || m.shared || m.planned || !hasContent(m) ? "checked" : ""}> 학생 화면에 피드백 공개 <span class="muted sm">(받은 질문 · 피드백 4칸)</span></label>
+    <label class="inline-check" id="mPendBox" hidden><input type="checkbox" id="mPend" checked> 이 차수 학생부 질문 <b id="mPendN">0</b>개도 학생에게 공개
+      <span class="muted sm" style="display:block">학생부 화면에서 '면접 뒤 공개'로 만든 <span id="mPendSt">${stage0}</span>차 질문이 학생 '내 생기부 면접'으로 옮겨져요. (공개할 때만)</span></label>
     <label class="inline-check" style="margin-bottom:14px"><input type="checkbox" id="mToPq" ${written ? "" : "checked"}> 받은 질문을 학생 '내 생기부 면접'에도 넣기
       <span class="muted sm" style="display:block">"<span id="mPqLab">${stage0}</span>차 모의면접에서 받은 질문"으로 더해져요. 이미 있는 질문은 다시 넣지 않고, 예전 질문은 그대로예요. (공개할 때만)</span></label>
     <div class="row">
@@ -384,13 +417,24 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
     linkSel.innerHTML = `<option value="">연결 안 함 (새 기록으로 저장)</option>`
       + cand.map((x) => `<option value="${esc(x.id)}" ${auto && auto.id === x.id ? "selected" : ""}>${fmtDay(x.date)} · ${stageLabel(x.stage)} · ${esc((x.teachers || []).join(", "))}</option>`).join("");
   }
-  selNo.onchange = () => { const st = studentByNo(selNo.value); if (st && !m) selStage.value = guessStage(st); refreshDefaults(); refreshLinks(); loadPast(); onEdit(); };
-  selStage.onchange = () => { refreshDefaults(); refreshLinks(); $("#mPqLab", body).textContent = selStage.value; onEdit(); };
+  selNo.onchange = () => { const st = studentByNo(selNo.value); if (st && !m) selStage.value = guessStage(st); refreshDefaults(); refreshLinks(); loadPast(); loadPend(); onEdit(); };
+  selStage.onchange = () => { refreshDefaults(); refreshLinks(); $("#mPqLab", body).textContent = selStage.value; drawPend(); onEdit(); };
   dateInput.onchange = () => { refreshLinks(); onEdit(); };
   refreshLinks();
 
   // ── 받은 질문 칸 (질문은 학생 공개, 답 메모·다시는 선생님만)
   let rows = rowsOf(m, null);
+  // 학생부 화면에서 '물어봄'한 질문: 같은 글이 이미 있으면 그 칸에 id·메모만 붙이고, 없으면 칸을 더한다
+  const mergeFromRecord = () => {
+    if (!fromRecord?.rows?.length) return;
+    if (rows.length === 1 && !rows[0].q.trim() && !rows[0].memo.trim()) rows = [];
+    fromRecord.rows.forEach((x) => {
+      const hit = rows.find((r) => qKey(r.q) === qKey(x.q));
+      if (hit) { if (x.pend) hit.pend = x.pend; if (x.pq) hit.pq = x.pq; if (x.memo && !hit.memo) hit.memo = x.memo; if (x.again) hit.again = true; if (x.from && !hit.from) hit.from = x.from; }
+      else rows.push({ id: newQid(), q: x.q, memo: x.memo || "", again: !!x.again, ...(x.from ? { from: x.from } : {}), ...(x.pend ? { pend: x.pend } : {}), ...(x.pq ? { pq: x.pq } : {}) });
+    });
+  };
+  mergeFromRecord();
   let notes = null;            // 이 학생의 meetingNotes (기록 ID → 문서). 못 읽으면 null
   let noteDoc = null;          // 지금 기록의 meetingNotes
   let notesOk = !m;            // 지금 기록의 메모를 읽었는가 (새 기록은 읽을 것이 없음)
@@ -401,6 +445,7 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
       const fm = S.meetings.find((x) => x.id === r.from.mid);
       return fm ? `↻ ${fm.stage}차에서 다시 · ${whoOf(fm, notes?.[fm.id])}` : "↻ 지난 면접에서 다시";
     }
+    if (r.pend || r.pq) return "학생부 질문";
     return pickedPq.has(r.id) ? "예상질문에서" : "";
   };
   function drawRows() {
@@ -470,7 +515,7 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
     if (m && !notesOk) {
       noteDoc = notes[m.id] || null;
       notesOk = true;
-      if (!draftApplied) { rows = rowsOf(m, noteDoc); $("#mNote", body).value = noteDoc?.note || ""; }
+      if (!draftApplied) { rows = rowsOf(m, noteDoc); mergeFromRecord(); $("#mNote", body).value = noteDoc?.note || ""; }
       base = snapshot();
       drawRows();
       $("#mDraftBar", body).innerHTML = "";
@@ -486,33 +531,9 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
   }
   function drawPast() {
     if (!notes) return;
-    const no = noNow();
-    const curId = m?.id || "";
-    const others = S.meetings.filter((x) => String(x.studentNo) === String(no) && !x.planned && x.id !== curId)
-      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
-    const ag = againList(no, notes, curId);
-    const usedHere = new Set(rows.filter((r) => r.from).map((r) => r.from.mid + ":" + r.from.qid));
-    let h = '<h4>지난 면접 <span class="mt-lock">선생님만</span></h4>';
-    if (!others.length) h += `<div class="mt-pc muted sm">이 학생의 첫 대면 기록이에요.<br>여기서 <b>↻ 다음 차수에 다시</b>를 누른 질문은 다음 차수 선생님의 이 칸 맨 위에 보여요.</div>`;
-    if (ag.length) h += `<div class="mt-aq"><b>↻ 다시 물어볼 것 ${ag.filter((a) => !usedHere.has(a.mid + ":" + a.qid)).length}</b>${ag.map((a) => `<div class="mt-qa">
-        <span class="badge">${stageLabel(a.stage)} · ${esc(a.by)}</span> <b>${esc(a.q)}</b>${a.memo ? `<div class="mt-m">답 메모 · ${esc(a.memo)}</div>` : ""}
-        ${usedHere.has(a.mid + ":" + a.qid) ? '<div class="mt-done">받은 질문에 넣었어요 ✓</div>' : `<button type="button" class="btn-sm" data-put="${esc(a.mid)}:${esc(a.qid)}">받은 질문에 넣기</button>`}</div>`).join("")}</div>`;
-    h += others.map((x) => {
-      const n = notes[x.id], rs = rowsOf(x, n);
-      const kv = (k, v) => v ? `<div class="mc-kv"><b>${k}</b> ${esc(v)}</div>` : "";
-      return n ? `<div class="mt-pc"><div class="row"><span class="badge">${stageLabel(x.stage)}</span><b>${fmtDay(x.date)} · ${esc((x.teachers || []).join(", "))}</b></div>
-          ${rs.map((r) => `<div class="mt-qa">${r.again ? "↻ " : ""}${esc(r.q)}${r.memo ? `<div class="mt-m">${esc(r.memo)}</div>` : ""}</div>`).join("")}
-          ${kv("보완할 점", x.improve)}${kv("다음 목표", x.nextGoal)}${kv("선생님 메모", n.note)}</div>`
-        : `<div class="mt-pc legacy"><div class="row"><span class="badge">${stageLabel(x.stage)}</span><b>${fmtDay(x.date)} · ${esc((x.teachers || []).join(", "))}</b></div>
-          ${rs.length ? kv("받은 질문", rs.map((r) => r.q).join(" · ")) : ""}${kv("보완할 점", x.improve)}${kv("다음 목표", x.nextGoal)}</div>`;
-    }).join("");
-    past.innerHTML = h;
-    $$("[data-put]", past).forEach((b) => b.onclick = () => {
-      const [mid, qid] = b.dataset.put.split(":");
-      const a = ag.find((x) => x.mid === mid && x.qid === qid);
-      if (!a) return;
-      addRows([{ id: newQid(), q: a.q, memo: "", again: false, from: { mid, qid } }]);
-      toast("받은 질문에 넣었어요");
+    renderPast(past, noNow(), notes, {
+      exceptMid: m?.id || "", used: new Set(rows.filter((r) => r.from).map((r) => r.from.mid + ":" + r.from.qid)),
+      put: (a) => { addRows([{ id: newQid(), q: a.q, memo: "", again: false, from: { mid: a.mid, qid: a.qid } }]); toast("받은 질문에 넣었어요"); }
     });
   }
 
@@ -523,7 +544,7 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
     const f = readForm(body);
     return { studentNo: noNow(), stage: selStage.value, date: dateInput.value, type: f.type,
       teachers: $$("#tList input:checked", body).map((c) => c.value),
-      rows: rows.map(({ id, q, memo, again, from }) => ({ id, q, memo, again, ...(from ? { from } : {}) })),
+      rows: rows.map(({ id, q, memo, again, from, pend, pq }) => ({ id, q, memo, again, ...(from ? { from } : {}), ...(pend ? { pend } : {}), ...(pq ? { pq } : {}) })),
       answerSummary: f.answerSummary || "", good: f.good || "", improve: f.improve || "", nextGoal: f.nextGoal || "",
       note: $("#mNote", body).value, shared: !!f.shared, toPq: $("#mToPq", body).checked };
   };
@@ -545,7 +566,7 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
     if (d.date) dateInput.value = d.date;
     if (d.type) $("select[name=type]", body).value = d.type;
     $$("#tList input", body).forEach((c) => c.checked = (d.teachers || []).includes(c.value));
-    rows = (d.rows || []).map((r) => ({ id: r.id || newQid(), q: r.q || "", memo: r.memo || "", again: !!r.again, ...(r.from ? { from: r.from } : {}) }));
+    rows = (d.rows || []).map((r) => ({ id: r.id || newQid(), q: r.q || "", memo: r.memo || "", again: !!r.again, ...(r.from ? { from: r.from } : {}), ...(r.pend ? { pend: r.pend } : {}), ...(r.pq ? { pq: r.pq } : {}) }));
     ["answerSummary", "good", "improve"].forEach((k) => { $(`textarea[name=${k}]`, body).value = d[k] || ""; });
     $("input[name=nextGoal]", body).value = d.nextGoal || "";
     $("#mNote", body).value = d.note || "";
@@ -570,6 +591,21 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
   const formEl = $("#mf", body);
   $("#mf", body).addEventListener("input", (e) => { if (!e.target.closest("#mQList")) onEdit(); });
   $("#mf", body).addEventListener("change", (e) => { if (e.target.closest("#tList") || e.target.name === "shared" || e.target.id === "mToPq" || e.target.name === "type") onEdit(); });
+
+  // ── 이 차수 학생부 질문(공개 전) — 볼 수 있는 선생님만 읽음. 못 읽으면 체크를 숨김
+  let pend = null, pendFor = "";
+  function drawPend() {
+    const box = $("#mPendBox", body); if (!box) return;
+    const n = (pend || []).filter((p) => Number(p.stage) === Number(selStage.value)).length;
+    $("#mPendN", body).textContent = n; $("#mPendSt", body).textContent = selStage.value;
+    box.hidden = !n;
+  }
+  async function loadPend() {
+    const no = noNow(); pendFor = no; pend = null; drawPend();
+    if (!no || !canSeeRec(studentByNo(no))) return;
+    try { const list = await loadPending(no); if (pendFor === no && body.isConnected) { pend = list; drawPend(); } } catch (_) { /* 볼 수 없으면 숨김 */ }
+  }
+  loadPend();
 
   drawRows();
   if (!m) { noteReady(); checkDraft(); }   // 새 기록: 메모를 읽을 것이 없으니 바로 (지난 면접은 따로 불러옴)
@@ -636,7 +672,7 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
       try {
         if (keep) {
           const nd = { studentNo: no, stage: data.stage, date: data.date,
-            items: qRows.map(({ id, q, memo, again, from }) => ({ id, q, memo, again: !!again, ...(from ? { from } : {}) })),
+            items: qRows.map(({ id, q, memo, again, from, pend, pq }) => ({ id, q, memo, again: !!again, ...(from ? { from } : {}), ...(pend ? { pend } : {}), ...(pq ? { pq } : {}) })),
             note: noteText, updatedAtMs: Date.now(), updatedBy: myName() || S.ctx.user.email };
           await setDoc(ref, nd);
           if (notesByNo[no]) notesByNo[no][savedId] = { id: savedId, ...nd };
@@ -646,10 +682,18 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
         }
       } catch (err) { console.warn("선생님 메모 저장", err); fails.push("선생님 메모"); }
     } else if (qRows.some((r) => r.memo || r.again) || noteText) fails.push("선생님 메모");
-    // 받은 질문 → '내 생기부 면접' (더하기만)
+    // 학생부 질문(공개 전) 중 이 차수 것 → '내 생기부 면접'으로 옮기기 (공개할 때만). 받은 질문 넣기보다 먼저 — 같은 글이 두 번 들어가지 않게
+    let pendMoved = 0;
+    const pendList = (pend || []).filter((p) => Number(p.stage) === Number(data.stage));
+    if (data.shared && pendList.length && $("#mPend", body)?.checked) {
+      try { pendMoved = await publishPending(no, pendList); }
+      catch (err) { console.warn("학생부 질문 공개", err); fails.push("학생부 질문 공개"); }
+    }
+    // 받은 질문 → '내 생기부 면접' (더하기만). 아직 공개 전인 학생부 질문 칸(다른 차수)은 그 차수 기록 때 옮겨지므로 넣지 않음
     let pqAdded = 0;
-    if (toPq && qRows.length) {
-      try { pqAdded = await addReceivedToPq(no, data.stage, savedId, qRows.map((r) => r.q)); }
+    const recvQs = qRows.filter((r) => !r.pend || pendList.some((p) => p.id === r.pend)).map((r) => r.q);
+    if (toPq && recvQs.length) {
+      try { pqAdded = await addReceivedToPq(no, data.stage, savedId, recvQs); }
       catch (err) { console.warn("예상질문 넣기", err); fails.push("예상질문 넣기"); }
     }
     clearTimeout(draftTimer);
@@ -667,7 +711,7 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null }) {
       // 기록은 저장됐지만 일정 완료 표시만 실패 → 무엇을 해야 하는지 알려 준다
       toast("기록은 저장했습니다. 다만 일정을 '완료'로 표시하지 못했어요. 일정 탭에서 그 일정을 열어 [면접 완료]를 눌러 주세요.", "error", 9000);
     } else {
-      const extra = pqAdded ? ` · 내 생기부 면접에 ${pqAdded}개 더함` : "";
+      const extra = (pendMoved ? ` · 학생부 질문 ${pendMoved}개 공개` : "") + (pqAdded ? ` · 내 생기부 면접에 ${pqAdded}개 더함` : "");
       toast((filledSlot ? "잡혀 있던 면접의 기록으로 저장했습니다." : "기록을 저장했습니다.") + extra + " 시트에 반영 중…");
     }
     // 학생에게 공개한 기록이면 휴대폰으로 알린다 (알림을 켜 둔 학생만)

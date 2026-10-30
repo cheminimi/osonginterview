@@ -773,6 +773,7 @@ export function mountSchedule(root, opts) {
           : '<button class="btn-primary" id="bdDone">면접 완료</button>') : ""}
         ${!isStudent && b.status === "confirmed" && opts.openMeeting ? '<button id="bdMeet">대면 기록 쓰기</button>' : ""}
       </div>` : ""}
+      ${!isStudent && opts.onDetail ? '<div class="row" id="bdRec" style="margin-top:10px"></div>' : ""}
       ${!isStudent ? '<h3 style="margin-top:18px">변경 기록</h3><div id="bdLog" class="muted">불러오는 중…</div>' : ""}`);
 
     const memo = () => $("#bdMemo", body)?.value.trim() || "";
@@ -803,6 +804,7 @@ export function mountSchedule(root, opts) {
     $("#bdChange", body)?.addEventListener("click", () => openForm({ booking: b }));
     $("#bdRoom", body)?.addEventListener("click", () => openRoom(b));
     $("#bdMeet", body)?.addEventListener("click", () => { close(); opts.openMeeting(b); });
+    if ($("#bdRec", body)) opts.onDetail(b, $("#bdRec", body), close);   // 선생님 화면: [학생부 보기] 등
 
     if (!isStudent) {
       try {

@@ -7,6 +7,7 @@ import { requestSync } from "./sync.js";
 import { openMeetingForm, meetingCardHtml, loadMeetingNotes, cachedMeetingNotes, againList } from "./t-meetings.js";
 import { selectStudentForQuestions } from "./t-questions.js";
 import { openReview } from "./t-review.js";
+import { mountRecButtons } from "./t-record.js";
 
 let root;
 export function init(el) {
@@ -206,6 +207,8 @@ function stagePills(s) {
 const foldOpen = (k) => { try { return localStorage.getItem("stFold:" + k) === "1"; } catch { return false; } };
 const foldSave = (k, v) => { try { localStorage.setItem("stFold:" + k, v ? "1" : "0"); } catch {} };
 
+// 학생부를 넣거나 지우면 떠 있는 학생 상세를 다시 그림 (단추 바뀜)
+addEventListener("records-changed", (e) => { const no = e.detail?.no; if (no && showing(no)) refreshDetail(no); else if (!no && (selNo || modalNo)) refreshDetail(selNo || modalNo); });
 // 대면 기록 카드 목록 · '↻ 다시 물어볼 것 n' (메모를 아직 못 읽었으면 notes = null → 메모 없이)
 const meetListHtml = (meets, notes) => meets.length ? meets.map((m) => meetingCardHtml(m, notes ? notes[m.id] || null : undefined)).join("") : '<div class="muted">아직 없습니다.</div>';
 const againTxt = (no, notes) => { const n = notes ? againList(no, notes).length : 0; return n ? `· ↻ 다시 물어볼 것 ${n}` : ""; };
@@ -231,6 +234,7 @@ export async function openStudent(no) {
       ${s.priority ? `<span class="badge ${s.priority === "긴급" ? "badge-red" : "badge-gray"}">${esc(s.priority)}</span>` : ""}
       <div class="spacer"></div>
       ${s.sheetUrl ? `<a class="btn btn-sm" href="${esc(s.sheetUrl)}" target="_blank" rel="noopener">준비 시트 열기</a>` : '<span class="muted">준비 시트 링크 없음</span>'}
+      <span class="rec-btns" id="recBtns"></span>
       <button class="btn-sm" id="addMeet">대면 기록 추가</button>
     </div>
     <div class="row" style="margin-bottom:14px">${stagePills(s)}
@@ -340,6 +344,7 @@ export async function openStudent(no) {
   $("#toQ", body).onclick = () => { closeModal(); switchTab("questions"); selectStudentForQuestions(no); };
   $$("details.st-fold", body).forEach((el) => el.addEventListener("toggle", () => foldSave(el.dataset.fold, el.open)));
   $$("[data-sid]", body).forEach((el) => el.onclick = () => openReview(el.dataset.sid));
+  mountRecButtons($("#recBtns", body), s);   // 학생부 보기·넣기 (볼 수 있는 선생님에게만, 학생부가 있는지 한 번 읽음)
   const bindMeet = () => $$("#meetList [data-mid]", body).forEach((el) => el.onclick = (e) => { if (!e.target.closest(".mc-more")) openMeetingForm({ id: el.dataset.mid }); });
   bindMeet();
   // 선생님만 보는 메모(답 메모·다시 물어볼 것·선생님 메모)는 이 학생 것만 따로 읽고, 다 읽으면 요약·카드만 다시 그린다

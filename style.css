@@ -1839,3 +1839,99 @@ body.nd .mt-help summary { cursor: pointer; font-weight: 700; font-size: .9rem; 
 body.nd .mt-help table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: .86rem; }
 body.nd .mt-help td, body.nd .mt-help th { padding: 6px 8px; border-top: 1px solid var(--line-3); text-align: left; vertical-align: middle; }
 body.nd .mt-help td.mt-out { white-space: normal; }
+
+/* ================= 학생부 넣기 · 학생부 화면 (2026-10-30 3단계) =================
+   화면 전체 겹침 (z 55: 창(50)보다 위). [기록 쓰기 →] 로 여는 기록 창은 이 위에 (body.rv-open #modal 60) */
+body.nd .rec-ov { position: fixed; inset: 0; z-index: 55; background: #eef1f6; display: flex; flex-direction: column; overflow: hidden; }
+body.nd.rv-open #modal { z-index: 60; }
+body.nd .rec-ov .rv-hd { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 16px; background: #121316; color: #fff; }
+body.nd .rec-ov .rv-hd .sp { flex: 1; }
+body.nd .rec-ov .rv-hd .muted { color: #c9ced8; }
+body.nd .rec-ov .rv-hd .btn-sm { background: #fff; color: var(--ink); border-color: #fff; }
+body.nd .rec-up { width: min(980px, 100%); margin: 0 auto; height: 100%; display: flex; flex-direction: column; background: #fff; }
+body.nd .ru-steps { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: .84rem; color: var(--ink-3); }
+body.nd .ru-steps span { padding: 3px 10px; border-radius: 99px; background: #f2f4f8; }
+body.nd .ru-steps span.on { background: #121316; color: #fff; }
+body.nd .ru-steps span.done { background: var(--ok-bg); color: var(--ok); }
+body.nd .ru-body { flex: 1; overflow: auto; padding: 16px; }
+body.nd .ru-card h3 { margin: 0 0 8px; }
+body.nd .ru-pages { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+body.nd .ru-pg { border-radius: 10px; padding: 6px 10px; font-size: .84rem; font-weight: 700; display: grid; }
+body.nd .ru-pg.keep { background: var(--ok-bg); color: var(--ok); }
+body.nd .ru-pg.drop { background: #fbeae8; color: #c2453c; }
+body.nd .ru-pg small { font-weight: 400; font-size: .74rem; }
+body.nd .ru-info { margin: 8px 0; padding-left: 18px; font-size: .9rem; line-height: 1.8; }
+body.nd .ru-autos { margin: 8px 0 12px; border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; }
+body.nd .ru-autos summary { cursor: pointer; }
+body.nd .ru-autos .chip { cursor: pointer; margin: 3px 2px; }
+body.nd .ru-doc h4 { margin: 14px 0 6px; }
+body.nd .ru-doc table, body.nd .rv-doc table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+body.nd .ru-doc th, body.nd .rv-doc th { width: 120px; text-align: left; vertical-align: top; padding: 8px; background: #f6f8fb; font-size: .82rem; color: var(--ink-2); border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+body.nd .ru-doc td, body.nd .rv-doc td { padding: 8px; vertical-align: top; border-bottom: 1px solid var(--line); line-height: 1.75; overflow-wrap: anywhere; }
+body.nd .ru-mask { border-radius: 4px; padding: 0 2px; cursor: pointer; }
+body.nd .ru-mask.auto { background: #ffe7a6; outline: 1px dashed #d9a400; }
+body.nd .ru-mask.man { background: #e3d7ff; }
+body.nd .ru-mask.flash, body.nd .rv-card.flash { box-shadow: 0 0 0 3px #3e63a8; }
+body.nd .ru-fix { border: 0; background: none; color: var(--accent); font-size: .78rem; padding: 0; margin-left: 4px; cursor: pointer; }
+body.nd .ru-edit { width: 100%; min-height: 120px; }
+body.nd .ru-pop, body.nd .rv-pop { position: fixed; z-index: 70; transform: translate(-50%, -100%); display: flex; gap: 4px; background: #121316; border-radius: 10px; padding: 4px; }
+body.nd .rv-pop { transform: none; }
+body.nd .ru-pop button, body.nd .rv-pop button { border: 0; background: transparent; color: #fff; font: inherit; font-size: .84rem; font-weight: 700; padding: 6px 10px; border-radius: 8px; cursor: pointer; }
+body.nd .ru-pop button:hover, body.nd .rv-pop button:hover { background: #2b2e35; }
+/* 학생부 화면 */
+body.nd .rv .rv-wm { position: absolute; inset: 0; pointer-events: none; z-index: 5; background-repeat: repeat; }
+body.nd .rv-stage { display: inline-flex; gap: 2px; background: #2b2e35; border-radius: 99px; padding: 2px; }
+body.nd .rv-stage button { border: 0; background: transparent; color: #c9ced8; font: inherit; font-size: .82rem; font-weight: 700; padding: 3px 10px; border-radius: 99px; cursor: pointer; }
+body.nd .rv-stage button.on.c1 { background: #fff1a8; color: #121316; }
+body.nd .rv-stage button.on.c2 { background: #c9f0d6; color: #121316; }
+body.nd .rv-stage button.on.c3 { background: #e3d7ff; color: #121316; }
+body.nd .rv-tm { font-variant-numeric: tabular-nums; }
+body.nd .rv-body { flex: 1; display: grid; grid-template-columns: 170px minmax(0, 1fr) 360px; min-height: 0; }
+body.nd .rv-toc { padding: 14px; display: flex; flex-direction: column; gap: 6px; overflow: auto; border-right: 1px solid var(--line); background: #f7f8fb; font-size: .86rem; }
+body.nd .rv-toc a { color: var(--ink-2); text-decoration: none; }
+body.nd .rv-lg { margin-top: 12px; font-size: .78rem; color: var(--ink-3); line-height: 1.9; }
+body.nd .rv-lg i { display: inline-block; width: 14px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: middle; }
+body.nd .rv-doc { overflow: auto; padding: 16px 20px; background: #fff; -webkit-touch-callout: none; }
+body.nd .rv-doc h3 { margin: 18px 0 8px; font-size: 1rem; }
+body.nd .rv-doc h3:first-child { margin-top: 0; }
+body.nd .rv-mask { background: #e9ecf2; color: var(--ink-3); border-radius: 4px; padding: 0 2px; }
+body.nd .rv mark, body.nd .rv-lg i, body.nd .rv .tag { color: inherit; }
+body.nd .rv mark { border-radius: 3px; padding: 0 1px; cursor: pointer; }
+body.nd .rv .c1, body.nd .rv-lg i.c1 { background: #fff1a8; }
+body.nd .rv .c2, body.nd .rv-lg i.c2 { background: #c9f0d6; }
+body.nd .rv .c3, body.nd .rv-lg i.c3 { background: #e3d7ff; }
+body.nd .rv mark.q { box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .35); }
+body.nd .rv-side { display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: #fafbfd; }
+body.nd .rv-tabs { display: flex; gap: 4px; padding: 8px 10px 0; }
+body.nd .rv-tabs button { border: 1px solid var(--line); background: #fff; border-radius: 99px; padding: 4px 12px; font: inherit; font-size: .84rem; font-weight: 700; cursor: pointer; }
+body.nd .rv-tabs button.on { background: #121316; color: #fff; border-color: #121316; }
+body.nd .rv-sb { flex: 1; overflow: auto; padding: 10px; display: grid; gap: 8px; align-content: start; }
+body.nd .rv-flt { display: flex; gap: 4px; flex-wrap: wrap; }
+body.nd .rv-flt button { border: 1px solid var(--line); background: #fff; border-radius: 99px; padding: 2px 10px; font: inherit; font-size: .78rem; cursor: pointer; }
+body.nd .rv-flt button.on { background: #e8eefb; border-color: #c6d6ee; font-weight: 700; }
+body.nd .rv-card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 9px 10px; font-size: .86rem; display: grid; gap: 4px; }
+body.nd .rv-card.asked { border-color: #8bb08f; }
+body.nd .rv-card .row { gap: 6px; flex-wrap: wrap; }
+body.nd .rv .tag { font-size: .72rem; font-weight: 800; border-radius: 5px; padding: 0 6px; background: #eef1f5; }
+body.nd .rv-basis { font-size: .78rem; color: var(--ink-3); overflow-wrap: anywhere; }
+body.nd .rv-qt { font-weight: 700; overflow-wrap: anywhere; }
+body.nd .rv-acts .btn-sm.on { background: var(--ok-bg); color: var(--ok); border-color: var(--ok-bg); }
+body.nd .rv-new { display: grid; gap: 6px; }
+body.nd .rv-new h4 { margin: 0; display: flex; gap: 6px; align-items: center; }
+body.nd .rv-new textarea { width: 100%; }
+body.nd .rv-foot { display: flex; gap: 8px; align-items: center; padding: 10px; border-top: 1px solid var(--line); background: #fff; }
+body.nd .rv-foot .btn-primary { margin-left: auto; }
+body.nd .rv-past { position: static; max-height: none; }
+body.nd .rv-cover { position: absolute; inset: 0; z-index: 20; background: #121316; color: #fff; display: grid; place-items: center; text-align: center; padding: 16px; }
+body.nd .rec-btns, body.nd .rec-slot { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+@media (max-width: 720px) {
+  body.nd .rv-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; overflow: auto; }
+  body.nd .rv-toc { display: none; }
+  body.nd .rv-doc { overflow: visible; }
+  body.nd .rv-side { border-left: 0; border-top: 1px solid var(--line); }
+  body.nd .rv-sb { overflow: visible; }
+  body.nd .ru-doc th, body.nd .rv-doc th { width: 72px; }
+}
+/* 인쇄 때 학생부 숨김 */
+@media print { .rec-ov .rv-doc, .rec-ov .ru-doc, .rec-ov .rv-sb { display: none !important; } .rec-ov::after { content: "학생부는 인쇄할 수 없어요"; } }
+body.nd .rec-ov.rv-print .rv-doc, body.nd .rec-ov.rv-print .rv-sb { display: none; }

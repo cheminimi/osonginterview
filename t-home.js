@@ -11,6 +11,7 @@ import { $, $$, esc, icon, isoDay, fmtDay, fmtDate, dday, nextInterview, toDate,
 import { S, register, rerender, myName, myRoles, switchTab, setDot, opt, applyHead, pqWaitStudents } from "./t-core.js";
 import { openStudent } from "./t-students.js";
 import { openMeetingForm, recordWrittenFor } from "./t-meetings.js";
+import { mountRecButtons } from "./t-record.js";
 import { openBookingRecord, gotoSchedule, quickBooking } from "./t-schedule.js";
 import { BOOK_STAGES, stageTeachers, ACTIVE, DONE } from "./schedule.js";
 import { watchAnnounce, announceHero, bindAnnounce, refreshPopup } from "./t-announce.js";
@@ -126,6 +127,12 @@ function bindCommon() {
     if (bk) openBookingRecord(bk);
   });
   $$("[data-no]", root).forEach((b) => b.onclick = () => openStudent(b.dataset.no));
+  // 다음 면접 줄 [학생부]: 그 차수 담당·관리자이고 학생부가 있을 때만
+  $$("[data-recslot]", root).forEach((el) => {
+    const bk = (S.bookings || []).find((x) => x.id === el.dataset.recslot);
+    const st = bk && S.students.find((x) => x.studentNo === bk.studentNo);
+    if (st) mountRecButtons(el, st, { stage: bk.stage, compact: true, preset: { id: "bk_" + bk.id, stage: bk.stage, date: bk.date, teachers: bk.teachers, bookingId: bk.id } });
+  });
   bindAnnounce(root);
   $$("[data-meet]", root).forEach((b) => b.onclick = () => openMeetingForm({ id: b.dataset.meet }));
   // 승인 요청 카드: 수락 · 거절(확인 창) · 시간 변경 + 넘겨 보기
@@ -221,7 +228,7 @@ function wideHtml({ me, now, mine, scope, todayAll, noRecord, pending, need, mis
           const meta = `${esc(b.room || "장소 미정")}${others.length ? " · " + esc(others.join("·")) + " 선생님과" : ""}`;
           const end = b.status !== "confirmed" ? `<span class="wait">요청 중</span>`
             : done ? `<button type="button" class="ok" data-rec="${esc(b.id)}">기록 보기</button>`
-            : isNext ? `<button type="button" class="cta sm" data-rec="${esc(b.id)}">기록 쓰기<span>${icon("arrow", 15)}</span></button>`
+            : isNext ? `<span class="rec-slot" data-recslot="${esc(b.id)}"></span><button type="button" class="cta sm" data-rec="${esc(b.id)}">기록 쓰기<span>${icon("arrow", 15)}</span></button>`
             : b.end < nowHm ? `<button type="button" class="wait w2" data-rec="${esc(b.id)}">기록 쓰기</button>`
             : `<span class="wait">예정</span>`;
           return `<div class="slot ${done ? "past" : ""} ${isNext ? "next" : ""}">

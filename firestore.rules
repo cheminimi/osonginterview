@@ -183,6 +183,11 @@ service cloud.firestore {
         || (signedIn() && resource.data.studentUid == request.auth.uid && resource.data.shared == true);
       allow write: if isStaff();
     }
+    // (2026-10-30) 대면 기록의 선생님만 보는 메모 (문서 id = 대면 기록 id): 받은 질문별 학생 답 메모·'다음 차수에 다시'·선생님 메모.
+    //   meetings 는 공개하면 학생이 문서 전체를 읽으므로 따로 둔다. 학생·부스 계정은 읽기·쓰기 모두 못 함
+    match /meetingNotes/{id} {
+      allow read, write: if isStaff();
+    }
 
     // 시트 동기화 설정 등. 'schedule'(시간표·장소·동기화 주소)은 학생도 읽기
     match /config/{docId} {

@@ -534,7 +534,7 @@ async function renderSched() {
 // ================= ⑤ 백업 · 사용량 =================
 const BACKUP_COLS = ["students", "staff", "accounts", "logins", "interviews", "studentNotes", "questions",
   "sessions", "meetings", "bookings", "bookingLogs", "days", "availability", "meta",
-  "reviews", "boothBookings", "boothSlots"];   // (2026-10-30) 대학 면접 후기·부스 예약 — 나중에 생겨 빠져 있었음
+  "reviews", "boothBookings", "boothSlots", "meetingNotes"];   // (2026-10-30) 대학 면접 후기·부스 예약 — 나중에 생겨 빠져 있었음
 // ================= ⑧ 면접 부스 PC (관리자만) =================
 // config/booth.devices[키의 SHA-256] = { name, res?, registeredAt, registeredBy } — 부스 화면(booth.html)이 등록할 때 씀.
 // 자리(res)를 정하면 부스가 그 자리 예약에 맞춰 학생에게 안내한다. 해제하면 그 PC 는 다음 로그인 때 잠금 화면.
@@ -743,7 +743,7 @@ async function renderBackup() {
     <div class="grid grid-2" style="align-items:start">
       <div class="card">
         <h3>백업</h3>
-        <p class="muted" style="margin-top:0">학생·면접일·대면 기록은 구글 시트에도 남지만, <b>말하기 연습 답변 · 예상질문 · 대학 면접 후기 · 일정 · 교사 메모</b>는 앱에만 있어요. 무료 요금제는 자동 백업이 없으니 주기적으로 받아 두세요.</p>
+        <p class="muted" style="margin-top:0">학생·면접일·대면 기록은 구글 시트에도 남지만, <b>말하기 연습 답변 · 예상질문 · 대학 면접 후기 · 대면 기록 선생님 메모 · 일정 · 교사 메모</b>는 앱에만 있어요. 무료 요금제는 자동 백업이 없으니 주기적으로 받아 두세요.</p>
         <dl class="kv"><dt>마지막 드라이브 백업</dt><dd>${last ? `${fmt(last.at)} · ${esc(last.file || "")} · ${last.total || 0}건` : '<span class="muted">아직 없음</span>'}</dd></dl>
         <div class="row" style="margin-top:10px">
           <button class="btn-primary" id="bkDrive">지금 드라이브에 백업</button>

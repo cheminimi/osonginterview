@@ -4,7 +4,7 @@ import {
 } from "./common.js";
 import { S, register, rerender, myName, myRoles, stageChips, nextBadge, openModal, closeModal, switchTab, readForm, opt, attachInterviews, loadAllSessions, RECENT_DAYS } from "./t-core.js";
 import { requestSync } from "./sync.js";
-import { openMeetingForm, meetingSummaryHtml } from "./t-meetings.js";
+import { openMeetingForm, meetingCardHtml, loadMeetingNotes, cachedMeetingNotes, againList } from "./t-meetings.js";
 import { selectStudentForQuestions } from "./t-questions.js";
 import { openReview } from "./t-review.js";
 
@@ -206,6 +206,10 @@ function stagePills(s) {
 const foldOpen = (k) => { try { return localStorage.getItem("stFold:" + k) === "1"; } catch { return false; } };
 const foldSave = (k, v) => { try { localStorage.setItem("stFold:" + k, v ? "1" : "0"); } catch {} };
 
+// 대면 기록 카드 목록 · '↻ 다시 물어볼 것 n' (메모를 아직 못 읽었으면 notes = null → 메모 없이)
+const meetListHtml = (meets, notes) => meets.length ? meets.map((m) => meetingCardHtml(m, notes ? notes[m.id] || null : undefined)).join("") : '<div class="muted">아직 없습니다.</div>';
+const againTxt = (no, notes) => { const n = notes ? againList(no, notes).length : 0; return n ? `· ↻ 다시 물어볼 것 ${n}` : ""; };
+
 export async function openStudent(no) {
   const s = S.students.find((x) => x.studentNo === no);
   if (!s) return;
@@ -269,8 +273,8 @@ export async function openStudent(no) {
         <td class="nowrap"><button class="btn-sm" data-iv="${u.id}">수정</button></td></tr>`).join("")}
       </tbody></table></div>` : '<div class="muted">등록된 면접일이 없습니다.</div>'}
 
-    <details class="st-fold" data-fold="meet"${foldOpen("meet") ? " open" : ""}><summary><h3>대면 모의면접 기록</h3>${stageChips(s)}<span class="muted">${meets.length}건</span><span class="st-fold-ar" aria-hidden="true"></span></summary>
-      <div class="st-fold-in"><div id="meetList">${meets.length ? meets.map((m) => meetingSummaryHtml(m)).join("") : '<div class="muted">아직 없습니다.</div>'}</div></div>
+    <details class="st-fold" data-fold="meet"${foldOpen("meet") ? " open" : ""}><summary><h3>대면 모의면접 기록</h3>${stageChips(s)}<span class="muted">${meets.length}건</span><span class="muted st-again" id="meetAgain">${againTxt(no, cachedMeetingNotes(no))}</span><span class="st-fold-ar" aria-hidden="true"></span></summary>
+      <div class="st-fold-in"><div id="meetList">${meetListHtml(meets, cachedMeetingNotes(no))}</div></div>
     </details>
 
     <details class="st-fold" data-fold="sess"${foldOpen("sess") ? " open" : ""}><summary><h3>말하기 연습</h3><span class="muted">예상질문 ${s.pqCount || 0}개 · 제출 ${submitted.length}회 · 검토 대기 ${submitted.filter((x) => !x.reviewedAt).length}${S.sessionsScope === "all" ? "" : ` (최근 ${RECENT_DAYS}일)`}</span><span class="st-fold-ar" aria-hidden="true"></span></summary>
@@ -336,7 +340,16 @@ export async function openStudent(no) {
   $("#toQ", body).onclick = () => { closeModal(); switchTab("questions"); selectStudentForQuestions(no); };
   $$("details.st-fold", body).forEach((el) => el.addEventListener("toggle", () => foldSave(el.dataset.fold, el.open)));
   $$("[data-sid]", body).forEach((el) => el.onclick = () => openReview(el.dataset.sid));
-  $$("[data-mid]", body).forEach((el) => el.onclick = () => openMeetingForm({ id: el.dataset.mid }));
+  const bindMeet = () => $$("#meetList [data-mid]", body).forEach((el) => el.onclick = (e) => { if (!e.target.closest(".mc-more")) openMeetingForm({ id: el.dataset.mid }); });
+  bindMeet();
+  // 선생님만 보는 메모(답 메모·다시 물어볼 것·선생님 메모)는 이 학생 것만 따로 읽고, 다 읽으면 요약·카드만 다시 그린다
+  loadMeetingNotes(no).then((notes) => {
+    const list = $("#meetList", body), ag = $("#meetAgain", body);
+    if (!list || !list.isConnected || !showing(no)) return;
+    list.innerHTML = meetListHtml(meets, notes);
+    if (ag) ag.textContent = againTxt(no, notes);
+    bindMeet();
+  }, (e) => console.warn("대면 기록 선생님 메모 불러오기", e));
 
   // 교사 메모: 불러오기가 끝나기 전·실패했을 때는 저장을 막는다 (빈 글자로 기존 메모를 덮어쓰지 않게)
   const noteEl = $("#noteText", body), saveBtn = $("#saveNote", body), noteSt = $("#noteState", body), retry = $("#noteRetry", body);

@@ -20,7 +20,7 @@
  *     확정되면 '모의 면접 기록'에 예정 행 자동 추가 (앱 → 시트 한 방향)
  */
 
-const SCRIPT_VERSION = 'v16 (2026-10-29)';   // 동기화 결과창에 표시됩니다
+const SCRIPT_VERSION = 'v17 (2026-10-30)';   // 동기화 결과창에 표시됩니다
 
 // ===================== 설정 (직접 입력) =====================
 const CONFIG = {
@@ -1820,7 +1820,7 @@ function fromFsFields_(f) { const o = {}; Object.keys(f).forEach(function (k) { 
 // 매주 일요일 6시(메뉴 ③ 설치 시) + 메뉴/앱에서 즉시. 이 스크립트 소유자의 드라이브 '면접 스튜디오 백업' 폴더에 JSON 저장, 최근 8개 보관.
 const BACKUP_COLLECTIONS = ['students', 'staff', 'accounts', 'logins', 'interviews', 'studentNotes', 'questions',
   'sessions', 'meetings', 'bookings', 'bookingLogs', 'days', 'availability', 'meta',
-  'reviews', 'boothBookings', 'boothSlots'];   // (v16) 대학 면접 후기·부스 예약 — 나중에 생겨 빠져 있었음
+  'reviews', 'boothBookings', 'boothSlots', 'meetingNotes'];   // (v16) 대학 면접 후기·부스 예약 · (v17) 대면 기록 선생님 메모
 const BACKUP_KEEP = 8;
 function menuBackupNow() {
   const r = weeklyBackup();

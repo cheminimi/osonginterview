@@ -20,7 +20,7 @@
  *     확정되면 '모의 면접 기록'에 예정 행 자동 추가 (앱 → 시트 한 방향)
  */
 
-const SCRIPT_VERSION = 'v15 (2026-10-26)';   // 동기화 결과창에 표시됩니다
+const SCRIPT_VERSION = 'v16 (2026-10-29)';   // 동기화 결과창에 표시됩니다
 
 // ===================== 설정 (직접 입력) =====================
 const CONFIG = {
@@ -235,7 +235,7 @@ function syncKinds_(kinds, reason) {
   LIST_CACHE_ = {};
   // 일정(bookings)이 모의 면접 기록을 바꾸면 그 뒤에 모의 면접 기록 동기화도 돈다
   kinds = ['students', 'interviews', 'bookings', 'meetings', 'reviews'].filter(function (k) { return kinds.indexOf(k) >= 0; });
-  const out = { pushed: 0, pulled: 0, created: 0, deleted: 0, errors: [], kinds: kinds };
+  const out = { pushed: 0, pulled: 0, created: 0, deleted: 0, univFixed: 0, errors: [], kinds: kinds };
   for (let i = 0; i < kinds.length; i++) {  // forEach 는 도중에 추가된 'meetings' 를 돌지 않음
     const k = kinds[i];
     try {
@@ -243,7 +243,8 @@ function syncKinds_(kinds, reason) {
         : k === 'reviews' ? syncReviews_(reason === '정기 대조 (전체)' || reason === '전체 대조') : mergeMeetings_();
       if (k === 'bookings' && r.meetingsTouched && kinds.indexOf('meetings') < 0) kinds.push('meetings');
       out.pushed += r.pushed; out.pulled += r.pulled; out.created += r.created; out.deleted += r.deleted;
-      if (k === 'interviews' && (r.pushed + r.pulled + r.created + r.deleted) > 0) {
+      out.univFixed += r.univFixed || 0;   // (v16) 학교 이름을 정식 이름으로 고친 칸 수
+      if (k === 'interviews' && (r.pushed + r.pulled + r.created + r.deleted + (r.univFixed || 0)) > 0) {
         try { rebuildCalendar(); } catch (err) { out.errors.push('달력: ' + err.message); }
       }
     } catch (err) {
@@ -405,16 +406,24 @@ function mergeInterviews_() {
   const sh = getOrThrow_(surveySS_(), TAB.INTERVIEWS);
   const table = readTable_(sh, INTERVIEW_COLS);
   const rows = table.rows.filter(function (r) { return r.data.studentNo || r.data.univ || r.data.date; });
+  // (v16) 대학 칸을 정식 이름으로 고쳐 쓴다 (행을 지우기 전에 — 행 번호가 그대로일 때). 수정 시각·수정자는 그대로
+  let univFixed = 0;
+  rows.forEach(function (r) {
+    if (r.univRaw !== undefined && r.univRaw !== r.data.univ && table.setCell(r.rowNum, 'univ', r.data.univ)) univFixed++;
+  });
   const docs = {};
+  const appUniv = {};   // (v16) 앱에 적힌 그대로의 대학 이름 — 정식 이름과 다르면 끝에 고쳐 쓴다
   fsList_('interviews').forEach(function (d) {
     const f = d.fields;
+    appUniv[d.id] = String(f.univ || '');
     docs[d.id] = { id: d.id, at: Number(f.updatedAt || 0), by: f.updatedBy || '', data: {
-      id: d.id, studentNo: String(f.studentNo || ''), name: f.name || '', univ: f.univ || '', dept: f.dept || '',
+      id: d.id, studentNo: String(f.studentNo || ''), name: f.name || '', univ: univName_(f.univ), dept: f.dept || '',
       admission: f.admission || '', format: f.format || '', date: f.date || '', firstAnnounce: f.firstAnnounce || ''
     } };
   });
   const writes = [];
   const touched = {};
+  const sent = {};      // (v16) 이번에 앱에 쓰거나 지운 문서
   const res = merge_('interviews', rows, docs, INTERVIEW_SYNC, {
     newId: function (row) {
       const id = 'iv_' + Utilities.getUuid().replace(/-/g, '').slice(0, 16);
@@ -424,6 +433,7 @@ function mergeInterviews_() {
     push: function (row) {
       const d = row.data;
       touched[String(d.studentNo)] = true;
+      sent[row.id] = true;
       writes.push(fsPatchReq_('interviews/' + row.id, {
         studentNo: String(d.studentNo), name: d.name, univ: d.univ, dept: d.dept, admission: d.admission,
         format: d.format, date: d.date, firstAnnounce: d.firstAnnounce || '', updatedAt: Date.now(), updatedBy: row.by || '시트'
@@ -437,9 +447,16 @@ function mergeInterviews_() {
     rowOnlyInState: function (row) { touched[String(row.data.studentNo)] = true; return 'delete'; },
     docOnlyInState: function (doc) { touched[doc.data.studentNo] = true; return 'delete'; },
     docOnlyNew: function () { return 'append'; },
-    deleteDoc: function (id) { writes.push(fsDeleteReq_('interviews/' + id)); },
+    deleteDoc: function (id) { sent[id] = true; writes.push(fsDeleteReq_('interviews/' + id)); },
     flush: function (rowDeletes) { table.deleteRows(rowDeletes.map(function (r) { return r.rowNum; })); }
   });
+  // (v16) 앱 문서의 대학 이름이 정식 이름과 다르면 그 칸만 고침 (updatedAt 을 올려 선생님 화면이 새로 읽게, 수정자는 그대로)
+  Object.keys(appUniv).forEach(function (id) {
+    if (sent[id] || !docs[id] || appUniv[id] === docs[id].data.univ) return;
+    writes.push(fsPatchReq_('interviews/' + id, { univ: docs[id].data.univ, updatedAt: Date.now() }, ['univ', 'updatedAt']));
+    univFixed++;
+  });
+  res.univFixed = univFixed;
   fsBatch_(writes);
   // 학생별 최초 면접일 갱신
   const first = firstDates_();
@@ -1105,7 +1122,7 @@ function readSurvey_(ss) {
     val(c.needs).replace(/전공,\s*교과 개념 점검/g, '전공·교과 개념 점검').split(/,\s*/).forEach(function (n) { if (n && x.needs.indexOf(n) < 0) x.needs.push(n); });
     const memo = val(c.memo);
     if (memo && !/^(없음|없습니다|x|\.)$/i.test(memo) && x.memos.indexOf(memo) < 0) x.memos.push(memo);
-    const u = { univ: String(r[c.univ] || '').trim(), dept: String(r[c.dept] || '').trim(), admission: String(r[c.adm] || '').trim(), format: normalizeFormat_(r[c.fmt]), date: fmtDay_(r[c.date]) };
+    const u = { univ: univName_(r[c.univ]), dept: String(r[c.dept] || '').trim(), admission: String(r[c.adm] || '').trim(), format: normalizeFormat_(r[c.fmt]), date: fmtDay_(r[c.date]) };
     const i = o.universities.findIndex(function (x) { return x.univ === u.univ && x.dept === u.dept; });
     if (i >= 0) o.universities[i] = u; else o.universities.push(u);
   });
@@ -1355,7 +1372,9 @@ function readTable_(sh, cols, opt) {
       const empty = Object.keys(data).every(function (k) { return k.charAt(0) === '_' || k === 'id' || k === 'round' || data[k] === ''; });
       if (empty) continue;
       const stamp = map._stamp != null && line[map._stamp] instanceof Date ? line[map._stamp].getTime() : 0;
-      api.rows.push({ rowNum: r + 1, data: data, id: data.id || null, stamp: stamp, by: map._by != null ? String(line[map._by] || '') : '' });
+      const row = { rowNum: r + 1, data: data, id: data.id || null, stamp: stamp, by: map._by != null ? String(line[map._by] || '') : '' };
+      if (map.univ != null) row.univRaw = line[map.univ] == null ? '' : String(line[map.univ]).trim();
+      api.rows.push(row);
     }
   }
   load();
@@ -1447,6 +1466,7 @@ function normCell_(key, v) {
   // 학반에 '3-2' 를 치면 시트가 날짜(3월 2일)로 바꿔 버린다. 다시 '3-2' 로 읽는다.
   if (key === 'cls' && v instanceof Date) return (v.getMonth() + 1) + '-' + v.getDate();
   if (key === 'studentNo') return String(v).replace(/\.0$/, '').trim();
+  if (key === 'univ') return univName_(v);   // (v16) 가천대 → 가천대학교 (앱 common.js univName 과 같게)
   if (v instanceof Date) return fmtDay_(v);
   return String(v).trim();
 }
@@ -1647,15 +1667,16 @@ function log_(reason, r) {
   const ss = surveySS_();
   let sh = ss.getSheetByName(TAB.LOG);
   if (!sh) { sh = ss.insertSheet(TAB.LOG); sh.getRange(1, 1, 1, 7).setValues([['시각', '계기', '종류', '시트→앱', '앱→시트', '새로 추가', '삭제/오류']]); sh.hideSheet(); }
-  const changed = r.pushed + r.pulled + r.created + r.deleted;
+  const changed = r.pushed + r.pulled + r.created + r.deleted + (r.univFixed || 0);
   if (!changed && !r.errors.length && (String(reason).indexOf('정기 대조') === 0 || String(r.kinds) === 'bookings')) return;
   sh.insertRowAfter(1);
-  sh.getRange(2, 1, 1, 7).setValues([[new Date(), reason, r.kinds.join(','), r.pushed, r.pulled, r.created, (r.deleted || 0) + (r.errors.length ? ' / ' + r.errors.join('; ') : '')]]);
+  sh.getRange(2, 1, 1, 7).setValues([[new Date(), reason, r.kinds.join(',') + (r.univFixed ? ' (학교 이름 ' + r.univFixed + '칸 정리)' : ''), r.pushed, r.pulled, r.created, (r.deleted || 0) + (r.errors.length ? ' / ' + r.errors.join('; ') : '')]]);
   if (sh.getLastRow() > 500) sh.deleteRows(501, sh.getLastRow() - 500);
 }
 function summary_(r) {
   return '[스크립트 ' + SCRIPT_VERSION + ']\n' +
     '시트→앱 ' + r.pushed + '건, 앱→시트 ' + r.pulled + '건, 새로 추가 ' + r.created + '건, 삭제 ' + r.deleted + '건' +
+    (r.univFixed ? '\n학교 이름 정식 이름으로 ' + r.univFixed + '칸' : '') +
     (r.errors.length ? '\n오류: ' + r.errors.join('\n') : '');
 }
 
@@ -1798,7 +1819,8 @@ function fromFsFields_(f) { const o = {}; Object.keys(f).forEach(function (k) { 
 // ===================== 백업 (구글 드라이브) =====================
 // 매주 일요일 6시(메뉴 ③ 설치 시) + 메뉴/앱에서 즉시. 이 스크립트 소유자의 드라이브 '면접 스튜디오 백업' 폴더에 JSON 저장, 최근 8개 보관.
 const BACKUP_COLLECTIONS = ['students', 'staff', 'accounts', 'logins', 'interviews', 'studentNotes', 'questions',
-  'sessions', 'meetings', 'bookings', 'bookingLogs', 'days', 'availability', 'meta'];
+  'sessions', 'meetings', 'bookings', 'bookingLogs', 'days', 'availability', 'meta',
+  'reviews', 'boothBookings', 'boothSlots'];   // (v16) 대학 면접 후기·부스 예약 — 나중에 생겨 빠져 있었음
 const BACKUP_KEEP = 8;
 function menuBackupNow() {
   const r = weeklyBackup();
@@ -1815,6 +1837,9 @@ function weeklyBackup() {
   counts.personalQuestions = data.collections.personalQuestions.length;
   const sched = fsGet_('config/schedule');
   data.collections.config = sched ? [Object.assign({ _id: 'schedule' }, sched)] : [];
+  const booth = fsGet_('config/booth');   // (v16) 부스 PC 목록 (키 자체가 아니라 해시만 있음)
+  if (booth) data.collections.config.push(Object.assign({ _id: 'booth' }, booth));
+  counts.config = data.collections.config.length;
   const total = Object.keys(counts).reduce(function (a, k) { return a + counts[k]; }, 0);
   const folder = backupFolder_();
   const name = '면접스튜디오_백업_' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd_HHmm') + '.json';
@@ -1883,6 +1908,51 @@ function clsOf_(v, no) {
 function classOf_(no) { no = String(no); return no ? no.charAt(0) + '-' + Number(no.slice(1, no.length - 2)) : ''; }
 function colOf_(cols, key) { for (let i = 0; i < cols.length; i++) if (cols[i][1] === key) return i + 1; return -1; }
 function colLetter_(n) { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
+// (v16) 대학 정식 이름 — 앱 common.js 의 univName 과 같은 규칙 (한쪽을 고치면 다른 쪽도)
+//   끝이 '대'면 '대학교' · 교대 → 교육대학교 · 여대 → 여자대학교 · 메모 괄호 빼기(캠퍼스 괄호는 남김) · 오타 '댜학교'
+//   한 칸에 여러 학교(쉼표·빗금)는 학교마다 바꿔 ', ' 로 잇는다
+const UNIV_ALIAS_ = {
+  '한국과학기술원(KAIST)': ['KAIST', '카이스트', '한국과학기술원'],
+  '광주과학기술원(GIST)': ['GIST', '지스트', '광주과학기술원'],
+  '대구경북과학기술원(DGIST)': ['DGIST', '디지스트', '대구경북과학기술원'],
+  '울산과학기술원(UNIST)': ['UNIST', '유니스트', '울산과학기술원'],
+  '한국에너지공과대학교(KENTECH)': ['KENTECH', '켄텍', '한국에너지공과대학교', '한국에너지공대'],
+  '포항공과대학교': ['포항공과대학', '포항공대', 'POSTECH', '포스텍'],
+  '서울과학기술대학교': ['서울과기대', '과기대', '서울과학기술대'],
+  '한국교원대학교': ['교원대', '교원대학교', '한국교원대'],
+  '공주대학교': ['국립공주대학교', '국립공주대', '공주대'],
+  '건국대학교(글로컬)': ['건국대글로컬', '건국대학교글로컬', '건국대글로컬캠퍼스', '건국대학교글로컬캠퍼스', '건국대(글로컬)', '건국대글로컬(충주캠퍼스)', '건국대충주캠퍼스'],
+  '한국외국어대학교': ['한국외대'],
+  '한국기술교육대학교': ['한기대', '코리아텍']
+};
+const UNIV_CAMPUS_ = /캠퍼스|분교|글로컬|세종|원주|미래|ERICA|에리카|천안|충주|안성|죽전|국제|경주|익산/i;
+const UNIV_BY_ = (function () {
+  const m = {};
+  Object.keys(UNIV_ALIAS_).forEach(function (name) {
+    [name].concat(UNIV_ALIAS_[name]).forEach(function (a) { m[a.replace(/\s+/g, '').toUpperCase()] = name; });
+  });
+  return m;
+})();
+function univName_(v) {
+  const t = String(v == null ? '' : v).trim();
+  if (!t) return '';
+  if (/[,，/]/.test(t)) return t.split(/[,，/]/).map(univName_).filter(Boolean).join(', ');
+  const k = t.replace(/\s+/g, '');
+  const by = function (x) { return Object.prototype.hasOwnProperty.call(UNIV_BY_, x.toUpperCase()) ? UNIV_BY_[x.toUpperCase()] : null; };
+  if (by(k)) return by(k);
+  let camp = '';
+  let s = k.replace(/\(([^)]*)\)|\[([^\]]*)\]/g, function (m, a, b) {
+    if (UNIV_CAMPUS_.test(a || b || '')) camp += '(' + (a || b).replace(/캠퍼스$/, '') + ')';
+    return '';
+  }).replace(/댜학교$/, '대학교');
+  if (!s) return t;
+  if (!camp && by(s)) return by(s);
+  if (/교대$/.test(s)) s = s.replace(/교대$/, '교육대학교');
+  else if (/여대$/.test(s)) s = s.replace(/여대$/, '여자대학교');
+  else if (/대$/.test(s)) s += '학교';
+  s = by(s) || s;
+  return camp ? by(s + camp) || s + camp : s;
+}
 function fmtDay_(v) {
   if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
   const m = String(v || '').match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);

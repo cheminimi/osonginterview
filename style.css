@@ -1938,3 +1938,40 @@ body.nd .rec-ov.rv-print .rv-doc, body.nd .rec-ov.rv-print .rv-sb { display: non
 body.nd .rv-gr { display: inline-flex; gap: 2px; margin-left: 10px; vertical-align: middle; background: #eef1f6; border-radius: 99px; padding: 2px; }
 body.nd .rv-gr button { border: 0; background: transparent; font: inherit; font-size: .78rem; font-weight: 700; color: var(--ink-2); padding: 2px 10px; border-radius: 99px; cursor: pointer; }
 body.nd .rv-gr button.on { background: #121316; color: #fff; }
+/* 학생부 화면 성적 탭 (2026-10-30) */
+body.nd .rv-main { margin-left: 4px; background: #2b2e35; }
+body.nd .rv-main button { color: #c9ced8; }
+body.nd .rv-main button.on { background: #fff; color: #121316; }
+body.nd .rv-grades { flex: 1; overflow: auto; background: #fff; padding: 14px 18px 30px; display: grid; gap: 14px; align-content: start; position: relative; }
+body.nd .rv-grades[hidden], body.nd .rv-body[hidden] { display: none; }
+body.nd .rv-grades-in { display: grid; gap: 10px; margin-top: 8px; }
+body.nd .gr-top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+body.nd .gr-sum, body.nd .gr-detail { display: grid; gap: 14px; }
+body.nd .gr-sum[hidden], body.nd .gr-detail[hidden] { display: none; }
+body.nd .gr-row2 { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 14px; }
+@media (max-width: 860px) { body.nd .gr-row2 { grid-template-columns: minmax(0, 1fr); } }
+body.nd .gr-card { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; min-width: 0; }
+body.nd .gr-card h4 { margin: 0 0 6px; font-size: .98rem; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+body.nd .gr-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+body.nd .gr-chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 99px; padding: 2px 10px; font: inherit; font-size: .78rem; font-weight: 700; background: #fff; color: var(--ink-3); cursor: pointer; }
+body.nd .gr-chip i { width: 10px; height: 3px; border-radius: 2px; background: currentColor; }
+body.nd .gr-t { border-collapse: collapse; width: 100%; font-size: .84rem; }
+body.nd .gr-t th, body.nd .gr-t td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: center; white-space: nowrap; }
+body.nd .gr-t td.l { text-align: left; }
+body.nd .gr-t thead th { background: #5f78a3; color: #fff; font-weight: 700; border-bottom: 0; }
+body.nd .gr-t thead tr.sub th { background: #7d93ba; font-size: .78rem; }
+body.nd .gr-t tbody th { background: #f6f8fb; text-align: left; color: var(--ink-2); }
+body.nd .gr-t tr.grp th { background: #eef2f9; }
+body.nd .gr-t td.avg { font-weight: 800; }
+body.nd .gr-t td.best { color: #1e7a5a; font-weight: 800; }
+body.nd .gr-t td.worst { color: #c2453c; font-weight: 800; }
+body.nd .gr-pill { font-size: .72rem; font-weight: 800; border-radius: 99px; padding: 1px 8px; background: #eef1f5; }
+body.nd .gr-pill.a { background: var(--ok-bg); color: var(--ok); }
+body.nd .gr-pill.b { background: #e8eefb; color: #2f4b7c; }
+body.nd .gr-pill.c { background: #fbeeda; color: #95590a; }
+body.nd .gr-dist { display: flex; height: 8px; border-radius: 99px; overflow: hidden; min-width: 90px; }
+body.nd .gr-dist span { display: block; }
+body.nd .gr-semhd { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+body.nd .gr-empty { color: var(--ink-3); padding: 20px; text-align: center; }
+@media print { .rec-ov .rv-grades { display: none !important; } }
+body.nd .rec-ov.rv-print .rv-grades { display: none; }

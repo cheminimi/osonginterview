@@ -175,7 +175,9 @@ const SECTION_RE = [
   [head("독서활동상황"), "drop", "독서활동상황"],
   [head("행동특성및종합의견"), "behavior"]
 ];
-const PII_RE = /\d{6}\s*-\s*[1-4*]\s*[\d*]{6}|주\s*소\s*[:：]?|보\s*호\s*자|(성\s*명[\s\S]{0,40}성\s*별)/;
+// 인적사항 쪽: 주민등록번호 꼴, 또는 한 줄에 '성명'과 '성별' (인적사항 표). '주소'·'보호자' 같은 낱말만으로는 버리지 않음
+//   (창체·세특 글에 '보호자'가 나오면 그 쪽이 통째로 빠져 칸이 잘리던 문제 — 2026-10-30)
+const PII_RE = /\d{6}\s*-\s*[1-4*]\s*[\d*]{6}|(^|\n)[^\n]{0,10}성\s*명[^\n]{0,40}성\s*별/;
 const TABLE_HEAD = /^(학년|영역|시간|특기\s*사항|학년\s*영역|영역\s*시간|구분|과\s*목|수업\s*일수|결석\s*일수|지각|조퇴|결과|비고|학기|단위수|원점수|석차등급|성취도)(\s|$)/;
 const NOISE = /^[-–]?\s*\d+\s*[-–]?$|^\d+\s*\/\s*\d+$|출력|발급|페이지|쪽\s*\d/;
 const AREA_RE = /^(자율\s*[·ㆍ]?\s*자치\s*활동|자율\s*활동|동아리\s*활동|봉사\s*활동|진로\s*활동)$/;
@@ -306,7 +308,7 @@ export function splitRecord(pages, { withGrades = false } = {}) {
   const gaps = [];
   for (const p of pages) {
     const all = p.lines.map((l) => l.text).join("\n");
-    if (PII_RE.test(all)) { info.dropped.push({ page: p.n, why: "인적사항(주민등록번호·주소·보호자·성명/성별)이 있는 쪽" }); continue; }
+    if (PII_RE.test(all)) { info.dropped.push({ page: p.n, why: "인적사항(주민등록번호·성명/성별 표)이 있는 쪽" }); continue; }
     info.kept++;
     p.lines.forEach((l, i) => { if (i && p.lines[i - 1].y - l.y < 30) gaps.push(p.lines[i - 1].y - l.y); });
     const maxR = Math.max(...p.lines.map((l) => l.right || 0));
@@ -485,6 +487,8 @@ function stepPages() {
   const dropPages = new Set(info.dropped.filter((d) => /쪽/.test(d.why)).map((d) => d.page));
   body().innerHTML = `<div class="ru-card"><h3>쪽 확인</h3>
     <div class="ru-pages">${upState.pages.map((p) => { const d = info.dropped.find((x) => x.page === p.n && /쪽/.test(x.why)); return `<span class="ru-pg ${d ? "drop" : "keep"}" title="${esc(d?.why || "남김")}">${p.n}쪽 ${d ? "버림" : "남김"}${d ? `<small>${esc(d.why)}</small>` : ""}</span>`; }).join("")}</div>
+    ${info.dropped.some((d) => /쪽$/.test(d.why) && d.page > 1 && info.dropped.filter((x) => /쪽$/.test(x.why)).length < upState.pages.length) && info.dropped.filter((d) => /쪽$/.test(d.why)).some((d, i, a) => d.page !== i + 1)
+      ? `<div class="notice">가운데 쪽(${info.dropped.filter((d) => /쪽$/.test(d.why)).map((d) => d.page + "쪽").join(", ")})이 인적사항으로 버려졌어요. 그 쪽 글이 학생부에서 빠지니, 파일이 맞는지 확인해 주세요.</div>` : ""}
     <ul class="ru-info">
       <li>남긴 구역: ${sections.filter((s) => s.key !== "grades").map((s) => esc(SEC_SHORT[s.key])).join(" · ") || '<b style="color:var(--danger)">없음</b>'}</li>
       <li>버린 구역: ${[...new Set(info.dropped.filter((d) => /구역/.test(d.why)).map((d) => d.why.replace(" (구역)", "")))].map(esc).join(" · ") || "없음"}${dropPages.size ? ` · 인적사항 쪽 ${dropPages.size}개` : ""}</li>

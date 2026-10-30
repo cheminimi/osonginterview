@@ -144,7 +144,14 @@ export async function readPdf(buf) {
       l.items.sort((a, b) => a.x - b.x);
       let t = "", end = null;
       for (const it of l.items) { if (end != null && it.x - end > it.h * 0.25) t += " "; t += it.s; end = it.x + it.w; }
-      return { text: t.replace(/\s+/g, " ").trim(), x: l.items[0].x, right: end };
+      // 조각(segs): 붙어 있는 글자들은 한 낱말로 (PDF 마다 글자 단위·낱말 단위가 다름)
+      const segs = [];
+      for (const it of l.items) {
+        const last = segs.at(-1);
+        if (last && it.x - (last.x + last.w) <= Math.max(1, it.h * 0.25) && !/\s$/.test(last.s) && !/^\s/.test(it.s)) { last.s += it.s; last.w = it.x + it.w - last.x; }
+        else segs.push({ x: it.x, w: it.w, s: it.s });
+      }
+      return { text: t.replace(/\s+/g, " ").trim(), x: l.items[0].x, right: end, y: l.y, h: l.items[0].h, segs };
     }).filter((l) => l.text) });
     pg.cleanup?.();
   }
@@ -152,77 +159,187 @@ export async function readPdf(buf) {
   return pages;
 }
 
+// 제목 글자 사이 띄어쓰기를 허용 ("봉 사 활 동 실 적")
+const sp = (w) => w.replace(/\s+/g, "").split("").map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s*");
+// 구역 제목 줄: '5. 학교폭력 조치상황', '학년 행동특성 및 종합의견', 뒤에 짧은 말이 붙은 줄도 (전체 30자 이하일 때만 봄)
+const head = (w) => new RegExp(`^(\\d+\\s*[.．]\\s*)?(학\\s*년\\s*)?${sp(w)}(\\s+\\S{1,6})?\\s*$`);
 const SECTION_RE = [
-  [/^(\d+\s*[.．]\s*)?(인적\s*[·ㆍ.]?\s*학적\s*사항|인적\s*사항|학적\s*사항)/, "drop", "인적·학적사항"],
-  [/^(\d+\s*[.．]\s*)?출결\s*상황/, "attend"],
-  [/^(\d+\s*[.．]\s*)?수상\s*경력/, "drop", "수상경력"],
-  [/^(\d+\s*[.．]\s*)?자격증/, "drop", "자격증"],
-  [/^(\d+\s*[.．]\s*)?창의적\s*체험\s*활동\s*상황/, "creative"],
-  [/^(\d+\s*[.．]\s*)?교과\s*학습\s*발달\s*상황/, "subject"],
-  [/^(\d+\s*[.．]\s*)?독서\s*활동\s*상황/, "drop", "독서활동상황"],
-  [/^(\d+\s*[.．]\s*)?행동\s*특성\s*및\s*종합\s*의견/, "behavior"],
-  [/^(\d+\s*[.．]\s*)?봉사\s*활동\s*실적/, "drop", "봉사활동실적"]
+  [head("인적·학적사항"), "drop", "인적·학적사항"], [head("인적사항"), "drop", "인적사항"], [head("학적사항"), "drop", "학적사항"],
+  [head("출결상황"), "attend"],
+  [head("수상경력"), "drop", "수상경력"],
+  [head("자격증및인증취득상황"), "drop", "자격증"], [head("자격증취득상황"), "drop", "자격증"],
+  [head("학교폭력조치상황"), "drop", "학교폭력 조치상황"],
+  [head("창의적체험활동상황"), "creative"],
+  [head("봉사활동실적"), "drop", "봉사활동실적"],
+  [head("교과학습발달상황"), "subject"],
+  [head("독서활동상황"), "drop", "독서활동상황"],
+  [head("행동특성및종합의견"), "behavior"]
 ];
 const PII_RE = /\d{6}\s*-\s*[1-4*]\s*[\d*]{6}|주\s*소\s*[:：]?|보\s*호\s*자|(성\s*명[\s\S]{0,40}성\s*별)/;
-const TABLE_HEAD = /^(학년|영역|시간|특기\s*사항|학년\s*영역|구분|과\s*목|세부\s*능력\s*및\s*특기\s*사항|수업\s*일수|결석\s*일수|지각|조퇴|결과|비고|학기|단위수|원점수|석차등급|성취도)(\s|$)/;
+const TABLE_HEAD = /^(학년|영역|시간|특기\s*사항|학년\s*영역|영역\s*시간|구분|과\s*목|수업\s*일수|결석\s*일수|지각|조퇴|결과|비고|학기|단위수|원점수|석차등급|성취도)(\s|$)/;
 const NOISE = /^[-–]?\s*\d+\s*[-–]?$|^\d+\s*\/\s*\d+$|출력|발급|페이지|쪽\s*\d/;
+const AREA_RE = /^(자율\s*[·ㆍ]?\s*자치\s*활동|자율\s*활동|동아리\s*활동|봉사\s*활동|진로\s*활동)$/;
+const areaIdx = (n) => /^자율/.test(n) ? 0 : /^동아리/.test(n) ? 1 : /^봉사/.test(n) ? 2 : 3;
+const segText = (segs) => { let t = "", end = null; for (const s of segs) { if (end != null && s.x - end > 2) t += " "; t += s.s; end = s.x + (s.w || 0); } return t.replace(/\s+/g, " ").trim(); };
+const isHg = (c) => !!c && /[가-힣]/.test(c);
+// 줄 이어 붙이기: 앞 줄이 오른쪽 끝까지 찼고 한글끼리 이어지면 낱말 중간에서 끊긴 것
+function joinLines(lines, maxR) {
+  let t = "", prev = null;
+  for (const l of lines) {
+    const s = l.t.trim(); if (!s) continue;
+    const glue = prev && prev.r >= maxR - 15 && isHg(t.slice(-1)) && isHg(s[0]) ? "" : " ";
+    t = t ? t + glue + s : s; prev = l;
+  }
+  return t;
+}
+// 칸 나누기 (나이스 표는 칸 이름(영역·학년)이 칸 높이의 가운데에 찍힘):
+// 줄들(위→아래)과 이름 위치(anchor)들로 칸을 나눈다. 쪽 맨 위에는 앞 쪽 칸이 이어진 줄(prefix)이 있을 수 있어
+// prefix 길이를 바꿔 가며 '마지막 칸이 마지막 줄에서 끝나는' 나누기를 고른다
+function partition(T, A, tol) {
+  const run = (k) => {
+    let i = k; const blocks = [];
+    for (const a of A) {
+      if (i >= T.length || T[i].y < a.y - tol) { blocks.push({ a, lines: [] }); continue; }
+      const bottom = 2 * a.y - T[i].y, b = { a, lines: [] };
+      while (i < T.length && T[i].y >= bottom - tol) b.lines.push(T[i++]);
+      blocks.push(b);
+    }
+    return { k, blocks, left: T.length - i, rest: T.slice(i) };
+  };
+  let best = null;
+  for (let k = 0; k <= T.length; k++) { const r = run(k); if (!best || r.left < best.left) best = r; if (r.left === 0) break; }
+  const r = best || { k: 0, blocks: [], left: T.length, rest: T };
+  if (r.rest.length && r.blocks.length) r.blocks.at(-1).lines.push(...r.rest);   // 남은 줄은 마지막 칸에
+  return { prefix: T.slice(0, r.k), blocks: r.blocks, orphan: r.blocks.length ? [] : r.rest };
+}
+const median = (a) => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : 14; };
 
-// 쪽 → 구역·칸 (나이스 '학교생활기록부' PDF 꼴을 기준으로 한 추정 — 섞인 칸은 선생님이 고침)
+// 쪽 → 구역·칸 (나이스 '학교생활기록부' PDF 기준. 섞인 칸은 미리 보기에서 선생님이 고침)
 export function splitRecord(pages, { withGrades = false } = {}) {
   const info = { read: pages.length, kept: 0, dropped: [], headerLines: 0 };
-  // 머리말·꼬리말: 여러 쪽의 위·아래 3줄에 되풀이되는 줄 (숫자는 같게 봄)
   const norm = (t) => t.replace(/\d+/g, "#");
   const freq = new Map();
   pages.forEach((p) => { const edge = [...p.lines.slice(0, 3), ...p.lines.slice(-3)]; new Set(edge.map((l) => norm(l.text))).forEach((k) => freq.set(k, (freq.get(k) || 0) + 1)); });
   const rep = pages.length >= 2 ? Math.max(2, Math.ceil(pages.length / 2)) : 99;
-  const secs = {};
-  let cur = null, sub = null, grade = "";
-  const row = () => secs[cur]?.rows.at(-1);
-  const push = (label, text, l) => { (secs[cur] ||= { key: cur, title: SEC_TITLE[cur], rows: [] }).rows.push({ label, text: text || "", _r: l?.right || 0 }); };
+  // 1) 줄마다 구역 정하기 (창체·행특은 좌표째 모았다가 2)에서 칸으로 나눔)
+  const reg = { creative: [], behavior: [], attend: [] };
+  const subj = { rows: [], grades: [] };
+  let cur = null, sub = null, grade = "", lastSubY = null, lastSubPage = 0;
+  const gaps = [];
   for (const p of pages) {
     const all = p.lines.map((l) => l.text).join("\n");
     if (PII_RE.test(all)) { info.dropped.push({ page: p.n, why: "인적사항(주민등록번호·주소·보호자·성명/성별)이 있는 쪽" }); continue; }
     info.kept++;
+    p.lines.forEach((l, i) => { if (i && p.lines[i - 1].y - l.y < 30) gaps.push(p.lines[i - 1].y - l.y); });
     const maxR = Math.max(...p.lines.map((l) => l.right || 0));
     p.lines.forEach((l, i) => {
       const edge = i < 3 || i >= p.lines.length - 3;
       if (edge && ((freq.get(norm(l.text)) || 0) >= rep || NOISE.test(l.text))) { info.headerLines++; return; }
-      const hit = SECTION_RE.find(([re]) => re.test(l.text));
+      const t0 = l.text;
+      const hit = t0.length <= 30 && SECTION_RE.find(([re]) => re.test(t0));
       if (hit) {
         if (hit[1] === "drop") { cur = "drop"; if (!info.dropped.some((d) => d.why === hit[2] + " (구역)")) info.dropped.push({ page: p.n, why: hit[2] + " (구역)" }); }
-        else { cur = hit[1]; sub = cur === "subject" ? "grades" : null; grade = ""; }
+        else if (cur !== hit[1]) { cur = hit[1]; sub = cur === "subject" ? "grades" : null; if (cur === "subject") grade = ""; }
         return;
       }
       if (!cur || cur === "drop") return;
-      let t = l.text;
-      if (cur === "subject" && /세부\s*능력\s*및\s*특기\s*사항/.test(t) && t.length < 40) { sub = "seteuk"; return; }
-      if (TABLE_HEAD.test(t) && t.length < 40) return;
-      const g = t.match(/^\[?\(?([1-3])\s*학년\)?\]?\s*/) || t.match(/^([1-3])\s+(?=\S)/);
-      if (cur === "creative") {
-        const m = t.replace(/^([1-3])\s+/, (x, d) => { grade = d; return ""; }).match(/^(자율\s*[·ㆍ]?\s*자치\s*활동|자율\s*활동|동아리\s*활동|진로\s*활동|봉사\s*활동)\s*(\d+\s*)?(.*)$/);
-        if (m) {
-          const name = m[1].replace(/\s+/g, "");
-          if (name.startsWith("봉사")) { push("__skip", "", l); return; }
-          push(`${grade ? grade + "학년 " : ""}${name}`, m[3], l); return;
-        }
-      } else if (cur === "subject") {
-        if (sub === "grades") { if (!withGrades) return; const keep = cur; cur = "grades"; push("", t, l); cur = keep; return; }
-        if (g) { grade = g[1]; t = t.slice(g[0].length); }
-        const m = t.match(/^((?:\(\d학기\))?\s*[가-힣A-Za-z0-9ⅠⅡⅢⅣ·\s()]{1,24}?)\s*[:：]\s*(.*)$/);
-        if (m) { push(`${grade ? grade + "학년 " : ""}${m[1].trim()}`, m[2], l); return; }
-      } else if (cur === "attend" || cur === "behavior") {
-        if (g) { push(`${g[1]}학년`, t.slice(g[0].length), l); return; }
-      }
-      const r = row();
-      if (!r) { push("", t, l); return; }
-      if (r.label === "__skip") return;
-      // 줄바꿈 이어 붙이기: 앞 줄이 오른쪽 끝까지 찼으면 낱말 중간에서 끊긴 것
-      const glue = r._r >= maxR - 15 && isHangul(r.text.slice(-1)) && isHangul(t[0]) ? "" : " ";
-      r.text = (r.text ? r.text + glue : "") + t; r._r = l.right || 0;
+      const L = { ...l, page: p.n, maxR };
+      if (cur === "creative" || cur === "behavior" || cur === "attend") { if (!(TABLE_HEAD.test(t0) && t0.length < 40)) reg[cur].push(L); return; }
+      // 교과: [n학년] · 성적 표 · <진로 선택 과목> 같은 묶음 제목 · '과목 / 세부능력 및 특기사항' 표
+      let t = t0;
+      const g = t.match(/^\[\s*([1-3])\s*학년\s*\]/);
+      if (g) { grade = g[1]; sub = "grades"; return; }
+      if (/^[<〈]/.test(t) || /^학\s*기(\s|$)/.test(t)) { sub = "grades"; return; }
+      if (/세부\s*능력\s*및\s*특기\s*사항/.test(t) && t.length < 40) { sub = "seteuk"; lastSubY = null; return; }
+      if (sub === "grades") { if (withGrades) subj.grades.push({ label: grade ? `${grade}학년` : "", text: t }); return; }
+      if (sub !== "seteuk") return;
+      const m = t.match(/^((?:\(\d학기\))?\s*[가-힣A-Za-z0-9ⅠⅡⅢⅣ·ㆍ\s()]{1,24}?)\s*[:：]\s*(.*)$/);
+      const lg = median(gaps);
+      if (m) { subj.rows.push({ label: `${grade ? grade + "학년 " : ""}${m[1].trim()}`, lines: [{ t: m[2], r: l.right }], maxR }); lastSubY = l.y; lastSubPage = p.n; return; }
+      // 표 밖 글(묶음 제목·빈 줄 다음 글)은 버림: 같은 쪽에서 줄 간격이 크게 벌어지면 표가 끝난 것
+      if (lastSubY != null && lastSubPage === p.n && lastSubY - l.y > lg * 1.8) { sub = "skip"; return; }
+      const r = subj.rows.at(-1); if (!r) return;
+      r.lines.push({ t, r: l.right }); lastSubY = l.y; lastSubPage = p.n;
     });
   }
+  const lg = median(gaps), tol = lg * 0.55;
+  const secs = {};
+  // 2) 창체: 영역 이름(자율·동아리·진로)이 칸 가운데. 학년 숫자도 학년 칸 가운데(쪽마다 다 있지는 않음)
+  if (reg.creative.length) {
+    // 특기사항 칸이 시작하는 x: 영역 이름·숫자가 아닌 긴 조각 중 가장 왼쪽 (영역 이름보다는 오른쪽)
+    const areaX = Math.max(0, ...reg.creative.flatMap((l) => (l.segs || []).filter((s) => AREA_RE.test(s.s.trim())).map((s) => s.x)));
+    const textX = Math.min(...reg.creative.map((l) => (l.segs || []).find((s) => s.x > areaX + 4 && !AREA_RE.test(s.s.trim()) && !/^\d{1,3}$/.test(s.s.trim()))?.x ?? 9999)) - 4;
+    const frag = [];   // 쪽별 칸 조각
+    const gAnch = [];
+    [...new Set(reg.creative.map((l) => l.page))].forEach((pg) => {
+      const Ls = reg.creative.filter((l) => l.page === pg);
+      const T = [], A = [];
+      Ls.forEach((l) => {
+        const segs = l.segs || [{ x: l.x, w: (l.right || 0) - l.x, s: l.text }];
+        const left = segs.filter((s) => s.x < textX), right = segs.filter((s) => s.x >= textX);
+        const lt = left.map((s) => s.s.trim()).filter(Boolean);
+        const area = lt.find((s) => AREA_RE.test(s.replace(/\s+/g, " ")));
+        const gd = left.find((s) => /^[1-3]$/.test(s.s.trim()) && (!area || s.x < Math.min(...left.filter((x) => AREA_RE.test(x.s.trim())).map((x) => x.x))));
+        if (gd) gAnch.push({ page: pg, y: l.y, g: Number(gd.s.trim()) });
+        if (area) A.push({ y: l.y, name: area.replace(/\s+/g, "") });
+        if (right.length) T.push({ y: l.y, t: segText(right), r: l.right, maxR: l.maxR });
+      });
+      const P = partition(T, A, tol);
+      frag.push({ page: pg, prefix: P.prefix.concat(P.orphan), blocks: P.blocks.map((b) => ({ name: b.a.name, y: b.a.y, lines: b.lines, page: pg })) });
+    });
+    // 쪽을 넘는 칸 잇기 · 학년 매기기 (영역 순서가 처음으로 돌아가면 다음 학년)
+    const rows = [];
+    let g = 1;
+    frag.forEach((f) => {
+      if (f.prefix.length && rows.length) rows.at(-1).lines.push(...f.prefix);
+      f.blocks.forEach((b, bi) => {
+        const prev = rows.at(-1);
+        // 쪽 맨 위 칸이 앞 쪽 마지막 칸과 같은 영역이면 이어진 칸 (나이스는 쪽을 넘긴 칸에 영역 이름을 다시 찍음)
+        if (prev && bi === 0 && prev.name === b.name && prev.lastPage === f.page - 1) { prev.lines.push(...b.lines); prev.frags.push(b); prev.lastPage = f.page; return; }
+        if (prev && areaIdx(b.name) <= areaIdx(prev.name)) g++;
+        rows.push({ name: b.name, g, lines: [...b.lines], frags: [b], lastPage: f.page });
+      });
+    });
+    // 학년 숫자가 찍힌 곳으로 맞춤 (첫 번째로 찾은 숫자 기준)
+    const a0 = gAnch.find((a) => rows.some((r) => r.frags.some((b) => b.page === a.page)));
+    if (a0) {
+      const hitRow = rows.find((r) => r.frags.some((b) => b.page === a0.page && b.lines.length && a0.y <= b.lines[0].y + tol && a0.y >= b.lines.at(-1).y - tol))
+        || rows.find((r) => r.frags.some((b) => b.page === a0.page));
+      const off = a0.g - hitRow.g;
+      if (off) rows.forEach((r) => { r.g += off; });
+    }
+    secs.creative = rows.filter((r) => !/^봉사/.test(r.name)).map((r) => ({ label: `${r.g}학년 ${r.name}`, text: joinLines(r.lines, Math.max(...r.lines.map((x) => x.maxR || 0))) }));
+  }
+  // 3) 행특: 학년 숫자가 칸 가운데 (쪽을 넘긴 칸에는 숫자가 없을 수 있음)
+  if (reg.behavior.length) {
+    const rows = [];
+    [...new Set(reg.behavior.map((l) => l.page))].forEach((pg) => {
+      const Ls = reg.behavior.filter((l) => l.page === pg);
+      const T = [], A = [];
+      Ls.forEach((l) => {
+        const segs = l.segs || [{ x: l.x, w: (l.right || 0) - l.x, s: l.text }];
+        const d = segs.length && /^[1-3]$/.test(segs[0].s.trim()) ? segs[0] : null;
+        if (d && segs.length === 1) { A.push({ y: l.y, g: Number(d.s.trim()) }); return; }
+        if (d) { A.push({ y: l.y, g: Number(d.s.trim()) }); T.push({ y: l.y, t: segText(segs.slice(1)), r: l.right, maxR: l.maxR }); return; }
+        T.push({ y: l.y, t: segText(segs), r: l.right, maxR: l.maxR });
+      });
+      const P = partition(T, A, tol);
+      const pre = P.prefix.concat(P.orphan);
+      if (pre.length) { if (rows.length) rows.at(-1).lines.push(...pre); else rows.push({ g: 0, lines: pre }); }
+      P.blocks.forEach((b) => rows.push({ g: b.a.g, lines: b.lines }));
+    });
+    secs.behavior = rows.map((r) => ({ label: r.g ? `${r.g}학년` : "", text: joinLines(r.lines, Math.max(0, ...r.lines.map((x) => x.maxR || 0))) }));
+  }
+  // 4) 출결: 줄 앞 학년 숫자로
+  if (reg.attend.length) {
+    const rows = [];
+    reg.attend.forEach((l) => { const m = l.text.match(/^([1-3])\s+(.*)$/); if (m) rows.push({ label: `${m[1]}학년`, text: m[2] }); else if (rows.length) rows.at(-1).text += " " + l.text; else rows.push({ label: "", text: l.text }); });
+    secs.attend = rows;
+  }
+  if (subj.rows.length) secs.subject = subj.rows.map((r) => ({ label: r.label, text: joinLines(r.lines, r.maxR) }));
+  if (withGrades && subj.grades.length) secs.grades = subj.grades;
   const order = ["attend", "creative", "subject", "behavior", "grades"];
-  const sections = order.filter((k) => secs[k]).map((k) => ({ key: k, title: SEC_TITLE[k], rows: secs[k].rows.filter((r) => r.label !== "__skip" && (r.text || "").trim()).map((r) => ({ label: r.label, text: r.text.trim() })) }))
+  const sections = order.filter((k) => secs[k]).map((k) => ({ key: k, title: SEC_TITLE[k], rows: secs[k].filter((r) => (r.text || "").trim()).map((r) => ({ label: r.label, text: r.text.trim() })) }))
     .filter((s) => s.rows.length);
   return { sections, info };
 }
@@ -511,7 +628,7 @@ export async function openRecordViewer(no, { stage = 0, preset = null } = {}) {
   try { const s = await getDoc(doc(db, "records", no)); if (!s.exists()) return toast("아직 학생부가 없어요.", "error"); rec = s.data(); }
   catch (e) { return showError(e, "학생부 열기"); }
   V = { no, st, rec, stage: stage || guessStage(st, preset), preset, marks: [], pending: [], pqs: [], notes: null, asked: new Map(),
-    flt: "all", otherHl: true, idle: null, tick: null, t0: 0, run: false, used: 0, off: [], sel: null };
+    flt: "all", otherHl: true, grade: {}, idle: null, tick: null, t0: 0, run: false, used: 0, off: [], sel: null };
   log(no, "open");
   const me = myName() || S.ctx.user.email;
   const ov = document.createElement("div");
@@ -570,14 +687,18 @@ export async function openRecordViewer(no, { stage = 0, preset = null } = {}) {
     if (!pos) { pop.hidden = true; return; }
     V.sel = { sec: pos.el.dataset.sec, row: Number(pos.el.dataset.row), start: pos.start, end: pos.end, quote: pos.text };
     const r = sel.getRangeAt(0).getBoundingClientRect();
-    pop.style.left = `${Math.min(window.innerWidth - 180, Math.max(8, r.left + r.width / 2 - 90))}px`; pop.style.top = `${Math.max(8, r.top - 46)}px`; pop.hidden = false;
+    pop.style.left = `${Math.min(window.innerWidth - 180, Math.max(8, r.left + r.width / 2 - 90))}px`; pop.style.top = `${Math.min(window.innerHeight - 52, Math.max(8, r.top - 46))}px`; pop.hidden = false;
   }, 0);
   docEl.addEventListener("mouseup", showPop);
   docEl.addEventListener("touchend", showPop);
   on(document, "selectionchange", () => { if (V && getSelection().isCollapsed) setTimeout(() => { if (V && getSelection().isCollapsed) pop.hidden = true; }, 200); });
   $("#rvHl", ov).onclick = () => { pop.hidden = true; addMark("hl"); };
   $("#rvQ", ov).onclick = () => { pop.hidden = true; questionForm(); };
-  docEl.addEventListener("click", (e) => { const mk = e.target.closest("mark[data-mk]"); if (mk) focusQuestion(mk.dataset.mk); });
+  docEl.addEventListener("click", (e) => {
+    const gb = e.target.closest("[data-gr]");
+    if (gb) { V.grade[gb.closest("[data-grsec]").dataset.grsec] = gb.dataset.gr; drawDoc(); return; }
+    const mk = e.target.closest("mark[data-mk]"); if (mk) focusQuestion(mk.dataset.mk);
+  });
   // 하이라이트·질문·지난 면접 불러오기
   try {
     const [mk, pd, pq] = await Promise.all([
@@ -595,10 +716,16 @@ const markStageCls = (m) => `c${Number(m.stage) || 1}`;
 function drawDoc() {
   const el = document.getElementById("rvDoc"); if (!el || !V) return;
   const mine = (m) => m.byUid === S.ctx.user.uid;
-  el.innerHTML = V.rec.sections.map((s) => `<h3 id="rvs-${s.key}">${esc(s.title)}</h3><table>${s.rows.map((r, ri) => {
-    const ms = V.marks.filter((m) => (V.otherHl || mine(m))).map((m) => ({ ...m, ...placeOf(m, s.key, ri, r.text) })).filter((m) => m.ok);
-    return `<tr><th>${esc(r.label || "")}</th><td class="rv-cell" data-sec="${s.key}" data-row="${ri}">${paint(r.text, ms)}</td></tr>`;
-  }).join("")}</table>`).join("") + `<p class="muted sm">대입에 쓰는 항목만 넣었어요 (인적사항·수상·자격증·봉사·독서 없음) · ${V.rec.ver || 1}번째 판</p>`;
+  // 창체·세특은 학년을 골라 볼 수 있게 (칸 이름 앞 'n학년'으로)
+  const gOf = (r) => (String(r.label || "").match(/^([1-3])학년/) || [])[1] || "";
+  el.innerHTML = V.rec.sections.map((s) => {
+    const gs = ["creative", "subject"].includes(s.key) ? [...new Set(s.rows.map(gOf).filter(Boolean))].sort() : [];
+    const pickG = gs.includes(V.grade[s.key]) ? V.grade[s.key] : "";
+    return `<h3 id="rvs-${s.key}">${esc(s.title)}${gs.length > 1 ? `<span class="rv-gr" data-grsec="${s.key}">${["", ...gs].map((g) => `<button type="button" data-gr="${g}" class="${pickG === g ? "on" : ""}">${g ? g + "학년" : "전체"}</button>`).join("")}</span>` : ""}</h3><table>${s.rows.map((r, ri) => {
+      const ms = V.marks.filter((m) => (V.otherHl || mine(m))).map((m) => ({ ...m, ...placeOf(m, s.key, ri, r.text) })).filter((m) => m.ok);
+      return `<tr${pickG && gOf(r) !== pickG ? " hidden" : ""}><th>${esc(r.label || "")}</th><td class="rv-cell" data-sec="${s.key}" data-row="${ri}">${paint(r.text, ms)}</td></tr>`;
+    }).join("")}</table>`;
+  }).join("") + `<p class="muted sm">대입에 쓰는 항목만 넣었어요 (인적사항·수상·자격증·봉사·독서 없음) · ${V.rec.ver || 1}번째 판</p>`;
 }
 // 하이라이트 자리: 저장된 자리의 글이 quote 와 같으면 그대로, 아니면 같은 칸에서 quote 를 다시 찾음 (못 찾으면 안 그림)
 function placeOf(m, sec, row, text) {

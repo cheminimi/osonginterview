@@ -2152,3 +2152,7 @@ body.nd .gr-tw { overflow-x: auto; }
   body.nd .rv-tog { display: none; }
   body.nd .gr-wrap { padding: 10px 12px 30px; }
 }
+/* 학생부 넣기: 잘못 나뉜 것 같은 칸 · 옆 칸으로 보내기 (2026-11-01) */
+body.nd .ru-doc tr.flash td, body.nd .ru-doc tr.flash th { box-shadow: inset 0 0 0 2px #3e63a8; }
+body.nd .ru-edit-acts { gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+body.nd #ruCut .row { gap: 6px; flex-wrap: wrap; margin-top: 6px; }

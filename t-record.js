@@ -148,13 +148,67 @@ export async function readPdf(buf) {
         else segs.push({ x: it.x, w: it.w, s: it.s });
       }
       return { text: t.replace(/\s+/g, " ").trim(), x: l.items[0].x, right: end, y: l.y, h: l.items[0].h, segs };
-    }).filter((l) => l.text) });
+    }).filter((l) => l.text), rules: await pageRules(pg, lib) });
     pg.cleanup?.();
   }
   await pdf.destroy?.();
   return pages;
 }
 
+// 표 가로선 [{y, x1, x2, dash}] (2026-11-01): 칸 경계는 '이름 칸까지 덮는 선'으로 찾는다 (글 위치로 짐작하지 않음)
+//   선분(moveTo·lineTo)과 얇은 사각형(높이 2 미만, 채운 것 포함). 점선(setDash)인지도 남김. 못 읽으면 [] (지금 방식으로 대신)
+async function pageRules(pg, lib) {
+  try {
+    const O = lib.OPS, ol = await pg.getOperatorList();
+    const mul = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+    const ap = (m, x, y) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+    const PAINT = new Set([O.stroke, O.closeStroke, O.fill, O.eoFill, O.fillStroke, O.eoFillStroke, O.closeFillStroke, O.closeEOFillStroke]);
+    let ctm = [1, 0, 0, 1, 0, 0], dash = false, pend = [];
+    const st = [], out = [];
+    const add = (a, b, d) => { if (Math.abs(a[1] - b[1]) < 2.2 && Math.abs(b[0] - a[0]) > 4) out.push({ y: (a[1] + b[1]) / 2, x1: Math.min(a[0], b[0]), x2: Math.max(a[0], b[0]), dash: d }); };
+    for (let i = 0; i < ol.fnArray.length; i++) {
+      const f = ol.fnArray[i], a = ol.argsArray[i];
+      if (f === O.save) st.push([ctm, dash]);
+      else if (f === O.restore) [ctm, dash] = st.pop() || [ctm, dash];
+      else if (f === O.transform) ctm = mul(ctm, a);
+      else if (f === O.setDash) dash = (a?.[0] || []).length > 0;
+      else if (f === O.constructPath) {
+        const [ops, c] = a; let k = 0, cur = null;
+        for (const op of ops) {
+          if (op === O.moveTo) { cur = ap(ctm, c[k], c[k + 1]); k += 2; }
+          else if (op === O.lineTo) { const q = ap(ctm, c[k], c[k + 1]); k += 2; if (cur) pend.push([cur, q]); cur = q; }
+          else if (op === O.rectangle) { const p0 = ap(ctm, c[k], c[k + 1]), p1 = ap(ctm, c[k] + c[k + 2], c[k + 1] + c[k + 3]); k += 4; pend.push([p0, p1]); }
+          else if (op === O.curveTo) k += 6; else if (op === O.curveTo2 || op === O.curveTo3) k += 4;
+        }
+      } else if (PAINT.has(f)) { pend.forEach(([p0, p1]) => add(p0, p1, dash)); pend = []; }
+      else if (f === O.endPath) pend = [];
+    }
+    // 같은 높이·같은 종류 조각은 하나로 (점선을 짧은 선 여러 개로 그린 PDF)
+    const m = [];
+    out.sort((a, b) => b.y - a.y || a.x1 - b.x1).forEach((r) => { const g = m.find((x) => Math.abs(x.y - r.y) < 0.8 && x.dash === r.dash && r.x1 <= x.x2 + 12); if (g) { g.x2 = Math.max(g.x2, r.x2); g.x1 = Math.min(g.x1, r.x1); g.n++; } else m.push({ ...r, n: 1 }); });
+    return m.map((r) => ({ y: r.y, x1: r.x1, x2: r.x2, dash: r.dash || r.n > 6 }));
+  } catch (e) { console.warn("표 선 읽기", e); return []; }
+}
+// 선으로 칸 나누기: 이름 칸(x0)부터 글 칸(x1)까지 덮는 선 = 칸 경계 (희망분야 밑 점선처럼 글 칸만 덮는 선은 경계 아님)
+// T(줄)·A(이름) → partition 과 같은 모양 { prefix, blocks:[{a, lines}], orphan } — 경계가 2개 미만이면 null (지금 방식으로)
+function partitionByRules(T, A, rules, x0, x1) {
+  const B = [...new Set((rules || []).filter((r) => r.x1 <= x0 && r.x2 >= x1).map((r) => Math.round(r.y * 10) / 10))].sort((a, b) => b - a);
+  if (B.length < 2) return null;
+  const cells = [];
+  const edges = [Infinity, ...B, -Infinity];
+  for (let i = 0; i < edges.length - 1; i++) {
+    const hi = edges[i], lo = edges[i + 1];
+    const lines = T.filter((t) => t.y < hi && t.y > lo), names = A.filter((a) => a.y < hi && a.y > lo);
+    if (lines.length || names.length) cells.push({ lines, a: names[0] || null });
+  }
+  const prefix = [], blocks = [];
+  cells.forEach((c) => {
+    if (c.a) blocks.push({ a: c.a, lines: c.lines });
+    else if (blocks.length) blocks.at(-1).lines.push(...c.lines);   // 이름 없는 칸이 가운데에 있으면 앞 칸에
+    else prefix.push(...c.lines);   // 쪽 맨 위 이름 없는 칸 = 앞 쪽에서 이어진 칸
+  });
+  return { prefix, blocks, orphan: [] };
+}
 // 제목 글자 사이 띄어쓰기를 허용 ("봉 사 활 동 실 적")
 const sp = (w) => w.replace(/\s+/g, "").split("").map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s*");
 // 구역 제목 줄: '5. 학교폭력 조치상황', '학년 행동특성 및 종합의견', 뒤에 짧은 말이 붙은 줄도 (전체 30자 이하일 때만 봄)
@@ -351,6 +405,7 @@ export function splitRecord(pages, { withGrades = false } = {}) {
     || (NOISE.test(p.lines[i].text) && (!/^[-–]?\s*\d+\s*[-–]?$/.test(p.lines[i].text.trim()) || i === 0 || i === p.lines.length - 1)));
   // 1) 줄마다 구역 정하기 (창체·행특은 좌표째 모았다가 2)에서 칸으로 나눔)
   const reg = { creative: [], behavior: [], attend: [], volunteer: [] };
+  const rulesOf = new Map(pages.map((p) => [p.n, p.rules || []]));
   let volHead = null, volYearX = null;   // 봉사 표 머리 낱말 x (학년·일자·장소·활동내용·시간·누계시간)
   const subj = { rows: [] };
   const gt = [];   // 성적 표 (학년·종류별 줄 모음) — 성적 넣기를 골랐을 때만 읽음
@@ -411,6 +466,7 @@ export function splitRecord(pages, { withGrades = false } = {}) {
   if (reg.creative.length) {
     // 특기사항 칸이 시작하는 x: 영역 이름·숫자가 아닌 긴 조각 중 가장 왼쪽 (영역 이름보다는 오른쪽)
     const areaX = Math.max(0, ...reg.creative.flatMap((l) => (l.segs || []).filter((s) => AREA_RE.test(s.s.trim())).map((s) => s.x)));
+    const areaX0 = Math.min(9999, ...reg.creative.flatMap((l) => (l.segs || []).filter((s) => AREA_RE.test(s.s.trim())).map((s) => s.x)));
     const textX = Math.min(...reg.creative.map((l) => (l.segs || []).find((s) => s.x > areaX + 4 && !AREA_RE.test(s.s.trim()) && !/^\d{1,3}$/.test(s.s.trim()))?.x ?? 9999)) - 4;
     const frag = [];   // 쪽별 칸 조각
     const gAnch = [];
@@ -431,7 +487,7 @@ export function splitRecord(pages, { withGrades = false } = {}) {
           T.push(hm ? { y: l.y, t: "", hope: hm[1].trim(), r: l.right, maxR: l.maxR } : track({ y: l.y, t, r: l.right, maxR: l.maxR }, pg));
         }
       });
-      const P = partition(T, A, tol);
+      const P = partitionByRules(T, A, rulesOf.get(pg), areaX0 - 4, textX + 40) || partition(T, A, tol);   // 영역 칸까지 덮는 선 = 칸 경계 (희망분야 밑 점선은 아님)
       frag.push({ page: pg, prefix: P.prefix.concat(P.orphan), blocks: P.blocks.map((b) => ({ name: b.a.name, y: b.a.y, lines: b.lines, page: pg })) });
     });
     // 쪽을 넘는 칸 잇기 · 학년 매기기 (영역 순서가 처음으로 돌아가면 다음 학년)
@@ -472,11 +528,12 @@ export function splitRecord(pages, { withGrades = false } = {}) {
       Ls.forEach((l) => {
         const segs = l.segs || [{ x: l.x, w: (l.right || 0) - l.x, s: l.text }];
         const d = segs.length && /^[1-3]$/.test(segs[0].s.trim()) ? segs[0] : null;
-        if (d && segs.length === 1) { A.push({ y: l.y, g: Number(d.s.trim()) }); return; }
-        if (d) { A.push({ y: l.y, g: Number(d.s.trim()) }); T.push(track({ y: l.y, t: segText(segs.slice(1)), r: l.right, maxR: l.maxR }, pg)); return; }
+        if (d && segs.length === 1) { A.push({ y: l.y, g: Number(d.s.trim()), x: d.x }); return; }
+        if (d) { A.push({ y: l.y, g: Number(d.s.trim()), x: d.x }); T.push(track({ y: l.y, t: segText(segs.slice(1)), r: l.right, maxR: l.maxR }, pg)); return; }
         T.push(track({ y: l.y, t: segText(segs), r: l.right, maxR: l.maxR }, pg));
       });
-      const P = partition(T, A, tol);
+      const dX = A.length ? Math.min(...A.map((a) => a.x ?? 50)) : 50, tX = Math.min(9999, ...Ls.map((l) => (l.segs || []).find((sg) => sg.x > dX + 8)?.x ?? 9999));
+      const P = partitionByRules(T, A, rulesOf.get(pg), dX - 4, tX + 40) || partition(T, A, tol);   // 학년 칸까지 덮는 선 = 칸 경계
       const pre = P.prefix.concat(P.orphan);
       if (pre.length) { if (rows.length) rows.at(-1).lines.push(...pre); else rows.push({ g: 0, lines: pre }); }
       P.blocks.forEach((b) => rows.push({ g: b.a.g, lines: b.lines }));
@@ -512,7 +569,7 @@ export function splitRecord(pages, { withGrades = false } = {}) {
       T.forEach((o) => { o.row = o.date ? o : anchors.reduce((b, a) => (Math.abs(a.y - o.y) < Math.abs(b.y - o.y) ? a : b)); });
       anchors.forEach((a) => { a.parts = T.filter((o) => o.row === a); });
       // 학년: 학년 숫자가 그 학년 줄(글 줄 모두)의 가운데 — 창체·행특과 같은 나누기
-      const P = partition(T, A, tol);
+      const P = partitionByRules(T, A, rulesOf.get(pg), xG - 22, xAct) || partition(T, A, tol);   // 학년 칸까지 덮는 선 = 학년 경계
       const gOf = new Map();
       P.prefix.concat(P.orphan).forEach((o) => gOf.set(o, lastG || 1));
       P.blocks.forEach((b) => b.lines.forEach((o) => gOf.set(o, b.a.g)));
@@ -641,9 +698,26 @@ export function lostWarn(info) {
   if (!info.rawChars || info.lostChars / info.rawChars <= 0.02) return "";
   return `<div class="notice ru-warn">일부 글이 빠졌을 수 있어요 — ${info.lost.map((n) => n + "쪽").join(", ")} 확인 <span class="muted sm">(특기사항 ${info.rawChars}자 중 ${info.lostChars}자가 칸에 들어가지 않았어요)</span></div>`;
 }
+// 칸이 잘못 나뉜 것 같은 곳 (안전장치): 끝이 문장 중간 · 첫 글자가 낱말 중간 (창체·세특·행특만)
+const CUT_END = /([.!?…)\]」』”'"]|[다음함됨임요])$/;
+const CUT_START = /^(을|를|은|는|의|에|로|과|와|며|고|른|된|함|음|임|됨)[\s.,]/;   // 문장 첫머리에 올 수 없는 토씨·끝말 ('한 학기', '각 모둠' 같은 첫 낱말은 정상)
+export function cutSuspects(sections) {
+  const out = [];
+  sections.forEach((s, si) => { if (!["creative", "subject", "behavior"].includes(s.key)) return;
+    s.rows.forEach((r, ri) => {
+      const t = String(r.text || "").trim(), body0 = t.replace(/^희망분야:[^\n]*\n/, "");
+      if (!body0) return;
+      const why = [!CUT_END.test(t) && "끝이 문장 중간", CUT_START.test(body0) && "첫 글자가 낱말 중간 같음"].filter(Boolean);
+      if (why.length) out.push({ si, ri, label: r.label || SEC_SHORT[s.key], why: why.join(" · ") });
+    }); });
+  return out;
+}
 function rowHtml(s, si, r, ri) {
   if (r.editing) return `<textarea class="ru-edit" data-si="${si}" data-ri="${ri}">${esc(applyMasks(r.text, r.masks))}</textarea>
-    <div class="row"><button type="button" class="btn-sm btn-primary" data-editok="${si}:${ri}">고치기 끝</button></div>`;
+    <div class="row ru-edit-acts"><button type="button" class="btn-sm" data-send="prev:${si}:${ri}" ${ri > 0 ? "" : "disabled"} title="글 칸에서 누른 자리 앞 글을 앞 칸 끝으로 옮겨요">앞 칸으로 보내기</button>
+      <button type="button" class="btn-sm" data-send="next:${si}:${ri}" ${ri < s.rows.length - 1 ? "" : "disabled"} title="글 칸에서 누른 자리 뒤 글을 다음 칸 앞으로 옮겨요">다음 칸으로 보내기</button>
+      <span class="muted sm">글 칸에서 나눌 자리를 누른 뒤</span><div class="spacer"></div>
+      <button type="button" class="btn-sm btn-primary" data-editok="${si}:${ri}">고치기 끝</button></div>`;
   let h = "", at = 0;
   r.masks.forEach((m, mi) => { h += esc(r.text.slice(at, m.start)) + `<span class="ru-mask ${m.auto ? "auto" : "man"}" data-m="${si}:${ri}:${mi}" title="${m.auto ? "자동으로 가림" : "가림"} · 누르면 풀기">${esc(m.repl)}</span>`; at = m.end; });
   return `<div class="ru-text" data-si="${si}" data-ri="${ri}">${h + esc(r.text.slice(at))}</div>`;
@@ -655,10 +729,11 @@ function stepMask() {
   S3.forEach((s, si) => s.rows.forEach((r, ri) => r.masks.forEach((m, mi) => { if (m.auto) autos.push({ si, ri, mi, m }); })));
   body().innerHTML = `<div class="ru-card"><h3>가림 확인</h3>
     ${upState.lostWarn || ""}
+    ${(() => { const cs = cutSuspects(S3); return cs.length ? `<div class="notice ru-warn" id="ruCut"><div><b>칸이 잘못 나뉘었을 수 있는 곳 ${cs.length}칸</b> — 눌러서 확인하고, 섞였으면 [고치기]에서 [앞 칸으로 보내기]·[다음 칸으로 보내기]</div><div class="row">${cs.map((c) => `<button type="button" class="chip" data-cut="${c.si}:${c.ri}">${esc(c.label)} · ${esc(c.why)}</button>`).join(" ")}</div></div>` : ""; })()}
     <p class="muted">다른 사람 이름·학교 이름·전화·메일은 자동으로 가렸어요(학생 본인 이름은 그대로). 글을 <b>드래그</b>해 [가리기], 가린 곳을 누르면 [풀기]. 표가 쪽을 넘어가 섞인 칸은 [고치기]로 글을 직접 고쳐요.</p>
     <details class="ru-autos" open><summary>자동으로 가린 곳 <b>${autos.length}</b>곳</summary>
       <div>${autos.map((a, k) => `<button type="button" class="chip" data-goto="${a.si}:${a.ri}:${a.mi}">${k + 1}. ${esc(a.m.kind === "name" ? "이름" : a.m.kind === "school" ? "학교" : a.m.kind === "phone" ? "전화" : a.m.kind === "id" ? "주민번호" : "메일")} · ${esc(S3[a.si].rows[a.ri].text.slice(a.m.start, a.m.end))}</button>`).join(" ") || '<span class="muted sm">없음</span>'}</div></details>
-    <div class="ru-doc" id="ruDoc">${S3.map((s, si) => `<h4>${esc(s.title)}</h4><table>${s.rows.map((r, ri) => `<tr><th>${esc(r.label || "")}</th><td>${rowHtml(s, si, r, ri)}
+    <div class="ru-doc" id="ruDoc">${S3.map((s, si) => `<h4>${esc(s.title)}</h4><table>${s.rows.map((r, ri) => `<tr data-row="${si}:${ri}"><th>${esc(r.label || "")}</th><td>${rowHtml(s, si, r, ri)}
       ${r.editing ? "" : `<button type="button" class="ru-fix" data-fix="${si}:${ri}">고치기</button>`}</td></tr>`).join("")}</table>`).join("")}</div>
     ${upState.withGrades && upState.grades?.length ? `<details class="ru-autos"><summary>성적 ${upState.grades.length}과목 — 펼쳐서 학기별로 확인</summary><div id="ruGr" class="rv-grades-in"></div></details>` : ""}
     <div class="ru-pop" id="ruPop" hidden><button type="button" id="ruMask">가리기</button></div>
@@ -668,6 +743,20 @@ function stepMask() {
   if ($("#ruGr")) renderGrades($("#ruGr"), upState.grades, { on: new Set(["주요과목"]), bars: "all", view: "detail", sem: "" });
   $$("[data-goto]").forEach((b) => b.onclick = () => { const el = $(`[data-m="${b.dataset.goto}"]`, doc0); el?.scrollIntoView({ block: "center" }); el?.classList.add("flash"); setTimeout(() => el?.classList.remove("flash"), 1200); });
   $$(".ru-mask", doc0).forEach((el) => el.onclick = () => { const [si, ri, mi] = el.dataset.m.split(":").map(Number); S3[si].rows[ri].masks.splice(mi, 1); stepMask(); });
+  $$("[data-cut]").forEach((b) => b.onclick = () => { const el = $(`tr[data-row="${b.dataset.cut}"]`, doc0); el?.scrollIntoView({ block: "center" }); el?.classList.add("flash"); setTimeout(() => el?.classList.remove("flash"), 1200); });
+  // [앞 칸으로 보내기]·[다음 칸으로 보내기]: 글 칸에서 누른 자리로 나눠 옆 칸에 붙임 (끝이 문장 끝이면 띄어 씀, 낱말 중간에서 끊긴 것이면 붙여 씀)
+  $$("[data-send]", doc0).forEach((b) => b.onclick = () => {
+    const [dir, si, ri] = [b.dataset.send.split(":")[0], ...b.dataset.send.split(":").slice(1).map(Number)];
+    const rows = S3[si].rows, r = rows[ri], o = rows[dir === "prev" ? ri - 1 : ri + 1]; if (!o) return;
+    const ta = $(`textarea[data-si="${si}"][data-ri="${ri}"]`, doc0), v = ta.value, at = ta.selectionStart ?? 0;
+    const head = v.slice(0, at), tail = v.slice(at), other = applyMasks(o.text, o.masks);
+    const glue = (a, z) => (!a || !z ? "" : /[.!?…)]\s*$/.test(a) || /\s$/.test(a) || /^\s/.test(z) ? " " : "");
+    if (dir === "prev") { if (!head.trim()) return toast("글 칸에서 옮길 글 끝 자리를 눌러 주세요.", "error"); o.text = (other.trimEnd() + glue(other, head) + head.trim()).trim(); r.text = tail.trim(); }
+    else { if (!tail.trim()) return toast("글 칸에서 옮길 글 첫 자리를 눌러 주세요.", "error"); o.text = (tail.trim() + glue(tail, other) + other.trimStart()).trim(); r.text = head.trim(); }
+    [r, o].forEach((x) => { x.masks = autoMasks(x.text, namesList(upState.no)); });
+    stepMask();
+    $(`textarea[data-si="${si}"][data-ri="${ri}"]`)?.focus();
+  });
   $$("[data-fix]", doc0).forEach((b) => b.onclick = () => { const [si, ri] = b.dataset.fix.split(":").map(Number); S3[si].rows[ri].editing = true; stepMask(); });
   $$("[data-editok]", doc0).forEach((b) => b.onclick = () => {
     const [si, ri] = b.dataset.editok.split(":").map(Number);

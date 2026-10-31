@@ -6,15 +6,15 @@
 // PDF 는 이 브라우저 안에서만 읽고 어디에도 올리지 않는다 (저장되는 것은 가림본 글뿐).
 import {
   db, collection, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, writeBatch, serverTimestamp,
-  $, $$, esc, toast, showError, confirmBox, pqStats, fmtDay, STAGES
+  $, $$, esc, toast, showError, confirmBox, pqStats, fmtDay, STAGES, univName, announceFailed
 } from "./common.js";
 import { S, myName, myRoles, studentByNo, closeModal } from "./t-core.js";
 import { openMeetingForm, loadMeetingNotes, againList, renderPast } from "./t-meetings.js";
 
 const PDFJS = "lib/pdfjs-3.11.174/";
 const IDLE_MS = 5 * 60 * 1000;
-const SEC_TITLE = { attend: "출결 상황", creative: "창의적 체험활동", subject: "교과학습발달상황 · 세부능력 및 특기사항", behavior: "행동특성 및 종합의견", grades: "성적" };
-const SEC_SHORT = { attend: "출결", creative: "창의적 체험활동", subject: "교과 세특", behavior: "행동특성 및 종합의견", grades: "성적" };
+const SEC_TITLE = { attend: "출결 상황", creative: "창의적 체험활동", subject: "교과학습발달상황 · 세부능력 및 특기사항", volunteer: "봉사활동실적 (학교 계획)", behavior: "행동특성 및 종합의견", grades: "성적" };
+const SEC_SHORT = { attend: "출결", creative: "창의적 체험활동", subject: "교과 세특", volunteer: "봉사활동", behavior: "행동특성 및 종합의견", grades: "성적" };
 const stageLabel = (k) => STAGES.find((s) => s.key === Number(k))?.label || `${k}차`;
 
 // ================= 누가 볼 수 있나 (화면용 — 규칙에서도 같은 기준으로 막음) =================
@@ -166,7 +166,7 @@ const SECTION_RE = [
   [head("자격증및인증취득상황"), "drop", "자격증"], [head("자격증취득상황"), "drop", "자격증"],
   [head("학교폭력조치상황"), "drop", "학교폭력 조치상황"],
   [head("창의적체험활동상황"), "creative"],
-  [head("봉사활동실적"), "drop", "봉사활동실적"],
+  [head("봉사활동실적"), "volunteer"],
   [head("교과학습발달상황"), "subject"],
   [head("독서활동상황"), "drop", "독서활동상황"],
   [head("행동특성및종합의견"), "behavior"]
@@ -206,14 +206,16 @@ function partitionSeq(T, A, tol) {
     let i = k; const blocks = [];
     for (const a of A) {
       if (i >= T.length || T[i].y < a.y - tol) { blocks.push({ a, lines: [] }); continue; }
-      const bottom = 2 * a.y - T[i].y, b = { a, lines: [] };
+      const bottom = 2 * a.y - T[i].y, b = { a, lines: [], bottom };
       while (i < T.length && T[i].y >= bottom - tol) b.lines.push(T[i++]);
       blocks.push(b);
     }
-    return { k, blocks, left: T.length - i, rest: T.slice(i) };
+    // mis: 칸 끝 줄이 '이름이 가운데'인 자리보다 한참 위에서 끝난 칸 수 (예: 쪽 끝의 빈 3학년 칸 숫자가 위 글을 모두 끌어가는 경우)
+    const mis = blocks.filter((b) => b.lines.length && b.lines.at(-1).y - b.bottom > tol * 1.5).length;
+    return { k, blocks, left: T.length - i, rest: T.slice(i), mis };
   };
   let best = null;
-  for (let k = 0; k <= T.length; k++) { const r = run(k); if (!best || r.left < best.left) best = r; if (r.left === 0) break; }
+  for (let k = 0; k <= T.length; k++) { const r = run(k); if (!best || r.left < best.left || (r.left === best.left && r.mis < best.mis)) best = r; if (r.left === 0 && r.mis === 0) break; }
   const r = best || { k: 0, blocks: [], left: T.length, rest: T };
   if (r.rest.length && r.blocks.length) r.blocks.at(-1).lines.push(...r.rest);   // 남은 줄은 마지막 칸에
   return { prefix: T.slice(0, r.k), blocks: r.blocks, orphan: r.blocks.length ? [] : r.rest };
@@ -344,9 +346,12 @@ export function splitRecord(pages, { withGrades = false } = {}) {
   const freq = new Map();
   pages.forEach((p) => { const edge = [...p.lines.slice(0, 3), ...p.lines.slice(-3)]; new Set(edge.map((l) => norm(l.text))).forEach((k) => freq.set(k, (freq.get(k) || 0) + 1)); });
   const rep = pages.length >= 2 ? Math.max(2, Math.ceil(pages.length / 2)) : 99;
-  const isHF = (p, i) => (i < 3 || i >= p.lines.length - 3) && ((freq.get(norm(p.lines[i].text)) || 0) >= rep || NOISE.test(p.lines[i].text));
+  // 숫자만 있는 줄은 쪽의 맨 첫 줄·맨 끝 줄일 때만 쪽 번호로 봄 (쪽 끝 가까이 찍힌 표의 학년 숫자를 지우지 않게)
+  const isHF = (p, i) => (i < 3 || i >= p.lines.length - 3) && ((freq.get(norm(p.lines[i].text)) || 0) >= rep
+    || (NOISE.test(p.lines[i].text) && (!/^[-–]?\s*\d+\s*[-–]?$/.test(p.lines[i].text.trim()) || i === 0 || i === p.lines.length - 1)));
   // 1) 줄마다 구역 정하기 (창체·행특은 좌표째 모았다가 2)에서 칸으로 나눔)
-  const reg = { creative: [], behavior: [], attend: [] };
+  const reg = { creative: [], behavior: [], attend: [], volunteer: [] };
+  let volHead = null, volYearX = null;   // 봉사 표 머리 낱말 x (학년·일자·장소·활동내용·시간·누계시간)
   const subj = { rows: [] };
   const gt = [];   // 성적 표 (학년·종류별 줄 모음) — 성적 넣기를 골랐을 때만 읽음
   let curT = null;
@@ -369,6 +374,18 @@ export function splitRecord(pages, { withGrades = false } = {}) {
       }
       if (!cur || cur === "drop") return;
       const L = { ...l, page: p.n, maxR };
+      if (cur === "volunteer") {
+        // 표 머리('학년' · '일자 또는 기간 | 장소 또는 주관기관명 | 활동내용 | 시간 | 누계시간')는 칸 위치로만 씀
+        const flat = t0.replace(/\s+/g, "");
+        if (/^학년$/.test(flat)) { volYearX = (l.segs || [])[0]?.x ?? l.x; return; }
+        if (/활동내용/.test(flat) && /누계/.test(flat) && !/\d/.test(flat)) {
+          const hx = (re) => (l.segs || []).find((sg) => re.test(sg.s.replace(/\s+/g, "")))?.x;
+          volHead = { year: hx(/^학년$/) ?? volYearX, date: hx(/^일자/), place: hx(/^장소/), act: hx(/^활동내용/), hr: hx(/^시간$/), cum: hx(/^누계/) };
+          return;
+        }
+        reg.volunteer.push({ ...L, head: volHead });
+        return;
+      }
       if (cur === "creative" || cur === "behavior" || cur === "attend") { if (!(TABLE_HEAD.test(t0) && t0.length < 40)) reg[cur].push(L); return; }
       // 교과: [n학년] · 성적 표 · <진로 선택 과목> 같은 묶음 제목 · '과목 / 세부능력 및 특기사항' 표
       let t = t0;
@@ -466,6 +483,55 @@ export function splitRecord(pages, { withGrades = false } = {}) {
     });
     secs.behavior = rows.map((r) => { r.lines.forEach((x) => { x.used = true; }); return { label: r.g ? `${r.g}학년` : "", text: joinLines(r.lines, Math.max(0, ...r.lines.map((x) => x.maxR || 0))) }; });
   }
+  // 3-1) 봉사활동실적 (2026-10-31 사용자 결정: 학교교육계획에 따른 '(학교)' 실적만 — 개인 봉사는 대입 미반영)
+  //   한 줄 = 한 건: 일자(기간이면 '날짜 - 날짜') · 장소 '(학교)…' · 활동내용 · 시간 · 누계. 긴 활동내용은 그 줄 위아래로 넘어감(칸 가운데)
+  //   학년 숫자는 그 학년 줄들 가운데. 장소·기관명은 넣지 않음(학교 이름이 보이지 않게)
+  if (reg.volunteer.length) {
+    const vrows = [], gA = [];
+    let lastG = 0;
+    [...new Set(reg.volunteer.map((l) => l.page))].forEach((pg) => {
+      const Ls = reg.volunteer.filter((l) => l.page === pg);
+      const h = Ls.find((l) => l.head)?.head || {};
+      // 칸 경계 (머리 낱말 x 사이). 머리를 못 찾으면 나이스 기본 배치
+      const xG = h.year != null ? h.year + 25 : 70, xPlace = h.date != null && h.place != null ? (h.date + h.place) / 2 + 10 : 171, xAct = h.place != null && h.act != null ? (h.place + h.act) / 2 : 315,
+        xHr = h.hr != null ? h.hr - 15 : 481, xCum = h.hr != null && h.cum != null ? (h.hr + h.cum) / 2 + 2 : 510;
+      const T = [], A = [], anchors = [];
+      Ls.forEach((l) => {
+        const segs = (l.segs || [{ x: l.x, w: (l.right || 0) - l.x, s: l.text }]).filter((sg) => sg.s.trim());
+        const col = (c) => segs.filter((sg) => c(sg.x));
+        const gd = col((x) => x < xG).find((sg) => /^[1-3]$/.test(sg.s.trim()));
+        if (gd) A.push({ y: l.y, g: Number(gd.s.trim()) });
+        const date = col((x) => x >= xG && x < xPlace).map((sg) => sg.s.trim()).join("");
+        const o = { y: l.y, page: pg, place: segText(col((x) => x >= xPlace && x < xAct)), act: col((x) => x >= xAct && x < xHr), hr: segText(col((x) => x >= xHr && x < xCum)), cum: segText(col((x) => x >= xCum)), r: l.right, maxR: l.maxR };
+        if (/^\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\.?/.test(date)) { o.date = date; anchors.push(o); }
+        if (o.act.length) o.line = track({ y: l.y, t: segText(o.act), w: o.act.at(-1).x + (o.act.at(-1).w || 0) - o.act[0].x }, pg);
+        T.push(o);
+      });
+      if (!anchors.length) return;
+      // 날짜 없는 줄(넘어간 활동내용·장소)은 가장 가까운 건에
+      T.forEach((o) => { o.row = o.date ? o : anchors.reduce((b, a) => (Math.abs(a.y - o.y) < Math.abs(b.y - o.y) ? a : b)); });
+      anchors.forEach((a) => { a.parts = T.filter((o) => o.row === a); });
+      // 학년: 학년 숫자가 그 학년 줄(글 줄 모두)의 가운데 — 창체·행특과 같은 나누기
+      const P = partition(T, A, tol);
+      const gOf = new Map();
+      P.prefix.concat(P.orphan).forEach((o) => gOf.set(o, lastG || 1));
+      P.blocks.forEach((b) => b.lines.forEach((o) => gOf.set(o, b.a.g)));
+      if (P.blocks.length) lastG = P.blocks.at(-1).a.g;
+      anchors.forEach((a) => vrows.push({ ...a, g: gOf.get(a) || lastG || 1 }));
+      gA.push(...A);
+    });
+    info.volDropped = 0;
+    const volW = Math.max(0, ...reg.volunteer.length ? rawLines.filter((x) => x.w != null).map((x) => x.w) : [0]);   // 활동내용 칸에서 가장 긴 줄
+    secs.volunteer = vrows.flatMap((a) => {
+      const place = a.parts.filter((o) => o.place).sort((x, y) => y.y - x.y).map((o) => o.place).join("");
+      const lines = a.parts.filter((o) => o.line).sort((x, y) => y.y - x.y).map((o) => o.line);
+      if (!/^\(\s*학교\s*\)/.test(place)) { info.volDropped++; lines.forEach((x) => { x.skip = true; }); return []; }   // 개인 봉사 등은 일부러 버림
+      lines.forEach((x) => { x.used = true; });
+      const act = lines.reduce((t, x, k) => { const pv = lines[k - 1]; return !pv ? x.t : t + (pv.w >= volW - 12 && isHg(pv.t.slice(-1)) && isHg(x.t[0]) ? "" : " ") + x.t; }, "");
+      const hr = a.parts.map((o) => o.hr).find(Boolean), cum = a.parts.map((o) => o.cum).find(Boolean);
+      return [{ label: `${a.g}학년 ${a.date.replace(/\s+/g, "")}`, text: `${act}${hr ? ` · ${hr}시간` : ""}${cum ? ` (누계 ${cum})` : ""}` }];
+    });
+  }
   // 4) 출결: 줄 앞 학년 숫자로
   if (reg.attend.length) {
     const rows = [];
@@ -479,7 +545,7 @@ export function splitRecord(pages, { withGrades = false } = {}) {
   info.rawChars = raw.reduce((t, x) => t + cnt(x.t), 0);
   info.lostChars = lostL.reduce((t, x) => t + cnt(x.t), 0);
   info.lost = [...new Set(lostL.filter((x) => cnt(x.t)).map((x) => x.page))].sort((a, b) => a - b);
-  const order = ["attend", "creative", "subject", "behavior", "grades"];
+  const order = ["attend", "creative", "subject", "volunteer", "behavior", "grades"];
   const sections = order.filter((k) => secs[k]).map((k) => ({ key: k, title: SEC_TITLE[k], rows: secs[k].filter((r) => (r.text || "").trim()).map((r) => ({ label: r.label, text: r.text.trim() })) }))
     .filter((s) => s.rows.length);
   const grades = withGrades ? parseGradeTables(gt, tol) : [];
@@ -555,6 +621,7 @@ function stepPages() {
       <li>남긴 구역: ${sections.filter((s) => s.key !== "grades").map((s) => esc(SEC_SHORT[s.key])).join(" · ") || '<b style="color:var(--danger)">없음</b>'}</li>
       <li>버린 구역: ${[...new Set(info.dropped.filter((d) => /구역/.test(d.why)).map((d) => d.why.replace(" (구역)", "")))].map(esc).join(" · ") || "없음"}${dropPages.size ? ` · 인적사항 쪽 ${dropPages.size}개` : ""}</li>
       <li>지운 머리말·꼬리말 줄: ${info.headerLines}줄</li>
+      ${sections.some((x) => x.key === "volunteer") || info.volDropped ? `<li id="ruVol">봉사활동실적: 학교 계획 ${sections.find((x) => x.key === "volunteer")?.rows.length || 0}건 넣음${info.volDropped ? ` · ${info.volDropped}줄(개인 봉사) 버림` : ""} <span class="muted sm">(장소·기관명은 넣지 않음)</span></li>` : ""}
     </ul>
     <label class="inline-check"><input type="checkbox" id="ruGrades" ${upState.withGrades ? "checked" : ""}> 성적(원점수·등급) 표도 넣기 <span class="muted sm">(기본은 빼요)</span></label>
     ${upState.withGrades ? `<div class="muted sm">성적 ${grades.length}과목 읽음 ${grades.length ? "· " + [...new Set(grades.map((g) => `${g.y}-${g.s}`))].sort().map((k) => `${k} ${grades.filter((g) => `${g.y}-${g.s}` === k).length}`).join(" · ") : "— 성적 표를 찾지 못했어요"}</div>` : ""}
@@ -598,7 +665,7 @@ function stepMask() {
     <div class="row" style="margin-top:12px"><button type="button" class="btn-sm" id="ruBack4">쪽 확인으로</button><div class="spacer"></div>
       <button type="button" class="btn-primary" id="ruSave">이대로 저장</button></div></div>`;
   const doc0 = $("#ruDoc");
-  if ($("#ruGr")) renderGrades($("#ruGr"), upState.grades, { on: new Set(["주요과목"]), radar: "all", view: "detail", yr: 0 });
+  if ($("#ruGr")) renderGrades($("#ruGr"), upState.grades, { on: new Set(["주요과목"]), bars: "all", view: "detail", sem: "" });
   $$("[data-goto]").forEach((b) => b.onclick = () => { const el = $(`[data-m="${b.dataset.goto}"]`, doc0); el?.scrollIntoView({ block: "center" }); el?.classList.add("flash"); setTimeout(() => el?.classList.remove("flash"), 1200); });
   $$(".ru-mask", doc0).forEach((el) => el.onclick = () => { const [si, ri, mi] = el.dataset.m.split(":").map(Number); S3[si].rows[ri].masks.splice(mi, 1); stepMask(); });
   $$("[data-fix]", doc0).forEach((b) => b.onclick = () => { const [si, ri] = b.dataset.fix.split(":").map(Number); S3[si].rows[ri].editing = true; stepMask(); });
@@ -763,90 +830,96 @@ export async function publishPending(no, list) {
 const G_SEMS = ["1-1", "1-2", "2-1", "2-2", "3-1", "3-2"];
 const gArea = (a) => /^국어/.test(a) ? "국어" : /^수학/.test(a) ? "수학" : /^영어/.test(a) ? "영어" : /^(한국사|사회)/.test(a) ? "사회" : /^과학/.test(a) ? "과학" : "기타";
 const MAIN = ["국어", "수학", "영어", "사회", "과학"];
-const G_GROUPS = [["주요과목", MAIN, "#e8577e"], ["전과목", null, "#6b7280"], ["국영", ["국어", "영어"], "#b45309"], ["수과", ["수학", "과학"], "#0e9aa7"], ["영수", ["영어", "수학"], "#7c3aed"], ["국영수", ["국어", "영어", "수학"], "#a16207"],
-  ["국어", ["국어"], "#2f6fd6"], ["영어", ["영어"], "#d98a1a"], ["수학", ["수학"], "#1f9d6b"], ["사회", ["사회"], "#7b52c9"], ["과학", ["과학"], "#0891b2"], ["기타", ["기타"], "#64748b"]];
+// 묶음 · 교과 (추이 칩 두 줄, 산출표 묶음 6줄 + 교과 5줄)
+const G_SETS = [["주요과목", MAIN, "#121316"], ["전과목", null, "#5583cc"], ["국영수", ["국어", "영어", "수학"], "#a8b746"], ["국영", ["국어", "영어"], "#2d4f8f"], ["수과", ["수학", "과학"], "#0e9aa7"], ["영수", ["영어", "수학"], "#7c5cc4"]];
+const G_SUBJ = [["국어", ["국어"], "#2d4f8f"], ["수학", ["수학"], "#5583cc"], ["영어", ["영어"], "#a8b746"], ["사회", ["사회"], "#c08a2b"], ["과학", ["과학"], "#1e7a5a"]];
+const G_GROUPS = [...G_SETS, ...G_SUBJ];
 const gAvg = (list) => { const L = list.filter((r) => r.rank != null && r.kind === "general"); const c = L.reduce((t, r) => t + (r.credit || 0), 0); return c ? L.reduce((t, r) => t + r.rank * (r.credit || 0), 0) / c : null; };
 const gPick = (G, grp, sem) => G.filter((r) => (!grp || grp.includes(gArea(r.area))) && (!sem || `${r.y}-${r.s}` === sem));
 const f2 = (x) => x == null ? "-" : x.toFixed(2);
-export function renderGrades(el, G, st = { on: new Set(["주요과목", "전과목"]), radar: "all", view: "sum", yr: 0 }) {
-  if (!G?.length) { el.innerHTML = '<div class="gr-empty">성적을 넣지 않았어요. 1차 담임이 [학생부 다시 넣기]에서 <b>성적(원점수·등급) 표도 넣기</b>를 체크하면 볼 수 있어요.</div>'; return; }
-  const years = [...new Set(G.map((r) => r.y))].sort();
-  if (!st.yr) st.yr = years[0];
-  el.innerHTML = `<div class="gr-top"><span class="rv-gr gr-view"><button type="button" data-gv="sum" class="${st.view === "sum" ? "on" : ""}">한눈에</button><button type="button" data-gv="detail" class="${st.view === "detail" ? "on" : ""}">학기별 세부 성적</button></span>
-      <span class="muted sm">평균 등급 = Σ(석차등급×학점)÷Σ학점 · 석차등급이 있는 과목만</span></div>
-    <div class="gr-sum" ${st.view === "sum" ? "" : "hidden"}>
-      <div class="gr-row2">
-        <div class="gr-card"><h4>학기별 교과 성적 등급 추이</h4><div class="gr-chips">${G_GROUPS.filter(([n, grp]) => gPick(G, grp).some((r) => r.rank != null)).map(([n, , c]) => `<button type="button" class="gr-chip ${st.on.has(n) ? "on" : ""}" data-gg="${n}" style="${st.on.has(n) ? `color:${c}` : ""}"><i></i>${n}</button>`).join("")}</div>
-          <div class="gr-line"></div><div class="muted sm">점을 누르면 그 학기 세부 성적으로 · 1등급이 위</div></div>
-        <div class="gr-card"><h4>주요 교과 비교 <span class="rv-gr"><button type="button" data-gr2="all" class="${st.radar === "all" ? "on" : ""}">전 학기</button><button type="button" data-gr2="last" class="${st.radar === "last" ? "on" : ""}">최근 학기</button></span></h4><div class="gr-radar"></div><div class="muted sm">바깥으로 갈수록 좋은 등급</div></div>
-      </div>
-      <div class="gr-card"><h4>교과 성적 산출표</h4><div class="table-wrap"><table class="gr-t">${sumTable(G)}</table></div>
-        <div class="muted sm">등급이수 = 석차등급이 있는 과목 학점 합 · 전체이수 = 모든 과목 학점 합 · <b style="color:#1e7a5a">초록</b> 가장 좋은 학기 · <b style="color:#c2453c">빨강</b> 가장 낮은 학기</div></div>
-      ${G.some((r) => r.kind === "career") ? `<div class="gr-card"><h4>진로 선택 과목 · 성취도</h4><div class="table-wrap"><table class="gr-t">${careerTable(G)}</table></div></div>` : ""}
-    </div>
-    <div class="gr-detail" ${st.view === "detail" ? "" : "hidden"}>
-      <span class="rv-gr">${years.map((y) => `<button type="button" data-gy="${y}" class="${st.yr === y ? "on" : ""}">${y}학년</button>`).join("")}</span>
-      ${[1, 2].map((s) => semCard(G, st.yr, s)).join("")}
-    </div>`;
-  drawLine(el.querySelector(".gr-line"), G, st);
-  drawRadar(el.querySelector(".gr-radar"), G, st);
+const gcls = (g) => g == null ? "" : g <= 2 ? "g-a" : g <= 4 ? "g-b" : "g-c";
+const semName = (m) => m.replace("-", "학년 ") + "학기";
+export function renderGrades(el, G, st = { on: new Set(["주요과목", "전과목"]), bars: "all", view: "sum", sem: "" }) {
+  if (!G?.length) { el.innerHTML = '<div class="gr-wrap"><div class="gr-empty">성적을 넣지 않았어요. 1차 담임이 [학생부 다시 넣기]에서 <b>성적(원점수·등급) 표도 넣기</b>를 체크하면 볼 수 있어요.</div></div>'; return; }
+  const have = G_SEMS.filter((m) => gPick(G, null, m).length);
+  const ranked = G_SEMS.filter((m) => gPick(G, null, m).some((r) => r.rank != null && r.kind === "general"));
+  const carSems = have.filter((m) => gPick(G, null, m).some((r) => r.kind === "career"));
+  if (!have.includes(st.sem)) st.sem = have.at(-1);
+  let h = `<div class="gr-wrap"><div class="gr-top"><span class="gr-grp gr-view"><button type="button" data-gv="sum" class="${st.view === "sum" ? "on" : ""}">요약</button><button type="button" data-gv="detail" class="${st.view === "detail" ? "on" : ""}">학기별 세부 성적</button></span>
+      <span class="gr-m2">평균 등급 = Σ(석차등급×학점)÷Σ학점 · 석차등급 있는 과목만</span></div>`;
+  if (st.view === "sum") {
+    const last = ranked.at(-1), prev = ranked.at(-2), vL = last ? gAvg(gPick(G, null, last)) : null, vP = prev ? gAvg(gPick(G, null, prev)) : null;
+    const dv = vL == null || vP == null ? "" : vL < vP ? `<em class="up">▲ ${(vP - vL).toFixed(2)}</em> 직전 학기보다 좋아짐` : vL > vP ? `<em class="dn">▼ ${(vL - vP).toFixed(2)}</em> 직전 학기보다 나빠짐` : "직전 학기와 같음";
+    const car = G.filter((r) => r.kind === "career");
+    const kpi = (t, v, sub, id) => `<div class="gr-k" id="${id}"><small>${t}</small><b>${v}</b>${sub ? `<span>${sub}</span>` : ""}</div>`;
+    const sets = G_SETS.filter(([, grp]) => gPick(G, grp).some((r) => r.rank != null)), subs = G_SUBJ.filter(([, grp]) => gPick(G, grp).some((r) => r.rank != null));
+    h += `<div class="gr-kpis">${kpi("전과목 평균", `${f2(gAvg(G))}<i>등급</i>`, `${ranked.length}학기 · ${G.filter((r) => r.rank != null && r.kind === "general").reduce((t, r) => t + (r.credit || 0), 0)}학점`, "grKAll")}
+        ${kpi("주요과목 평균 (국·수·영·사·과)", `${f2(gAvg(gPick(G, MAIN)))}<i>등급</i>`, "", "grKMain")}
+        ${kpi(`최근 학기${last ? ` (${last})` : ""}`, `${f2(vL)}<i>등급</i>`, dv, "grKLast")}
+        ${car.length ? `<button type="button" class="gr-k" id="grKCar" data-gocar><small>진로 선택 과목</small><b>${esc2(car.map((r) => r.ach || "-").join(" · "))}</b><span>${car.length}과목 · 학기별 세부에서 보기 ›</span></button>` : `<div class="gr-k" id="grKCar"><small>진로 선택 과목</small><b>-</b><span>없음</span></div>`}</div>
+      <div class="gr-row2"><div class="gr-card"><h4>학기별 등급 추이 <span class="gr-m2">1등급이 위 · 점을 누르면 그 학기 세부</span></h4>
+          <div class="gr-chips"><span class="gr-m2">묶음</span>${sets.map(([n, , c]) => `<button type="button" class="gr-chip ${st.on.has(n) ? "on" : ""}" data-gg="${n}" style="--c:${c}"><i></i>${n}</button>`).join("")}
+            ${subs.length ? `<span class="gr-br"></span><span class="gr-m2">교과</span>${subs.map(([n, , c]) => `<button type="button" class="gr-chip ${st.on.has(n) ? "on" : ""}" data-gg="${n}" style="--c:${c}"><i></i>${n}</button>`).join("")}` : ""}</div>
+          <div class="gr-line"></div></div>
+        <div class="gr-card"><h4>교과별 평균 <span class="gr-grp sm"><button type="button" data-gb="all" class="${st.bars === "all" ? "on" : ""}">전 학기</button><button type="button" data-gb="last" class="${st.bars === "last" ? "on" : ""}">최근 학기</button></span></h4>
+          ${MAIN.map((a) => { const v = gAvg(gPick(G, [a], st.bars === "last" ? last : null)); return `<div class="gr-bar" data-bar="${a}"><span>${a}</span><div><i class="${gcls(v)}" style="width:${v == null ? 0 : Math.max(0, (9 - v) / 8 * 100)}%"></i></div><b class="${gcls(v)}">${f2(v)}</b></div>`; }).join("")}
+          <div class="gr-m2" style="margin-top:6px">막대가 길수록 좋은 등급 · <span class="gr-lg g-a">1~2</span> <span class="gr-lg g-b">3~4</span> <span class="gr-lg g-c">5~</span></div></div></div>
+      <div class="gr-card"><h4>교과 성적 산출표</h4><div class="gr-tw"><table class="gr-t" id="grSum">${sumTable(G)}</table></div>
+        <div class="gr-m2">등급이수 = 석차등급이 있는 과목 학점 합 · 학기마다 <b class="gr-best">초록</b> 가장 좋음 · <b class="gr-worst">빨강</b> 가장 낮음 · 빈 학기는 -</div></div>`;
+  } else {
+    const L = gPick(G, null, st.sem), K = { career: "진로 선택", arts: "체육·예술" };
+    const kinds = [["general", "일반 과목"], ["career", "진로 선택"], ["arts", "체육·예술"], ["other", "기타"]];
+    const kOf = (r) => ["general", "career", "arts"].includes(r.kind) ? r.kind : "other";
+    h += `<div class="gr-sems">${G_SEMS.map((m) => `<button type="button" data-gsem="${m}" class="${st.sem === m ? "on" : ""}" ${have.includes(m) ? "" : "disabled"}>${semName(m)}${carSems.includes(m) ? ' <span class="gr-cdot">진로</span>' : ""}</button>`).join("")}</div>
+      <div class="gr-card" id="grSem"><div class="gr-sh"><b>${semName(st.sem)}</b><span class="gr-pl">평균 ${f2(gAvg(L))}등급</span><span class="gr-pl">주요과목 ${f2(gAvg(L.filter((r) => MAIN.includes(gArea(r.area)))))}</span><span class="gr-m2">${L.reduce((t, r) => t + (r.credit || 0), 0)}학점 · ${L.length}과목</span></div>
+      <div class="gr-tw"><table class="gr-t det"><thead><tr><th>교과 · 과목</th><th>학점</th><th>원점수 / 평균 (표준편차)</th><th>성취도 (수강자)</th><th>등급</th></tr></thead><tbody>
+      ${kinds.filter(([k]) => L.some((r) => kOf(r) === k)).map(([k, t]) => `<tr class="sep" data-kind="${k}"><td colspan="5"><div class="gr-sep"><span class="gr-kp">${t}</span><span class="gr-kn">${L.filter((r) => kOf(r) === k).length}과목</span></div></td></tr>`
+        + L.filter((r) => kOf(r) === k).map((r) => `<tr><td class="l"><b>${esc2(r.sub)}</b><div class="gr-m2">${esc2(r.area)}${K[r.kind] ? " · " + K[r.kind] : ""}</div></td><td>${r.credit ?? "-"}</td>
+          <td>${r.raw != null ? `${r.raw} / ${r.avg}${r.sd != null ? ` <span class="gr-m2">(${r.sd})</span>` : ""}` : "-"}</td>
+          <td>${r.ach ? `<span class="gr-ach a-${String(r.ach).toLowerCase()}">${esc2(r.ach)}</span>` : "-"}${r.n != null ? ` <span class="gr-m2">(${r.n})</span>` : ""}${distBar(r.dist)}</td>
+          <td>${r.rank != null ? `<span class="gr-rk ${gcls(r.rank)}">${r.rank}</span>` : "-"}</td></tr>`).join("")).join("")}
+      </tbody></table></div></div>`;
+  }
+  el.innerHTML = h + "</div>";
+  if (st.view === "sum") drawLine(el.querySelector(".gr-line"), G, st);
   const again = () => renderGrades(el, G, st);
+  const toSem = (m) => { st.sem = m; st.view = "detail"; again(); };
   el.querySelectorAll("[data-gv]").forEach((b) => b.onclick = () => { st.view = b.dataset.gv; again(); });
   el.querySelectorAll("[data-gg]").forEach((b) => b.onclick = () => { st.on.has(b.dataset.gg) ? st.on.delete(b.dataset.gg) : st.on.add(b.dataset.gg); again(); });
-  el.querySelectorAll("[data-gr2]").forEach((b) => b.onclick = () => { st.radar = b.dataset.gr2; again(); });
-  el.querySelectorAll("[data-gy]").forEach((b) => b.onclick = () => { st.yr = Number(b.dataset.gy); again(); });
-  el.querySelectorAll("[data-gsem]").forEach((c) => c.onclick = () => { st.view = "detail"; st.yr = Number(c.dataset.gsem[0]); again(); });
+  el.querySelectorAll("[data-gb]").forEach((b) => b.onclick = () => { st.bars = b.dataset.gb; again(); });
+  el.querySelectorAll("[data-gocar]").forEach((b) => b.onclick = () => toSem(carSems.at(-1)));
+  el.querySelectorAll("[data-gsem]").forEach((c) => c.addEventListener("click", () => toSem(c.dataset.gsem)));
 }
 function drawLine(box, G, st) {
-  const W = 640, H = 300, L = 40, R = 16, T = 18, B = 34, xs = (i) => L + i * (W - L - R) / (G_SEMS.length - 1), ys = (g) => T + (g - 1) * (H - T - B) / 8;
+  // 세로축 1~6등급(1이 위, 6보다 아래는 아래 끝), 선 끝에 '이름 값'
+  const W = 640, H = 260, L = 34, R = 70, T = 22, B = 30, xs = (i) => L + i * (W - L - R) / (G_SEMS.length - 1), ys = (g) => T + (Math.min(Math.max(g, 1), 6) - 1) * (H - T - B) / 5;
+  const have = G_SEMS.filter((m) => gPick(G, null, m).length);
   let s = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="학기별 등급 추이">`;
-  for (let g = 1; g <= 9; g++) s += `<line x1="${L}" x2="${W - R}" y1="${ys(g)}" y2="${ys(g)}" stroke="#edf0f5"/><text x="${L - 8}" y="${ys(g) + 4}" font-size="11" text-anchor="end" fill="#737b89">${g}</text>`;
-  G_SEMS.forEach((m, i) => { s += `<text x="${xs(i)}" y="${H - 10}" font-size="11" text-anchor="middle" fill="#737b89">${m}학기</text>`; });
-  G_GROUPS.filter(([n]) => st.on.has(n)).forEach(([n, grp, c]) => {
-    const pts = G_SEMS.map((m, i) => ({ i, v: gAvg(gPick(G, grp, m)) })).filter((p) => p.v != null);
+  for (let g = 1; g <= 6; g++) s += `<line x1="${L}" x2="${W - R}" y1="${ys(g)}" y2="${ys(g)}" stroke="#edf0f5"/><text x="${L - 8}" y="${ys(g) + 4}" font-size="11" text-anchor="end" fill="#737b89">${g}</text>`;
+  G_SEMS.forEach((m, i) => { s += `<text x="${xs(i)}" y="${H - 8}" font-size="11" text-anchor="middle" fill="${have.includes(m) ? "#4f5663" : "#c3c8d1"}">${m}</text>`; });
+  G_GROUPS.filter(([n]) => st.on.has(n)).forEach(([n, grp, c], k) => {
+    const pts = G_SEMS.map((m, i) => ({ i, m, v: gAvg(gPick(G, grp, m)) })).filter((p) => p.v != null);
     if (!pts.length) return;
-    s += `<polyline fill="none" stroke="${c}" stroke-width="2.4" points="${pts.map((p) => `${xs(p.i)},${ys(p.v)}`).join(" ")}"/>`;
-    pts.forEach((p) => { s += `<circle cx="${xs(p.i)}" cy="${ys(p.v)}" r="4.5" fill="#fff" stroke="${c}" stroke-width="2" style="cursor:pointer" data-gsem="${G_SEMS[p.i]}"><title>${n} ${G_SEMS[p.i]} ${f2(p.v)}</title></circle><text x="${xs(p.i)}" y="${ys(p.v) - 9}" font-size="11" text-anchor="middle" fill="${c}" font-weight="700" pointer-events="none">${f2(p.v)}</text>`; });
+    s += `<polyline fill="none" stroke="${c}" stroke-width="2.2" stroke-linejoin="round" points="${pts.map((p) => `${xs(p.i)},${ys(p.v)}`).join(" ")}" data-line="${n}"/>`;
+    pts.forEach((p) => { s += `<circle cx="${xs(p.i)}" cy="${ys(p.v)}" r="5" fill="#fff" stroke="${c}" stroke-width="2" style="cursor:pointer" data-gsem="${p.m}"><title>${n} ${p.m} ${f2(p.v)}</title></circle>`; });
+    const lp = pts.at(-1);
+    s += `<text x="${xs(lp.i) + 8}" y="${ys(lp.v) + 4 + (k % 2 ? 9 : -3)}" font-size="11" fill="${c}" font-weight="700" pointer-events="none">${n} ${f2(lp.v)}</text>`;
   });
-  box.innerHTML = s + "</svg>";
-}
-function drawRadar(box, G, st) {
-  const W = 300, H = 280, cx = 150, cy = 142, R = 105;
-  const last = G_SEMS.filter((m) => gPick(G, null, m).some((r) => r.rank != null)).at(-1);
-  const val = (a) => gAvg(gPick(G, [a], st.radar === "last" ? last : null));
-  const pt = (i, g) => { const r = R * (9 - g) / 8, ang = -Math.PI / 2 + i * 2 * Math.PI / MAIN.length; return [cx + r * Math.cos(ang), cy + r * Math.sin(ang)]; };
-  let s = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="주요 교과 비교">`;
-  [1, 3, 5, 7].forEach((g) => { s += `<polygon points="${MAIN.map((_, i) => pt(i, g).join(",")).join(" ")}" fill="${g === 1 ? "#f6f8fb" : "none"}" stroke="#e1e6ee"/>`; });
-  MAIN.forEach((a, i) => { const [x, y] = pt(i, 0.1); s += `<line x1="${cx}" y1="${cy}" x2="${pt(i, 1)[0]}" y2="${pt(i, 1)[1]}" stroke="#e1e6ee"/><text x="${x}" y="${y + 4}" font-size="12" text-anchor="middle" fill="#4f5663" font-weight="700">${a}</text>`; });
-  const P = MAIN.map((a, i) => pt(i, val(a) ?? 9));
-  s += `<polygon points="${P.map((p) => p.join(",")).join(" ")}" fill="rgba(232,87,126,.18)" stroke="#e8577e" stroke-width="2"/>`;
-  MAIN.forEach((a, i) => { const v = val(a), [x, y] = P[i]; s += `<circle cx="${x}" cy="${y}" r="3.5" fill="#e8577e"/><text x="${x}" y="${y - 7}" font-size="10.5" text-anchor="middle" fill="#e8577e" font-weight="700">${f2(v)}</text>`; });
   box.innerHTML = s + "</svg>";
 }
 function sumTable(G) {
-  let h = `<thead><tr><th rowspan="2">과목 구분</th><th rowspan="2">평균</th><th rowspan="2">등급이수</th><th rowspan="2">전체이수</th><th colspan="6">학기별 평균 등급</th></tr><tr class="sub">${G_SEMS.map((m) => `<th>${m}</th>`).join("")}</tr></thead><tbody>`;
-  G_GROUPS.forEach(([n, grp], k) => {
-    const all = gPick(G, grp), vs = G_SEMS.map((m) => gAvg(gPick(G, grp, m)));
-    if (!all.length) return;
-    const ok = vs.filter((v) => v != null), best = Math.min(...ok), worst = Math.max(...ok);
-    h += `<tr class="${k < 6 ? "grp" : ""}"><th>${n}</th><td class="avg">${f2(gAvg(all))}</td><td>${all.filter((r) => r.rank != null && r.kind === "general").reduce((t, r) => t + (r.credit || 0), 0)}</td><td>${all.reduce((t, r) => t + (r.credit || 0), 0)}</td>${vs.map((v) => `<td class="${v != null && ok.length > 1 ? (v === best ? "best" : v === worst ? "worst" : "") : ""}">${f2(v)}</td>`).join("")}</tr>`;
-  });
-  return h + "</tbody>";
+  // 묶음 6줄 + '교과별' + 교과 5줄 · 학기마다 가장 좋은 값 초록 글씨 · 가장 낮은 값 빨강 글씨 (바탕색 없음)
+  let h = `<thead><tr><th>구분</th><th>평균</th><th>등급이수</th>${G_SEMS.map((m) => `<th>${m}</th>`).join("")}</tr></thead><tbody>`;
+  const row = ([n, grp]) => {
+    const all = gPick(G, grp); if (!all.length) return "";
+    const vs = G_SEMS.map((m) => gAvg(gPick(G, grp, m))), ok = vs.filter((v) => v != null), best = Math.min(...ok), worst = Math.max(...ok);
+    return `<tr data-row="${n}"><th>${n}</th><td class="avg">${f2(gAvg(all))}</td><td>${all.filter((r) => r.rank != null && r.kind === "general").reduce((t, r) => t + (r.credit || 0), 0)}</td>${vs.map((v) => `<td class="${v == null ? "na" : ok.length > 1 && v === best ? "best" : ok.length > 1 && v === worst ? "worst" : ""}">${f2(v)}</td>`).join("")}</tr>`;
+  };
+  const sub = G_SUBJ.map(row).join("");
+  return h + G_SETS.map(row).join("") + (sub ? `<tr class="sep"><td colspan="${3 + G_SEMS.length}">교과별</td></tr>${sub}` : "") + "</tbody>";
 }
 const esc2 = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const distBar = (d) => d ? `<div class="gr-dist"><span style="width:${d.A || 0}%;background:#1e7a5a"></span><span style="width:${d.B || 0}%;background:#5f78a3"></span><span style="width:${d.C || 0}%;background:#d98a1a"></span></div><span class="muted sm">${["A", "B", "C"].filter((k) => d[k] != null).map((k) => `${k} ${d[k]}%`).join(" · ")}</span>` : "-";
-function careerTable(G) {
-  return `<thead><tr><th>학기</th><th>교과</th><th>과목</th><th>학점</th><th>원점수 / 과목평균</th><th>성취도 (수강자수)</th><th>성취도별 분포</th></tr></thead><tbody>` +
-    G.filter((r) => r.kind === "career").map((r) => `<tr><td>${r.y}-${r.s}</td><td>${esc2(r.area)}</td><td class="l">${esc2(r.sub)}</td><td>${r.credit ?? "-"}</td><td>${r.raw != null ? `${r.raw} / ${r.avg}` : "-"}</td><td><span class="gr-pill ${String(r.ach).toLowerCase()}">${esc2(r.ach || "-")}</span>${r.n != null ? ` (${r.n})` : ""}</td><td>${distBar(r.dist)}</td></tr>`).join("") + "</tbody>";
-}
-function semCard(G, y, s) {
-  const L = G.filter((r) => r.y === y && r.s === s);
-  if (!L.length) return `<div class="gr-card muted">${y}학년 ${s}학기 성적이 없어요</div>`;
-  const K = { general: "", career: "진로 선택", arts: "체육·예술", other: "" };
-  return `<div class="gr-card"><div class="gr-semhd"><b>${y}학년 ${s}학기</b><span class="gr-pill">평균 ${f2(gAvg(L))}등급</span><span class="gr-pill">주요과목 ${f2(gAvg(L.filter((r) => MAIN.includes(gArea(r.area)))))}</span><span class="muted sm">${L.reduce((t, r) => t + (r.credit || 0), 0)}학점</span></div>
-    <div class="table-wrap"><table class="gr-t"><thead><tr><th>교과</th><th>과목</th><th>학점</th><th>원점수 / 과목평균 (표준편차)</th><th>성취도 (수강자수)</th><th>석차등급</th></tr></thead><tbody>${L.map((r) => `<tr><td>${esc2(r.area)}${K[r.kind] ? `<div class="muted sm">${K[r.kind]}</div>` : ""}</td><td class="l">${esc2(r.sub)}</td><td>${r.credit ?? "-"}</td>
-      <td>${r.raw != null ? `${r.raw} / ${r.avg}${r.sd != null ? ` (${r.sd})` : ""}` : "-"}</td><td>${esc2(r.ach || "-")}${r.n != null ? ` (${r.n})` : ""}${r.dist ? `<div>${distBar(r.dist)}</div>` : ""}</td><td>${r.rank != null ? `<b>${r.rank}</b>` : "-"}</td></tr>`).join("")}</tbody></table></div></div>`;
-}
+const distBar = (d) => d ? `<div class="gr-dist"><span class="da" style="width:${d.A || 0}%"></span><span class="db" style="width:${d.B || 0}%"></span><span class="dc" style="width:${d.C || 0}%"></span></div><div class="gr-m2">${["A", "B", "C"].filter((k) => d[k] != null).map((k) => `${k} ${d[k]}%`).join(" · ")}</div>` : "";
 
 // ================= C. 학생부 화면 =================
 let V = null;   // 열려 있는 동안만 (학생부 글·하이라이트·질문). 닫으면 null
@@ -874,22 +947,35 @@ export async function openRecordViewer(no, { stage = 0, preset = null } = {}) {
   try { const s = await getDoc(doc(db, "records", no)); if (!s.exists()) return toast("아직 학생부가 없어요.", "error"); rec = s.data(); }
   catch (e) { return showError(e, "학생부 열기"); }
   V = { no, st, rec, stage: stage || guessStage(st, preset), preset, marks: [], pending: [], pqs: [], notes: null, asked: new Map(),
-    flt: "all", otherHl: true, grade: {}, idle: null, tick: null, t0: 0, run: false, used: 0, off: [], sel: null };
+    flt: "all", otherHl: true, idle: null, tick: null, t0: 0, run: false, used: 0, off: [], sel: null,
+    // 보기 상태: 접기(구역·학년·목차)는 열려 있는 동안만, 글자 크기·문장 나누기만 브라우저에 기억
+    openS: {}, openY: {}, tocOpen: {}, fs: viewPref("rvFs", 16), sent: viewPref("rvSent", 0) === 1, find: "", wide: false, bulkAt: 0 };
   log(no, "open");
   const me = myName() || S.ctx.user.email;
   const ov = document.createElement("div");
   ov.id = "recView"; ov.className = "rec-ov rv";
   const wm = `<svg xmlns='http://www.w3.org/2000/svg' width='320' height='180'><text x='10' y='100' transform='rotate(-24 160 90)' font-size='15' fill='rgba(30,40,60,0.09)' font-family='sans-serif'>${esc(me)} · ${new Date().toLocaleString("ko-KR")}</text></svg>`;
-  const iv = (st.universities || []).filter((u) => u.announceResult !== "fail").map((u) => u.dept).filter(Boolean).slice(0, 2).join(", ");
+  // 지원: 대학마다 '대학 + 지원전형 / 모집단위' (1차 불합격은 흐리게)
+  const apps = (st.universities || []).filter((u) => u.univ || u.admission || u.dept).map((u) => {
+    const rest = [u.admission, u.dept].map((x) => String(x || "").trim()).filter(Boolean).join(" / ");
+    return `<span class="rv-ap${announceFailed(u) ? " out" : ""}">${u.univ ? `<b>${esc(univName(u.univ))}</b>` : ""}${rest ? " " + esc(rest) : ""}${announceFailed(u) ? "<i>1차 불합격</i>" : ""}</span>`;
+  }).join("");
   ov.innerHTML = `<div class="rv-wm" style="background-image:url(&quot;data:image/svg+xml;utf8,${encodeURIComponent(wm)}&quot;)"></div>
     <div class="rv-hd"><b>${esc(no)} ${esc(st.name)}</b><span class="rv-gr rv-main"><button type="button" data-main="rec" class="on">학생부</button><button type="button" data-main="gr">성적</button></span><span class="rv-stage">${[1, 2, 3].map((k) => `<button type="button" data-stage="${k}" class="${V.stage === k ? "on" : ""} c${k}">${k}차</button>`).join("")}</span>
-      <span class="muted">모의면접${preset?.date ? ` · ${esc(fmtDay(preset.date))}` : ""}${iv ? ` · ${esc(iv)} 지원` : ""}</span><span class="sp"></span>
-      <span class="rv-tm" id="rvTm">면접 00:00</span><button type="button" class="btn-sm" id="rvTmBtn">면접 시작</button><button type="button" class="btn-sm" id="rvClose">닫기</button></div>
+      <span class="muted">모의면접${preset?.date ? ` · ${esc(fmtDay(preset.date))}` : ""}</span><span class="sp"></span>
+      <span class="rv-tm" id="rvTm">면접 00:00</span><button type="button" class="btn-sm" id="rvTmBtn">면접 시작</button><button type="button" class="btn-sm" id="rvClose">닫기</button>
+      ${apps ? `<div class="rv-apps" id="rvApps"><span class="apl">지원</span>${apps}</div>` : ""}</div>
     <div class="rv-body">
-      <nav class="rv-toc">${rec.sections.map((s) => `<a href="#rvs-${s.key}" data-toc="${s.key}">${esc(SEC_SHORT[s.key] || s.title)}</a>`).join("")}
+      <nav class="rv-toc" id="rvToc"><div id="rvTocL"></div>
         <div class="rv-lg"><b>하이라이트</b><br><i class="c1"></i>1차 담임<br><i class="c2"></i>2차 교과<br><i class="c3"></i>3차 위원
           <label class="inline-check"><input type="checkbox" id="rvOther" checked> 다른 선생님 하이라이트</label><br><b>가림</b> <span class="rv-mask">○○</span> 이름·학교</div></nav>
-      <article class="rv-doc" id="rvDoc"></article>
+      <article class="rv-doc" id="rvDoc"><div class="rv-bar" id="rvBar">
+          <span class="rv-grp"><button type="button" data-fs="-1" aria-label="글자 작게">가−</button><button type="button" data-fs="0" id="rvFsN" title="16으로">${V.fs}</button><button type="button" data-fs="1" aria-label="글자 크게">가+</button></span>
+          <span class="rv-grp"><button type="button" data-all="1">모두 펼치기</button><button type="button" data-all="0">모두 접기</button></span>
+          <span class="rv-grp"><button type="button" data-sent="0" class="${V.sent ? "" : "on"}">문단</button><button type="button" data-sent="1" class="${V.sent ? "on" : ""}">문장마다 줄</button></span>
+          <input type="search" id="rvFind" placeholder="학생부에서 찾기" autocomplete="off"><span class="muted sm" id="rvFindN"></span>
+          <span class="sp"></span><button type="button" class="rv-tog" id="rvWide">질문 칸 접기 ▸</button></div>
+        <div class="rv-in" id="rvIn"></div></article>
       <aside class="rv-side"><div class="rv-tabs"><button type="button" class="on" data-tab="q">질문 <span id="rvQn"></span></button><button type="button" data-tab="p">지난 면접 <span id="rvPn"></span></button></div>
         <div class="rv-sb" id="rvSb"></div>
         <div class="rv-foot"><span class="muted sm" id="rvAsk"></span><button type="button" class="btn-primary" id="rvRec">기록 쓰기 →</button></div></aside>
@@ -927,7 +1013,7 @@ export async function openRecordViewer(no, { stage = 0, preset = null } = {}) {
   $$(".rv-tabs [data-tab]", ov).forEach((b) => b.onclick = () => { $$(".rv-tabs [data-tab]", ov).forEach((x) => x.classList.toggle("on", x === b)); V.tab = b.dataset.tab; drawSide(); });
   $("#rvRec", ov).onclick = toMeetingForm;
   // [학생부 | 성적]: 성적은 학생부를 넣을 때 '성적 표도 넣기'를 고른 경우에만 있음
-  const grSt = { on: new Set(["주요과목", "전과목"]), radar: "all", view: "sum", yr: 0 };
+  const grSt = { on: new Set(["주요과목", "전과목"]), bars: "all", view: "sum", sem: "" };
   $$("[data-main]", ov).forEach((b) => b.onclick = () => {
     const gr = b.dataset.main === "gr";
     $$("[data-main]", ov).forEach((x) => x.classList.toggle("on", x === b));
@@ -952,10 +1038,41 @@ export async function openRecordViewer(no, { stage = 0, preset = null } = {}) {
   $("#rvHl", ov).onclick = () => { pop.hidden = true; addMark("hl"); };
   $("#rvQ", ov).onclick = () => { pop.hidden = true; questionForm(); };
   docEl.addEventListener("click", (e) => {
-    const gb = e.target.closest("[data-gr]");
-    if (gb) { V.grade[gb.closest("[data-grsec]").dataset.grsec] = gb.dataset.gr; drawDoc(); return; }
+    const jb = e.target.closest("[data-jump]");
+    if (jb) { const el = document.getElementById(jb.dataset.jump); if (el) goTo(el, true); return; }
     const mk = e.target.closest("mark[data-mk]"); if (mk) markPop(mk);
   });
+  // 회색 막대: 글자 크기 · 모두 펼치기/접기 · 문단/문장마다 줄 · 찾기 · 질문 칸 접기
+  $$("[data-fs]", ov).forEach((b) => b.onclick = () => { const d = Number(b.dataset.fs); V.fs = d ? Math.min(20, Math.max(14, V.fs + d)) : 16; savePref("rvFs", V.fs); $("#rvFsN", ov).textContent = V.fs; drawDoc(); });
+  $$("[data-sent]", ov).forEach((b) => b.onclick = () => { V.sent = b.dataset.sent === "1"; savePref("rvSent", V.sent ? 1 : 0); $$("[data-sent]", ov).forEach((x) => x.classList.toggle("on", x === b)); drawDoc(); });
+  $$("[data-all]", ov).forEach((b) => b.onclick = () => {
+    const o = b.dataset.all === "1", cur = $(`#rvIn details[data-s="${curSec()}"]`, ov);
+    V.bulkAt = performance.now();
+    $$("#rvIn details[data-s], #rvIn details[data-y]", ov).forEach((d) => { d.open = o; (d.dataset.s ? V.openS : V.openY)[d.dataset.s || d.dataset.y] = o; });
+    if (!o && cur) goTo(cur, false);
+  });
+  $("#rvFind", ov).addEventListener("input", (e) => { V.find = e.target.value.trim(); drawDoc(); });
+  $("#rvWide", ov).onclick = () => { V.wide = !V.wide; $(".rv-body", ov).classList.toggle("wide", V.wide); $("#rvWide", ov).textContent = V.wide ? "질문 칸 펼치기 ◂" : "질문 칸 접기 ▸"; };
+  // 접기·펼치기: 다시 그리지 않고 그 자리만. 접을 때 제목이 화면 위로 사라졌으면 제목으로 맞춤 (toggle 은 거품이 없어 capture 로)
+  $("#rvIn", ov).addEventListener("toggle", (e) => {
+    const d = e.target; if (!(d instanceof HTMLDetailsElement)) return;
+    if (d.dataset.s) V.openS[d.dataset.s] = d.open; else if (d.dataset.y) V.openY[d.dataset.y] = d.open; else return;
+    if (!d.open && performance.now() - V.bulkAt > 400) { const top = docEl.getBoundingClientRect().top + barH(); if (d.getBoundingClientRect().top < top) goTo(d, false); }
+  }, true);
+  // 목차: ▾/▸ 는 목차의 학년 목록만 접음, 이름을 누르면 본문 그 자리를 펼치고 학생부 칸 안에서만 이동
+  $("#rvTocL", ov).addEventListener("click", (e) => {
+    const ch = e.target.closest("[data-chev]");
+    if (ch) { const k = ch.dataset.chev; V.tocOpen[k] = V.tocOpen[k] === false; ch.closest(".rv-tg").classList.toggle("open", V.tocOpen[k]); ch.textContent = V.tocOpen[k] ? "▾" : "▸"; return; }
+    const a = e.target.closest("[data-go]"); if (!a) return;
+    e.preventDefault();
+    const [k, g] = a.dataset.go.split("|");
+    const sd = $(`#rvIn details[data-s="${k}"]`, ov); if (!sd) return;
+    sd.open = true; V.openS[k] = true;
+    const yd = g ? $(`#rvIn details[data-y="${k}|${g}"]`, ov) : null;
+    if (yd) { yd.open = true; V.openY[`${k}|${g}`] = true; }
+    goTo(yd || sd, true);
+  });
+  docEl.addEventListener("scroll", spyToc, { passive: true });
   // 하이라이트를 누르면: [질문 보기](질문이 달린 것) · [하이라이트 지우기](내 것 · 관리자)
   const mkPop = $("#rvMkPop", ov);
   const markPop = (el) => {
@@ -985,19 +1102,81 @@ export async function openRecordViewer(no, { stage = 0, preset = null } = {}) {
   loadMeetingNotes(no).then((n) => { if (V && V.no === no) { V.notes = n; drawSide(); } }).catch(() => { if (V && V.no === no) { V.notesFail = true; drawSide(); } });
 }
 const markStageCls = (m) => `c${Number(m.stage) || 1}`;
+// ===== 학생부 보기 (2026-10-31 가독성: 구역 카드 · 학년 접기 · 목차 · 회색 막대) =====
+// 글 칸(.rv-cell data-sec·data-row)의 글자 위치는 저장된 글 그대로 — 하이라이트·드래그 질문·지우기가 문단/문장마다 줄 모두 같은 자리
+const VIEW_ORDER = ["attend", "creative", "subject", "volunteer", "behavior"];
+const VIEW_TITLE = { attend: "출결 상황", creative: "창의적 체험활동", subject: "교과 세부능력 및 특기사항", volunteer: "봉사활동실적 (학교 계획)", behavior: "행동특성 및 종합의견" };
+function viewPref(k, d) { try { const v = Number(localStorage.getItem(k)); return localStorage.getItem(k) == null || !Number.isFinite(v) ? d : v; } catch (_) { return d; } }
+function savePref(k, v) { try { localStorage.setItem(k, String(v)); } catch (_) {} }
+const rowYear = (label) => { const m = String(label || "").match(/^([1-3])학년\s*/); return m ? { g: m[1], name: String(label).slice(m[0].length) } : { g: "", name: String(label || "") }; };
+const hopeOf = (text) => { const m = String(text).match(/^희망분야:\s*([^\n]*)\n/); return m ? { hope: m[1].trim(), cut: m[0].length } : { hope: "", cut: 0 }; };
+function viewSections() {
+  const L = V.rec.sections.map((s) => ({ ...s, rows: s.rows.map((r, ri) => ({ ...r, ri, ...rowYear(r.label) })) }));
+  const k = (x) => { const i = VIEW_ORDER.indexOf(x.key); return i < 0 ? 99 : i; };
+  return L.filter((s) => s.key !== "grades").sort((a, b) => k(a) - k(b));
+}
+const yearsOf = (s) => [...new Set(s.rows.map((r) => r.g))].sort((a, b) => (a || "9").localeCompare(b || "9"));
+const barH = () => document.getElementById("rvBar")?.offsetHeight || 44;
+// 학생부 칸 안에서만 이동 (scrollIntoView 는 바깥 화면까지 움직여서 쓰지 않음)
+function goTo(el, smooth) {
+  const d = document.getElementById("rvDoc"); if (!d || !el) return;
+  const y = el.getBoundingClientRect().top - d.getBoundingClientRect().top + d.scrollTop - barH() - 10;
+  d.scrollTo({ top: Math.max(0, y), behavior: smooth ? "smooth" : "auto" });
+}
+function curSec() {
+  const d = document.getElementById("rvDoc"); if (!d) return "";
+  const top = d.getBoundingClientRect().top + barH() + 30;
+  let cur = "";
+  $$("#rvIn details[data-s]").forEach((x) => { if (!cur || x.getBoundingClientRect().top <= top) cur = x.dataset.s; });
+  return cur;
+}
+function spyToc() { const c = curSec(); $$("#rvTocL .rv-tg").forEach((t) => t.classList.toggle("cur", t.dataset.tg === c)); }
+function drawToc() {
+  const el = document.getElementById("rvTocL"); if (!el || !V) return;
+  el.innerHTML = viewSections().map((s) => {
+    const ys = s.key === "attend" ? [] : yearsOf(s), to = V.tocOpen[s.key] !== false;
+    return `<div class="rv-tg${to ? " open" : ""}" data-tg="${s.key}"><div class="rv-tgh">${ys.length ? `<button type="button" class="rv-chev" data-chev="${s.key}" aria-label="목차 접기">${to ? "▾" : "▸"}</button>` : '<span class="rv-chev"></span>'}<a href="#" data-go="${s.key}">${esc(SEC_SHORT[s.key] || s.title)}</a><small>${s.rows.length}</small></div>
+      ${ys.length ? `<div class="rv-tgs">${ys.map((g) => `<a href="#" class="sub" data-go="${s.key}|${g || "etc"}">${g ? g + "학년" : "기타"}<small>${s.rows.filter((r) => r.g === g).length}</small></a>`).join("")}</div>` : ""}</div>`;
+  }).join("");
+  spyToc();
+}
 function drawDoc() {
-  const el = document.getElementById("rvDoc"); if (!el || !V) return;
+  const el = document.getElementById("rvIn"), docEl = document.getElementById("rvDoc"); if (!el || !V) return;
+  const keep = docEl.scrollTop;
   const mine = (m) => m.byUid === S.ctx.user.uid;
-  // 창체·세특은 학년을 골라 볼 수 있게 (칸 이름 앞 'n학년'으로)
-  const gOf = (r) => (String(r.label || "").match(/^([1-3])학년/) || [])[1] || "";
-  el.innerHTML = V.rec.sections.map((s) => {
-    const gs = ["creative", "subject"].includes(s.key) ? [...new Set(s.rows.map(gOf).filter(Boolean))].sort() : [];
-    const pickG = gs.includes(V.grade[s.key]) ? V.grade[s.key] : "";
-    return `<h3 id="rvs-${s.key}">${esc(s.title)}${gs.length > 1 ? `<span class="rv-gr" data-grsec="${s.key}">${["", ...gs].map((g) => `<button type="button" data-gr="${g}" class="${pickG === g ? "on" : ""}">${g ? g + "학년" : "전체"}</button>`).join("")}</span>` : ""}</h3><table>${s.rows.map((r, ri) => {
-      const ms = V.marks.filter((m) => (V.otherHl || mine(m))).map((m) => ({ ...m, ...placeOf(m, s.key, ri, r.text) })).filter((m) => m.ok);
-      return `<tr${pickG && gOf(r) !== pickG ? " hidden" : ""}><th>${esc(r.label || "")}</th><td class="rv-cell" data-sec="${s.key}" data-row="${ri}">${paint(r.text, ms)}</td></tr>`;
-    }).join("")}</table>`;
-  }).join("") + `<p class="muted sm">대입에 쓰는 항목만 넣었어요 (인적사항·수상·자격증·봉사·독서 없음) · ${V.rec.ver || 1}번째 판</p>`;
+  const secs = viewSections();
+  let found = 0;
+  const cell = (s, r) => {
+    const ms = V.marks.filter((m) => (V.otherHl || mine(m))).map((m) => ({ ...m, ...placeOf(m, s.key, r.ri, r.text) })).filter((m) => m.ok);
+    const h = s.key === "creative" ? hopeOf(r.text) : { hope: "", cut: 0 };
+    const fr = findRanges(r.text, h.cut); found += fr.length;
+    return { h, html: paint(r.text, ms, { hide: h.cut, sent: V.sent, find: fr }) };
+  };
+  const ent = (s, r) => {
+    const c = cell(s, r);
+    return `<div class="rv-ent" id="rve-${s.key}-${r.ri}">${r.name || c.h.hope ? `<div class="rv-lab">${r.name ? `<b>${esc(r.name)}</b>` : ""}${c.h.hope ? `<span class="rv-hope">희망분야 · ${esc(c.h.hope)}</span>` : ""}</div>` : ""}<div class="rv-cell rv-txt${V.sent ? " sent" : ""}" data-sec="${s.key}" data-row="${r.ri}">${c.html}</div></div>`;
+  };
+  const ysum = (s, rows) => s.key === "subject" ? `${rows.length}과목` : s.key === "creative" ? rows.map((r) => r.name.replace(/활동$/, "")).join("·") : s.key === "volunteer" ? `${rows.length}건` : s.key === "behavior" ? "" : `${rows.length}칸`;
+  el.style.setProperty("--fs", `${V.fs}px`);
+  el.innerHTML = secs.map((s) => {
+    const ys = s.key === "attend" ? [] : yearsOf(s);
+    const body = s.key === "attend" ? s.rows.map((r) => ent(s, { ...r, name: r.label })).join("") : ys.map((g) => {
+      const rows = s.rows.filter((r) => r.g === g), yk = `${s.key}|${g || "etc"}`;
+      const nav = s.key === "subject" && rows.length > 3 ? `<div class="rv-subjnav">${rows.map((r) => `<button type="button" data-jump="rve-${s.key}-${r.ri}">${esc(r.name || "과목")}</button>`).join("")}</div>` : "";
+      return `<details class="rv-fy" data-y="${yk}" id="rvy-${s.key}-${g || "etc"}"${V.openY[yk] !== false ? " open" : ""}><summary class="rv-yr"><span class="rv-yrchip">${g ? g + "학년" : "기타"}</span><span class="rv-yrs">${esc(ysum(s, rows))}</span><span class="ar"></span></summary><div class="rv-yin">${nav}${rows.map((r) => ent(s, r)).join("")}</div></details>`;
+    }).join("");
+    return `<details class="rv-card-s${s.key === "attend" ? " small" : ""}" data-s="${s.key}" id="rvs-${s.key}"${V.openS[s.key] !== false ? " open" : ""}><summary class="rv-sech"><span class="rv-dot d-${s.key}"></span><h3>${esc(VIEW_TITLE[s.key] || s.title)}</h3>${ys.filter(Boolean).length ? `<small>${ys.filter(Boolean).map((g) => g + "학년").join(" · ")}</small>` : ""}<span class="ar"></span></summary><div class="rv-cin">${body}</div></details>`;
+  }).join("") + `<p class="rv-endnote muted sm">대입에 쓰는 항목만 (인적사항·수상·자격증·독서·개인 봉사 없음 · 봉사는 학교 계획 실적만) · 성적은 위 [성적] 탭에 따로 · ${V.rec.ver || 1}번째 판</p>`;
+  const fn = document.getElementById("rvFindN"); if (fn) fn.textContent = V.find ? `${found}곳` : "";
+  docEl.scrollTop = keep;
+  drawToc();
+}
+// 찾기: 보이는 글(희망분야 머리 뒤)에서 낱말 자리 [{s,e}]
+function findRanges(text, from = 0) {
+  const q = V?.find; if (!q) return [];
+  const out = []; let i = text.indexOf(q, from);
+  while (i >= 0) { out.push({ s: i, e: i + q.length }); i = text.indexOf(q, i + q.length); }
+  return out;
 }
 // 하이라이트 자리: 저장된 자리의 글이 quote 와 같으면 그대로, 아니면 같은 칸에서 quote 를 다시 찾음 (못 찾으면 안 그림)
 function placeOf(m, sec, row, text) {
@@ -1006,17 +1185,24 @@ function placeOf(m, sec, row, text) {
   const i = m.quote ? text.indexOf(m.quote) : -1;
   return i >= 0 ? { ok: true, s: i, e: i + m.quote.length } : { ok: false };
 }
-function paint(text, ms) {
-  const cuts = new Set([0, text.length]);
+function paint(text, ms, { hide = 0, sent = false, find = [] } = {}) {
+  // 글자 위치는 원래 글 그대로: 희망분야 머리는 숨긴 채 남기고(hidden), 문장 나누기는 감싸기만(글자를 더하지 않음)
+  const cuts = new Set([0, text.length, hide]);
   ms.forEach((m) => { cuts.add(m.s); cuts.add(m.e); });
-  const pts = [...cuts].sort((a, b) => a - b);
-  let h = "";
+  find.forEach((f) => { cuts.add(f.s); cuts.add(f.e); });
+  const sents = [hide];
+  if (sent) { const re = /\.(\s+)(?=\S)/g; let m; while ((m = re.exec(text))) { const b = m.index + m[0].length; if (b > hide) { sents.push(b); cuts.add(b); } } }
+  const pts = [...cuts].filter((x) => x >= 0 && x <= text.length).sort((a, b) => a - b);
+  let h = hide ? `<span class="rv-hid" hidden>${esc(text.slice(0, hide))}</span>` : "", open = false;
   for (let i = 0; i < pts.length - 1; i++) {
-    const a = pts[i], b = pts[i + 1], seg = text.slice(a, b);
+    const a = pts[i], b = pts[i + 1]; if (a < hide) continue;
+    if (sent && sents.includes(a)) { if (open) h += "</span>"; h += '<span class="s">'; open = true; }
+    const seg = text.slice(a, b);
     const top = ms.filter((m) => m.s <= a && m.e >= b).at(-1);
-    h += top ? `<mark class="${markStageCls(top)}${top.kind === "q" ? " q" : ""}" data-mk="${esc(top.id)}">${maskSpans(seg)}</mark>` : maskSpans(seg);
+    h += top ? `<mark class="${markStageCls(top)}${top.kind === "q" ? " q" : ""}" data-mk="${esc(top.id)}">${maskSpans(seg)}</mark>`
+      : find.some((f) => f.s <= a && f.e >= b) ? `<mark class="rv-find">${maskSpans(seg)}</mark>` : maskSpans(seg);
   }
-  return h;
+  return h + (open ? "</span>" : "");
 }
 const maskSpans = (s) => esc(s).replace(/○+[가-힣]?(?=[^가-힣]|$)|○+/g, (x) => `<span class="rv-mask">${x}</span>`);
 async function addMark(kind, extra = {}) {

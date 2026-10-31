@@ -175,9 +175,18 @@ const SECTION_RE = [
   [head("독서활동상황"), "drop", "독서활동상황"],
   [head("행동특성및종합의견"), "behavior"]
 ];
-// 인적사항 쪽: 주민등록번호 꼴, 또는 한 줄에 '성명'과 '성별' (인적사항 표). '주소'·'보호자' 같은 낱말만으로는 버리지 않음
-//   (창체·세특 글에 '보호자'가 나오면 그 쪽이 통째로 빠져 칸이 잘리던 문제 — 2026-10-30)
-const PII_RE = /\d{6}\s*-\s*[1-4*]\s*[\d*]{6}|(^|\n)[^\n]{0,10}성\s*명[^\n]{0,40}성\s*별/;
+// 인적사항 쪽 (2026-10-30 고침 — 본문 낱말로 쪽이 통째로 버려져 글이 잘리던 문제):
+//   ① 한 줄 안에 주민등록번호 꼴(띄어쓰기만 허용, 줄을 넘어 붙이지 않음) 또는
+//   ② 조각 글 전체가 정확히 칸 이름(성명·성별·주소·보호자·주민등록번호·관계, 띄어쓰기만 허용)인 조각이 2개 이상
+//   본문 문장 속 낱말('보호', '위주 소규모' 등)로는 버리지 않음
+const PII_NUM = /\d{6}-[1-4*][\d*]{6}/;
+const PII_LABELS = new Set(["성명", "성별", "주소", "보호자", "주민등록번호", "관계"]);
+function piiWhy(p) {
+  if (p.lines.some((l) => PII_NUM.test(l.text.replace(/ +/g, "")))) return "주민등록번호";
+  const labels = new Set();
+  p.lines.forEach((l) => (l.segs || []).forEach((sg) => { const t = sg.s.replace(/\s+/g, ""); if (PII_LABELS.has(t)) labels.add(t); }));
+  return labels.size >= 2 ? [...labels].join("·") + " 칸" : "";
+}
 const TABLE_HEAD = /^(학년|영역|시간|특기\s*사항|학년\s*영역|영역\s*시간|구분|과\s*목|수업\s*일수|결석\s*일수|지각|조퇴|결과|비고|학기|단위수|원점수|석차등급|성취도)(\s|$)/;
 const NOISE = /^[-–]?\s*\d+\s*[-–]?$|^\d+\s*\/\s*\d+$|출력|발급|페이지|쪽\s*\d/;
 const AREA_RE = /^(자율\s*[·ㆍ]?\s*자치\s*활동|자율\s*활동|동아리\s*활동|봉사\s*활동|진로\s*활동)$/;
@@ -197,7 +206,7 @@ function joinLines(lines, maxR) {
 // 칸 나누기 (나이스 표는 칸 이름(영역·학년)이 칸 높이의 가운데에 찍힘):
 // 줄들(위→아래)과 이름 위치(anchor)들로 칸을 나눈다. 쪽 맨 위에는 앞 쪽 칸이 이어진 줄(prefix)이 있을 수 있어
 // prefix 길이를 바꿔 가며 '마지막 칸이 마지막 줄에서 끝나는' 나누기를 고른다
-function partition(T, A, tol) {
+function partitionSeq(T, A, tol) {
   const run = (k) => {
     let i = k; const blocks = [];
     for (const a of A) {
@@ -213,6 +222,43 @@ function partition(T, A, tol) {
   const r = best || { k: 0, blocks: [], left: T.length, rest: T };
   if (r.rest.length && r.blocks.length) r.blocks.at(-1).lines.push(...r.rest);   // 남은 줄은 마지막 칸에
   return { prefix: T.slice(0, r.k), blocks: r.blocks, orphan: r.blocks.length ? [] : r.rest };
+}
+function partitionDP(T, A, tol) {
+  // 줄(위→아래)을 [쪽 맨 위 이어진 줄(prefix)] + 이름마다 한 칸으로 나눔. 각 칸의 가운데(첫 줄과 끝 줄의 가운데)가
+  // 그 이름 위치와 가장 가깝게 되는 나누기를 고름 (DP). 칸 위에 글 없는 줄(빈 '희망분야' 칸 등)이 있어도 덜 흔들림
+  const n = T.length, m = A.length;
+  if (!m) return { prefix: [], blocks: [], orphan: T.slice() };
+  const INF = 1e12, PRE = tol * 0.3;
+  // 칸 경계는 줄 간격이 조금 더 벌어진 곳을 좋아함 (칸 테두리 여백). 간격이 고른 PDF 에서는 어느 나누기나 같은 값이라 영향 없음
+  const gaps = T.map((x, i) => (i ? T[i - 1].y - x.y : 0)), gm = median(gaps.slice(1).filter((g) => g > 0));
+  const edge = (i) => (i <= 0 || i >= n ? 0 : Math.max(0, gm * 1.15 - gaps[i]));
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(INF)), bk = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(-1));
+  for (let p = 0; p <= n; p++) dp[0][p] = p * PRE;
+  for (let k = 1; k <= m; k++) {
+    const a = A[k - 1];
+    for (let i = 0; i <= n; i++) {
+      if (dp[k - 1][i] >= INF) continue;
+      // 빈 칸 (이름만 있고 글이 없음 — 예: 아직 안 쓴 3학년 행특): 남은 줄보다 아래에 있으면 거의 공짜
+      const ce = (i >= n || T[i].y < a.y - tol) ? tol * 0.5 : tol * 6;
+      if (dp[k - 1][i] + ce < dp[k][i]) { dp[k][i] = dp[k - 1][i] + ce; bk[k][i] = i; }
+      for (let j = i + 1; j <= n; j++) {
+        const c = dp[k - 1][i] + Math.abs((T[i].y + T[j - 1].y) / 2 - a.y) + edge(i);
+        if (c < dp[k][j]) { dp[k][j] = c; bk[k][j] = i; }
+      }
+    }
+  }
+  const blocks = []; let j = n;
+  for (let k = m; k >= 1; k--) { const i = bk[k][j]; blocks.unshift({ a: A[k - 1], lines: T.slice(i, j) }); j = i; }
+  return { prefix: T.slice(0, j), blocks, orphan: [] };
+}
+// 칸 나누기: 먼저 위에서부터 차례로(이름이 칸 가운데) 나눔 — 실제 나이스 파일에서 정확함.
+// 그 결과가 이상하면(남는 줄이 있거나, 위아래 칸에는 글이 있는데 중간 칸이 비어 버림 — 예: 쪽을 넘긴 칸 위의 빈 '희망분야' 줄)
+// 쪽 맨 위 첫 칸이 비는 것은 정상(앞 쪽에서 이어진 칸 — 줄은 prefix 로 앞 칸에 붙음)
+// 이름이 칸 가운데에 가장 가깝게 되는 나누기(DP)를 씀
+function partition(T, A, tol) {
+  const a = partitionSeq(T, A, tol);
+  const hole = a.blocks.some((b, i) => i > 0 && !b.lines.length && a.blocks.slice(0, i).some((x) => x.lines.length) && a.blocks.slice(i + 1).some((x) => x.lines.length));
+  return a.orphan.length || hole ? partitionDP(T, A, tol) : a;
 }
 const median = (a) => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : 14; };
 
@@ -293,8 +339,12 @@ export function parseGradeTables(tables, tol) {
 }
 
 // 쪽 → 구역·칸 (나이스 '학교생활기록부' PDF 기준. 섞인 칸은 미리 보기에서 선생님이 고침)
-export function splitRecord(pages, { withGrades = false } = {}) {
-  const info = { read: pages.length, kept: 0, dropped: [], headerLines: 0 };
+// keep: 선생님이 [이 쪽 살리기]를 누른 쪽 번호 (인적사항 판단을 하지 않음)
+export function splitRecord(pages, { withGrades = false, keep = new Set() } = {}) {
+  const info = { read: pages.length, kept: 0, dropped: [], headerLines: 0, lost: [] };
+  // 빠진 글 검사: 특기사항 칸 줄(창체·세특·행특)마다 번호를 붙이고, 칸에 들어간 줄과 견줌
+  const rawLines = [];
+  const track = (o, page) => { o.id = rawLines.length; o.page = page; rawLines.push(o); return o; };
   const norm = (t) => t.replace(/\d+/g, "#");
   const freq = new Map();
   pages.forEach((p) => { const edge = [...p.lines.slice(0, 3), ...p.lines.slice(-3)]; new Set(edge.map((l) => norm(l.text))).forEach((k) => freq.set(k, (freq.get(k) || 0) + 1)); });
@@ -307,8 +357,8 @@ export function splitRecord(pages, { withGrades = false } = {}) {
   let cur = null, sub = null, grade = "", lastSubY = null, lastSubPage = 0;
   const gaps = [];
   for (const p of pages) {
-    const all = p.lines.map((l) => l.text).join("\n");
-    if (PII_RE.test(all)) { info.dropped.push({ page: p.n, why: "인적사항(주민등록번호·성명/성별 표)이 있는 쪽" }); continue; }
+    const pw = keep.has(p.n) ? "" : piiWhy(p);
+    if (pw) { info.dropped.push({ page: p.n, why: `인적사항(${pw})이 있는 쪽`, pii: true }); continue; }
     info.kept++;
     p.lines.forEach((l, i) => { if (i && p.lines[i - 1].y - l.y < 30) gaps.push(p.lines[i - 1].y - l.y); });
     const maxR = Math.max(...p.lines.map((l) => l.right || 0));
@@ -336,11 +386,11 @@ export function splitRecord(pages, { withGrades = false } = {}) {
       if (sub !== "seteuk") return;
       const m = t.match(/^((?:\(\d학기\))?\s*[가-힣A-Za-z0-9ⅠⅡⅢⅣ·ㆍ\s()]{1,24}?)\s*[:：]\s*(.*)$/);
       const lg = median(gaps);
-      if (m) { subj.rows.push({ label: `${grade ? grade + "학년 " : ""}${m[1].trim()}`, lines: [{ t: m[2], r: l.right }], maxR }); lastSubY = l.y; lastSubPage = p.n; return; }
+      if (m) { subj.rows.push({ label: `${grade ? grade + "학년 " : ""}${m[1].trim()}`, lines: [track({ t: m[2], r: l.right }, p.n)], maxR }); lastSubY = l.y; lastSubPage = p.n; return; }
       // 표 밖 글(묶음 제목·빈 줄 다음 글)은 버림: 같은 쪽에서 줄 간격이 크게 벌어지면 표가 끝난 것
-      if (lastSubY != null && lastSubPage === p.n && lastSubY - l.y > lg * 1.8) { sub = "skip"; return; }
-      const r = subj.rows.at(-1); if (!r) return;
-      r.lines.push({ t, r: l.right }); lastSubY = l.y; lastSubPage = p.n;
+      if (lastSubY != null && lastSubPage === p.n && lastSubY - l.y > lg * 1.8) { sub = "skip"; track({ t }, p.n); return; }
+      const r = subj.rows.at(-1); if (!r) { track({ t }, p.n); return; }
+      r.lines.push(track({ t, r: l.right }, p.n)); lastSubY = l.y; lastSubPage = p.n;
     });
   }
   const lg = median(gaps), tol = lg * 0.55;
@@ -363,7 +413,11 @@ export function splitRecord(pages, { withGrades = false } = {}) {
         const gd = left.find((s) => /^[1-3]$/.test(s.s.trim()) && (!area || s.x < Math.min(...left.filter((x) => AREA_RE.test(x.s.trim())).map((x) => x.x))));
         if (gd) gAnch.push({ page: pg, y: l.y, g: Number(gd.s.trim()) });
         if (area) A.push({ y: l.y, name: area.replace(/\s+/g, "") });
-        if (right.length) T.push({ y: l.y, t: segText(right), r: l.right, maxR: l.maxR });
+        if (right.length) {
+          const t = segText(right), hm = right[0].s.replace(/\s+/g, "") === "희망분야" ? [null, segText(right.slice(1))] : null;
+          // 진로활동의 '희망분야 | ○○' 줄: 글이 아니라 칸 머리 (쪽을 넘겨 다시 찍힌 빈 줄은 값이 없음)
+          T.push(hm ? { y: l.y, t: "", hope: hm[1].trim(), r: l.right, maxR: l.maxR } : track({ y: l.y, t, r: l.right, maxR: l.maxR }, pg));
+        }
       });
       const P = partition(T, A, tol);
       frag.push({ page: pg, prefix: P.prefix.concat(P.orphan), blocks: P.blocks.map((b) => ({ name: b.a.name, y: b.a.y, lines: b.lines, page: pg })) });
@@ -389,7 +443,13 @@ export function splitRecord(pages, { withGrades = false } = {}) {
       const off = a0.g - hitRow.g;
       if (off) rows.forEach((r) => { r.g += off; });
     }
-    secs.creative = rows.filter((r) => !/^봉사/.test(r.name)).map((r) => ({ label: `${r.g}학년 ${r.name}`, text: joinLines(r.lines, Math.max(...r.lines.map((x) => x.maxR || 0))) }));
+    rows.filter((r) => /^봉사/.test(r.name)).forEach((r) => r.lines.forEach((x) => { x.skip = true; }));   // 창체 안 봉사 칸은 일부러 버림
+    secs.creative = rows.filter((r) => !/^봉사/.test(r.name)).map((r) => {
+      const hope = r.lines.map((x) => x.hope).filter(Boolean)[0];
+      const body = r.lines.filter((x) => x.hope == null);
+      body.forEach((x) => { x.used = true; });
+      return { label: `${r.g}학년 ${r.name}`, text: (hope ? `희망분야: ${hope}\n` : "") + joinLines(body, Math.max(0, ...r.lines.map((x) => x.maxR || 0))) };
+    });
   }
   // 3) 행특: 학년 숫자가 칸 가운데 (쪽을 넘긴 칸에는 숫자가 없을 수 있음)
   if (reg.behavior.length) {
@@ -401,15 +461,15 @@ export function splitRecord(pages, { withGrades = false } = {}) {
         const segs = l.segs || [{ x: l.x, w: (l.right || 0) - l.x, s: l.text }];
         const d = segs.length && /^[1-3]$/.test(segs[0].s.trim()) ? segs[0] : null;
         if (d && segs.length === 1) { A.push({ y: l.y, g: Number(d.s.trim()) }); return; }
-        if (d) { A.push({ y: l.y, g: Number(d.s.trim()) }); T.push({ y: l.y, t: segText(segs.slice(1)), r: l.right, maxR: l.maxR }); return; }
-        T.push({ y: l.y, t: segText(segs), r: l.right, maxR: l.maxR });
+        if (d) { A.push({ y: l.y, g: Number(d.s.trim()) }); T.push(track({ y: l.y, t: segText(segs.slice(1)), r: l.right, maxR: l.maxR }, pg)); return; }
+        T.push(track({ y: l.y, t: segText(segs), r: l.right, maxR: l.maxR }, pg));
       });
       const P = partition(T, A, tol);
       const pre = P.prefix.concat(P.orphan);
       if (pre.length) { if (rows.length) rows.at(-1).lines.push(...pre); else rows.push({ g: 0, lines: pre }); }
       P.blocks.forEach((b) => rows.push({ g: b.a.g, lines: b.lines }));
     });
-    secs.behavior = rows.map((r) => ({ label: r.g ? `${r.g}학년` : "", text: joinLines(r.lines, Math.max(0, ...r.lines.map((x) => x.maxR || 0))) }));
+    secs.behavior = rows.map((r) => { r.lines.forEach((x) => { x.used = true; }); return { label: r.g ? `${r.g}학년` : "", text: joinLines(r.lines, Math.max(0, ...r.lines.map((x) => x.maxR || 0))) }; });
   }
   // 4) 출결: 줄 앞 학년 숫자로
   if (reg.attend.length) {
@@ -417,7 +477,13 @@ export function splitRecord(pages, { withGrades = false } = {}) {
     reg.attend.forEach((l) => { const m = l.text.match(/^([1-3])\s+(.*)$/); if (m) rows.push({ label: `${m[1]}학년`, text: m[2] }); else if (rows.length) rows.at(-1).text += " " + l.text; else rows.push({ label: "", text: l.text }); });
     secs.attend = rows;
   }
-  if (subj.rows.length) secs.subject = subj.rows.map((r) => ({ label: r.label, text: joinLines(r.lines, r.maxR) }));
+  if (subj.rows.length) secs.subject = subj.rows.map((r) => { r.lines.forEach((x) => { x.used = true; }); return { label: r.label, text: joinLines(r.lines, r.maxR) }; });
+  // 빠진 글: 남긴 쪽 특기사항 칸 글자 수 합과 칸에 들어간 글자 수의 차이 (일부러 버린 창체 봉사 칸은 뺌)
+  const cnt = (t) => String(t || "").replace(/\s+/g, "").length;
+  const raw = rawLines.filter((x) => !x.skip), lostL = raw.filter((x) => !x.used);
+  info.rawChars = raw.reduce((t, x) => t + cnt(x.t), 0);
+  info.lostChars = lostL.reduce((t, x) => t + cnt(x.t), 0);
+  info.lost = [...new Set(lostL.filter((x) => cnt(x.t)).map((x) => x.page))].sort((a, b) => a - b);
   const order = ["attend", "creative", "subject", "behavior", "grades"];
   const sections = order.filter((k) => secs[k]).map((k) => ({ key: k, title: SEC_TITLE[k], rows: secs[k].filter((r) => (r.text || "").trim()).map((r) => ({ label: r.label, text: r.text.trim() })) }))
     .filter((s) => s.rows.length);
@@ -482,13 +548,17 @@ function stepPick(msg = "") {
 }
 function stepPages() {
   steps(3);
-  const { sections, info, grades } = splitRecord(upState.pages, { withGrades: upState.withGrades });
+  upState.keep ||= new Set();
+  const { sections, info, grades } = splitRecord(upState.pages, { withGrades: upState.withGrades, keep: upState.keep });
   upState.info = info; upState.grades = grades;
+  upState.lostWarn = lostWarn(info);
+  const midPii = info.dropped.filter((d) => d.pii && d.page > 1);
   const dropPages = new Set(info.dropped.filter((d) => /쪽/.test(d.why)).map((d) => d.page));
   body().innerHTML = `<div class="ru-card"><h3>쪽 확인</h3>
     <div class="ru-pages">${upState.pages.map((p) => { const d = info.dropped.find((x) => x.page === p.n && /쪽/.test(x.why)); return `<span class="ru-pg ${d ? "drop" : "keep"}" title="${esc(d?.why || "남김")}">${p.n}쪽 ${d ? "버림" : "남김"}${d ? `<small>${esc(d.why)}</small>` : ""}</span>`; }).join("")}</div>
-    ${info.dropped.some((d) => /쪽$/.test(d.why) && d.page > 1 && info.dropped.filter((x) => /쪽$/.test(x.why)).length < upState.pages.length) && info.dropped.filter((d) => /쪽$/.test(d.why)).some((d, i, a) => d.page !== i + 1)
-      ? `<div class="notice">가운데 쪽(${info.dropped.filter((d) => /쪽$/.test(d.why)).map((d) => d.page + "쪽").join(", ")})이 인적사항으로 버려졌어요. 그 쪽 글이 학생부에서 빠지니, 파일이 맞는지 확인해 주세요.</div>` : ""}
+    ${midPii.length ? `<div class="notice ru-warn">${midPii.map((d) => `<div class="row"><span><b>${d.page}쪽</b>이 인적사항으로 버려졌어요 (${esc(d.why.replace(/^인적사항\(|\)이 있는 쪽$/g, ""))}). 인적사항이 아니라면 살려 주세요 — 그 쪽 글이 학생부에서 빠져요.</span><div class="spacer"></div><button type="button" class="btn-sm" data-keep="${d.page}">이 쪽 살리기</button></div>`).join("")}</div>` : ""}
+    ${upState.keep.size ? `<div class="muted sm">살린 쪽: ${[...upState.keep].sort((a, b) => a - b).map((n) => n + "쪽").join(", ")}</div>` : ""}
+    ${upState.lostWarn}
     <ul class="ru-info">
       <li>남긴 구역: ${sections.filter((s) => s.key !== "grades").map((s) => esc(SEC_SHORT[s.key])).join(" · ") || '<b style="color:var(--danger)">없음</b>'}</li>
       <li>버린 구역: ${[...new Set(info.dropped.filter((d) => /구역/.test(d.why)).map((d) => d.why.replace(" (구역)", "")))].map(esc).join(" · ") || "없음"}${dropPages.size ? ` · 인적사항 쪽 ${dropPages.size}개` : ""}</li>
@@ -499,13 +569,19 @@ function stepPages() {
     <div class="row" style="margin-top:12px"><button type="button" class="btn-sm" id="ruBack">다른 파일</button><div class="spacer"></div>
       <button type="button" class="btn-primary" id="ruNext3" ${sections.length ? "" : "disabled"}>가림 확인으로</button></div></div>`;
   $("#ruGrades").onchange = (e) => { upState.withGrades = e.target.checked; stepPages(); };
-  $("#ruBack").onclick = () => { upState.pages = null; stepPick(); };
+  $$("[data-keep]").forEach((b) => b.onclick = () => { upState.keep.add(Number(b.dataset.keep)); stepPages(); });
+  $("#ruBack").onclick = () => { upState.pages = null; upState.keep = new Set(); stepPick(); };
   $("#ruNext3").onclick = () => {
     const names = namesList(upState.no);
     upState.sections = sections.map((s) => ({ ...s, rows: s.rows.map((r) => ({ label: r.label, text: r.text, masks: autoMasks(r.text, names) })) }));
     upState.pages = null;   // 쪽 글은 여기서 버림
     stepMask();
   };
+}
+// 빠진 글 경고: 특기사항 칸 글자 수 합보다 저장할 글자 수가 2% 넘게 적으면
+export function lostWarn(info) {
+  if (!info.rawChars || info.lostChars / info.rawChars <= 0.02) return "";
+  return `<div class="notice ru-warn">일부 글이 빠졌을 수 있어요 — ${info.lost.map((n) => n + "쪽").join(", ")} 확인 <span class="muted sm">(특기사항 ${info.rawChars}자 중 ${info.lostChars}자가 칸에 들어가지 않았어요)</span></div>`;
 }
 function rowHtml(s, si, r, ri) {
   if (r.editing) return `<textarea class="ru-edit" data-si="${si}" data-ri="${ri}">${esc(applyMasks(r.text, r.masks))}</textarea>
@@ -520,6 +596,7 @@ function stepMask() {
   const autos = [];
   S3.forEach((s, si) => s.rows.forEach((r, ri) => r.masks.forEach((m, mi) => { if (m.auto) autos.push({ si, ri, mi, m }); })));
   body().innerHTML = `<div class="ru-card"><h3>가림 확인</h3>
+    ${upState.lostWarn || ""}
     <p class="muted">다른 사람 이름·학교 이름·전화·메일은 자동으로 가렸어요(학생 본인 이름은 그대로). 글을 <b>드래그</b>해 [가리기], 가린 곳을 누르면 [풀기]. 표가 쪽을 넘어가 섞인 칸은 [고치기]로 글을 직접 고쳐요.</p>
     <details class="ru-autos" open><summary>자동으로 가린 곳 <b>${autos.length}</b>곳</summary>
       <div>${autos.map((a, k) => `<button type="button" class="chip" data-goto="${a.si}:${a.ri}:${a.mi}">${k + 1}. ${esc(a.m.kind === "name" ? "이름" : a.m.kind === "school" ? "학교" : a.m.kind === "phone" ? "전화" : "메일")} · ${esc(S3[a.si].rows[a.ri].text.slice(a.m.start, a.m.end))}</button>`).join(" ") || '<span class="muted sm">없음</span>'}</div></details>

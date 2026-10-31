@@ -1975,3 +1975,7 @@ body.nd .gr-semhd { display: flex; gap: 8px; align-items: center; flex-wrap: wra
 body.nd .gr-empty { color: var(--ink-3); padding: 20px; text-align: center; }
 @media print { .rec-ov .rv-grades { display: none !important; } }
 body.nd .rec-ov.rv-print .rv-grades { display: none; }
+/* 학생부: 칸 글 줄바꿈('희망분야: ○○' 한 줄) · 넣기 경고 (2026-10-30) */
+body.nd .rv-cell, body.nd .ru-text { white-space: pre-line; }
+body.nd .ru-warn { background: #fff7d6; border: 1px solid #f0d58a; color: #6b5500; display: grid; gap: 6px; margin: 8px 0; }
+body.nd .ru-warn .row { gap: 8px; align-items: center; flex-wrap: wrap; }

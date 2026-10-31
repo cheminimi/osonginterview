@@ -53,8 +53,6 @@ export async function mountRecButtons(el, st, { stage = 0, preset = null, compac
 }
 
 // ================= 금지 글자 · 자동 가림 =================
-const COMMON_GO = ["최고", "참고", "재고", "제고", "보고", "광고", "경고", "사고", "신고", "원고", "고등", "중간", "최초", "당초", "연초", "기초"];
-const SCHOOL_AFTER = "(?:에서|에|와|과|의|학생|친구|선배|후배|축제|대회|교사|선생님)";
 const isHangul = (c) => !!c && /[가-힣]/.test(c);
 const PARTICLE = /^(와|과|이|가|은|는|을|를|의|에게|도|랑|이랑|하고|께|님)/;
 function namesList(no) {
@@ -63,6 +61,7 @@ function namesList(no) {
     .filter((n) => n && n.length >= 2 && n !== me).sort((a, b) => b.length - a.length);
 }
 // 글에서 자동으로 가릴 자리 [{start,end,kind,repl}] (겹치면 앞의 것)
+// 학교는 '○○고등학교·○○여자고등학교·○○중학교·○○초등학교' 이름 전체와 '오송고'만 (2026-10-31: '~고·~중 + 조사' 꼴은 존중·집중 같은 낱말이 걸려서 뺌)
 export function autoMasks(text, names) {
   const out = [];
   const add = (start, end, kind, repl) => { if (!out.some((m) => start < m.end && end > m.start)) out.push({ start, end, kind, repl, auto: true }); };
@@ -71,12 +70,6 @@ export function autoMasks(text, names) {
   while ((m = re1.exec(text))) { if (m[0].length > m[1].length) add(m.index, m.index + m[0].length, "school", m[1] === "중학교" ? "○○중" : m[1] === "초등학교" ? "○○초" : "○○고"); }
   const re2 = /오송고(?:등학교)?/g;
   while ((m = re2.exec(text))) add(m.index, m.index + m[0].length, "school", "○○고");
-  const re3 = new RegExp(`(?<![가-힣])([가-힣]{2,})(고|중|초)(?=${SCHOOL_AFTER})`, "g");
-  while ((m = re3.exec(text))) {
-    const word = m[1] + m[2];
-    if (COMMON_GO.some((w) => word.endsWith(w))) continue;
-    add(m.index, m.index + word.length, "school", "○○" + m[2]);
-  }
   for (const n of names) {
     let i = text.indexOf(n);
     while (i >= 0) {
@@ -90,6 +83,9 @@ export function autoMasks(text, names) {
   while ((m = re4.exec(text))) add(m.index, m.index + m[0].length, "phone", "○○○");
   const re5 = /[\w.+-]+@[\w-]+\.[\w.]+/g;
   while ((m = re5.exec(text))) add(m.index, m.index + m[0].length, "email", "○○○");
+  // 주민등록번호 꼴 (2쪽부터는 쪽을 버리지 않으므로 번호만 가림)
+  const re6 = /\d{6}\s*-\s*[1-4*][\d*]{6}/g;
+  while ((m = re6.exec(text))) add(m.index, m.index + m[0].length, "id", "○○○");
   return out.sort((a, b) => a.start - b.start);
 }
 const applyMasks = (text, masks) => {
@@ -175,17 +171,16 @@ const SECTION_RE = [
   [head("독서활동상황"), "drop", "독서활동상황"],
   [head("행동특성및종합의견"), "behavior"]
 ];
-// 인적사항 쪽 (2026-10-30 고침 — 본문 낱말로 쪽이 통째로 버려져 글이 잘리던 문제):
-//   ① 한 줄 안에 주민등록번호 꼴(띄어쓰기만 허용, 줄을 넘어 붙이지 않음) 또는
-//   ② 조각 글 전체가 정확히 칸 이름(성명·성별·주소·보호자·주민등록번호·관계, 띄어쓰기만 허용)인 조각이 2개 이상
-//   본문 문장 속 낱말('보호', '위주 소규모' 등)로는 버리지 않음
+// 인적사항 쪽 (2026-10-30 사용자 결정: 인적사항은 1쪽에만 있음):
+//   1쪽만 검사 — 주민등록번호 꼴이 있거나 '성명'·'성별' 칸 이름(조각 글 전체, 띄어쓰기만 허용)이 함께 있으면 1쪽 버림 (머리말·꼬리말 줄은 뺌)
+//   그런 게 없으면(1쪽을 빼고 올린 파일) 1쪽도 남김. 2쪽부터는 쪽을 버리지 않음 (주민등록번호 꼴은 autoMasks 가 가림)
 const PII_NUM = /\d{6}-[1-4*][\d*]{6}/;
-const PII_LABELS = new Set(["성명", "성별", "주소", "보호자", "주민등록번호", "관계"]);
-function piiWhy(p) {
+// isHF(p, i): 머리말·꼬리말로 지우는 줄 (꼬리말에 '성명'이 찍힐 수 있어서 칸 이름 셀 때 뺌)
+function piiWhy(p, isHF = () => false) {
   if (p.lines.some((l) => PII_NUM.test(l.text.replace(/ +/g, "")))) return "주민등록번호";
   const labels = new Set();
-  p.lines.forEach((l) => (l.segs || []).forEach((sg) => { const t = sg.s.replace(/\s+/g, ""); if (PII_LABELS.has(t)) labels.add(t); }));
-  return labels.size >= 2 ? [...labels].join("·") + " 칸" : "";
+  p.lines.forEach((l, i) => { if (!isHF(p, i)) (l.segs || []).forEach((sg) => { const t = sg.s.replace(/\s+/g, ""); if (t === "성명" || t === "성별") labels.add(t); }); });
+  return labels.size === 2 ? "성명·성별 칸" : "";
 }
 const TABLE_HEAD = /^(학년|영역|시간|특기\s*사항|학년\s*영역|영역\s*시간|구분|과\s*목|수업\s*일수|결석\s*일수|지각|조퇴|결과|비고|학기|단위수|원점수|석차등급|성취도)(\s|$)/;
 const NOISE = /^[-–]?\s*\d+\s*[-–]?$|^\d+\s*\/\s*\d+$|출력|발급|페이지|쪽\s*\d/;
@@ -339,9 +334,9 @@ export function parseGradeTables(tables, tol) {
 }
 
 // 쪽 → 구역·칸 (나이스 '학교생활기록부' PDF 기준. 섞인 칸은 미리 보기에서 선생님이 고침)
-// keep: 선생님이 [이 쪽 살리기]를 누른 쪽 번호 (인적사항 판단을 하지 않음)
-export function splitRecord(pages, { withGrades = false, keep = new Set() } = {}) {
-  const info = { read: pages.length, kept: 0, dropped: [], headerLines: 0, lost: [] };
+export function splitRecord(pages, { withGrades = false } = {}) {
+  // p1: 1쪽 인적사항 — "drop"(버림) | "none"(없음 — 이미 뺀 파일, 남김)
+  const info = { read: pages.length, kept: 0, dropped: [], headerLines: 0, lost: [], p1: "none" };
   // 빠진 글 검사: 특기사항 칸 줄(창체·세특·행특)마다 번호를 붙이고, 칸에 들어간 줄과 견줌
   const rawLines = [];
   const track = (o, page) => { o.id = rawLines.length; o.page = page; rawLines.push(o); return o; };
@@ -349,6 +344,7 @@ export function splitRecord(pages, { withGrades = false, keep = new Set() } = {}
   const freq = new Map();
   pages.forEach((p) => { const edge = [...p.lines.slice(0, 3), ...p.lines.slice(-3)]; new Set(edge.map((l) => norm(l.text))).forEach((k) => freq.set(k, (freq.get(k) || 0) + 1)); });
   const rep = pages.length >= 2 ? Math.max(2, Math.ceil(pages.length / 2)) : 99;
+  const isHF = (p, i) => (i < 3 || i >= p.lines.length - 3) && ((freq.get(norm(p.lines[i].text)) || 0) >= rep || NOISE.test(p.lines[i].text));
   // 1) 줄마다 구역 정하기 (창체·행특은 좌표째 모았다가 2)에서 칸으로 나눔)
   const reg = { creative: [], behavior: [], attend: [] };
   const subj = { rows: [] };
@@ -357,14 +353,13 @@ export function splitRecord(pages, { withGrades = false, keep = new Set() } = {}
   let cur = null, sub = null, grade = "", lastSubY = null, lastSubPage = 0;
   const gaps = [];
   for (const p of pages) {
-    const pw = keep.has(p.n) ? "" : piiWhy(p);
-    if (pw) { info.dropped.push({ page: p.n, why: `인적사항(${pw})이 있는 쪽`, pii: true }); continue; }
+    const pw = p === pages[0] ? piiWhy(p, isHF) : "";
+    if (pw) { info.p1 = "drop"; info.dropped.push({ page: p.n, why: `인적사항(${pw})이 있는 쪽`, pii: true }); continue; }
     info.kept++;
     p.lines.forEach((l, i) => { if (i && p.lines[i - 1].y - l.y < 30) gaps.push(p.lines[i - 1].y - l.y); });
     const maxR = Math.max(...p.lines.map((l) => l.right || 0));
     p.lines.forEach((l, i) => {
-      const edge = i < 3 || i >= p.lines.length - 3;
-      if (edge && ((freq.get(norm(l.text)) || 0) >= rep || NOISE.test(l.text))) { info.headerLines++; return; }
+      if (isHF(p, i)) { info.headerLines++; return; }
       const t0 = l.text;
       const hit = t0.length <= 30 && SECTION_RE.find(([re]) => re.test(t0));
       if (hit) {
@@ -548,16 +543,13 @@ function stepPick(msg = "") {
 }
 function stepPages() {
   steps(3);
-  upState.keep ||= new Set();
-  const { sections, info, grades } = splitRecord(upState.pages, { withGrades: upState.withGrades, keep: upState.keep });
+  const { sections, info, grades } = splitRecord(upState.pages, { withGrades: upState.withGrades });
   upState.info = info; upState.grades = grades;
   upState.lostWarn = lostWarn(info);
-  const midPii = info.dropped.filter((d) => d.pii && d.page > 1);
   const dropPages = new Set(info.dropped.filter((d) => /쪽/.test(d.why)).map((d) => d.page));
   body().innerHTML = `<div class="ru-card"><h3>쪽 확인</h3>
     <div class="ru-pages">${upState.pages.map((p) => { const d = info.dropped.find((x) => x.page === p.n && /쪽/.test(x.why)); return `<span class="ru-pg ${d ? "drop" : "keep"}" title="${esc(d?.why || "남김")}">${p.n}쪽 ${d ? "버림" : "남김"}${d ? `<small>${esc(d.why)}</small>` : ""}</span>`; }).join("")}</div>
-    ${midPii.length ? `<div class="notice ru-warn">${midPii.map((d) => `<div class="row"><span><b>${d.page}쪽</b>이 인적사항으로 버려졌어요 (${esc(d.why.replace(/^인적사항\(|\)이 있는 쪽$/g, ""))}). 인적사항이 아니라면 살려 주세요 — 그 쪽 글이 학생부에서 빠져요.</span><div class="spacer"></div><button type="button" class="btn-sm" data-keep="${d.page}">이 쪽 살리기</button></div>`).join("")}</div>` : ""}
-    ${upState.keep.size ? `<div class="muted sm">살린 쪽: ${[...upState.keep].sort((a, b) => a - b).map((n) => n + "쪽").join(", ")}</div>` : ""}
+    <div class="ru-p1" id="ruP1">${info.p1 === "drop" ? "1쪽 인적사항 → 버림" : "1쪽 인적사항 없음(이미 뺀 파일) → 남김"}</div>
     ${upState.lostWarn}
     <ul class="ru-info">
       <li>남긴 구역: ${sections.filter((s) => s.key !== "grades").map((s) => esc(SEC_SHORT[s.key])).join(" · ") || '<b style="color:var(--danger)">없음</b>'}</li>
@@ -569,8 +561,7 @@ function stepPages() {
     <div class="row" style="margin-top:12px"><button type="button" class="btn-sm" id="ruBack">다른 파일</button><div class="spacer"></div>
       <button type="button" class="btn-primary" id="ruNext3" ${sections.length ? "" : "disabled"}>가림 확인으로</button></div></div>`;
   $("#ruGrades").onchange = (e) => { upState.withGrades = e.target.checked; stepPages(); };
-  $$("[data-keep]").forEach((b) => b.onclick = () => { upState.keep.add(Number(b.dataset.keep)); stepPages(); });
-  $("#ruBack").onclick = () => { upState.pages = null; upState.keep = new Set(); stepPick(); };
+  $("#ruBack").onclick = () => { upState.pages = null; stepPick(); };
   $("#ruNext3").onclick = () => {
     const names = namesList(upState.no);
     upState.sections = sections.map((s) => ({ ...s, rows: s.rows.map((r) => ({ label: r.label, text: r.text, masks: autoMasks(r.text, names) })) }));
@@ -599,7 +590,7 @@ function stepMask() {
     ${upState.lostWarn || ""}
     <p class="muted">다른 사람 이름·학교 이름·전화·메일은 자동으로 가렸어요(학생 본인 이름은 그대로). 글을 <b>드래그</b>해 [가리기], 가린 곳을 누르면 [풀기]. 표가 쪽을 넘어가 섞인 칸은 [고치기]로 글을 직접 고쳐요.</p>
     <details class="ru-autos" open><summary>자동으로 가린 곳 <b>${autos.length}</b>곳</summary>
-      <div>${autos.map((a, k) => `<button type="button" class="chip" data-goto="${a.si}:${a.ri}:${a.mi}">${k + 1}. ${esc(a.m.kind === "name" ? "이름" : a.m.kind === "school" ? "학교" : a.m.kind === "phone" ? "전화" : "메일")} · ${esc(S3[a.si].rows[a.ri].text.slice(a.m.start, a.m.end))}</button>`).join(" ") || '<span class="muted sm">없음</span>'}</div></details>
+      <div>${autos.map((a, k) => `<button type="button" class="chip" data-goto="${a.si}:${a.ri}:${a.mi}">${k + 1}. ${esc(a.m.kind === "name" ? "이름" : a.m.kind === "school" ? "학교" : a.m.kind === "phone" ? "전화" : a.m.kind === "id" ? "주민번호" : "메일")} · ${esc(S3[a.si].rows[a.ri].text.slice(a.m.start, a.m.end))}</button>`).join(" ") || '<span class="muted sm">없음</span>'}</div></details>
     <div class="ru-doc" id="ruDoc">${S3.map((s, si) => `<h4>${esc(s.title)}</h4><table>${s.rows.map((r, ri) => `<tr><th>${esc(r.label || "")}</th><td>${rowHtml(s, si, r, ri)}
       ${r.editing ? "" : `<button type="button" class="ru-fix" data-fix="${si}:${ri}">고치기</button>`}</td></tr>`).join("")}</table>`).join("")}</div>
     ${upState.withGrades && upState.grades?.length ? `<details class="ru-autos"><summary>성적 ${upState.grades.length}과목 — 펼쳐서 학기별로 확인</summary><div id="ruGr" class="rv-grades-in"></div></details>` : ""}
@@ -862,6 +853,7 @@ let V = null;   // 열려 있는 동안만 (학생부 글·하이라이트·질�
 export const recordViewerOpen = () => !!V;
 export function closeRecordViewer() {
   if (!V) return;
+  flushDelMark();
   clearTimeout(V.idle); clearInterval(V.tick);
   V.off.forEach((f) => f());
   document.getElementById("recView")?.remove();
@@ -904,6 +896,8 @@ export async function openRecordViewer(no, { stage = 0, preset = null } = {}) {
     </div>
     <div class="rv-grades" id="rvGrades" hidden></div>
     <div class="rv-pop" id="rvPop" hidden><button type="button" id="rvHl">하이라이트</button><button type="button" id="rvQ">질문 만들기</button></div>
+    <div class="rv-pop" id="rvMkPop" hidden><button type="button" id="rvMkQ">질문 보기</button><button type="button" id="rvMkDel">하이라이트 지우기</button></div>
+    <div class="rv-undo" id="rvUndo" hidden><span>지웠어요</span><button type="button" id="rvUndoBtn">되돌리기</button></div>
     <div class="rv-cover" id="rvCover" hidden><div><h3>화면을 가렸어요</h3><p>다른 창으로 가면 학생부를 가려요. 5분 동안 조작이 없으면 닫혀요.</p><button type="button" class="btn-primary" id="rvUnCover">다시 보기</button></div></div>`;
   document.body.append(ov);
   document.body.classList.add("rv-open");
@@ -960,8 +954,23 @@ export async function openRecordViewer(no, { stage = 0, preset = null } = {}) {
   docEl.addEventListener("click", (e) => {
     const gb = e.target.closest("[data-gr]");
     if (gb) { V.grade[gb.closest("[data-grsec]").dataset.grsec] = gb.dataset.gr; drawDoc(); return; }
-    const mk = e.target.closest("mark[data-mk]"); if (mk) focusQuestion(mk.dataset.mk);
+    const mk = e.target.closest("mark[data-mk]"); if (mk) markPop(mk);
   });
+  // 하이라이트를 누르면: [질문 보기](질문이 달린 것) · [하이라이트 지우기](내 것 · 관리자)
+  const mkPop = $("#rvMkPop", ov);
+  const markPop = (el) => {
+    const m = V.marks.find((x) => x.id === el.dataset.mk); if (!m) return;
+    const q = m.kind === "q", del = canDelMark(m);
+    if (!q && !del) { mkPop.hidden = true; return; }
+    $("#rvMkQ", ov).hidden = !q; $("#rvMkDel", ov).hidden = !del; mkPop.dataset.mk = m.id;
+    const r = el.getBoundingClientRect();
+    mkPop.style.left = `${Math.min(window.innerWidth - 220, Math.max(8, r.left))}px`; mkPop.style.top = `${Math.min(window.innerHeight - 52, Math.max(8, r.top - 46))}px`; mkPop.hidden = false;
+  };
+  on(document, "pointerdown", (e) => { if (!e.target.closest("#rvMkPop, mark[data-mk]")) mkPop.hidden = true; }, { capture: true });
+  $("#rvMkQ", ov).onclick = () => { mkPop.hidden = true; focusQuestion(mkPop.dataset.mk); };
+  $("#rvMkDel", ov).onclick = () => { mkPop.hidden = true; delMark(mkPop.dataset.mk); };
+  $("#rvUndoBtn", ov).onclick = undoDelMark;
+  on(window, "pagehide", flushDelMark);
   // 하이라이트·질문·지난 면접 불러오기
   try {
     const [mk, pd, pq] = await Promise.all([
@@ -1135,6 +1144,34 @@ function drawSide() {
       } catch (e) { showError(e, "질문 지우기"); }
     });
   });
+}
+// 하이라이트 지우기: 화면에서는 바로 지우고 "지웠어요 [되돌리기]"를 몇 초 보여 줌. 실제 지우기는 그 뒤(또는 창을 닫을 때)
+// — 관리자가 다른 선생님 것을 지운 뒤에도 되돌릴 수 있게 (만들기 규칙은 byUid 가 나인 것만이라 다시 만들 수 없음)
+// 질문이 달린 하이라이트(kind q)도 표시만 지움 — 질문(pending·personalQuestions)과 카드의 근거 글은 그대로
+const canDelMark = (m) => m.byUid === S.ctx.user.uid || !!S.ctx.isAdmin;
+const UNDO_MS = () => window.__recUndoMs || 5000;   // (시험용으로만 짧게 바꿈)
+function delMark(id) {
+  const m = V?.marks.find((x) => x.id === id); if (!m || !canDelMark(m)) return;
+  flushDelMark();
+  V.marks = V.marks.filter((x) => x !== m);
+  V.undo = { m, no: V.no, timer: setTimeout(flushDelMark, UNDO_MS()) };
+  const u = document.getElementById("rvUndo"); if (u) u.hidden = false;
+  drawDoc(); drawSide();
+}
+function flushDelMark() {
+  const u = V?.undo; if (!u) return;
+  clearTimeout(u.timer); V.undo = null;
+  const el = document.getElementById("rvUndo"); if (el) el.hidden = true;
+  deleteDoc(doc(db, "records", u.no, "marks", u.m.id)).catch((e) => {
+    showError(e, "하이라이트 지우기");
+    if (V && V.no === u.no && !V.marks.some((x) => x.id === u.m.id)) { V.marks.push(u.m); drawDoc(); drawSide(); }
+  });
+}
+function undoDelMark() {
+  const u = V?.undo; if (!u) return;
+  clearTimeout(u.timer); V.undo = null;
+  document.getElementById("rvUndo").hidden = true;
+  V.marks.push(u.m); drawDoc(); drawSide();
 }
 function focusQuestion(markId) {
   const m = V?.marks.find((x) => x.id === markId); if (!m) return;

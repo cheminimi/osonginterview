@@ -1878,6 +1878,9 @@ body.nd .ru-pop, body.nd .rv-pop { position: fixed; z-index: 70; transform: tran
 body.nd .rv-pop { transform: none; }
 body.nd .ru-pop button, body.nd .rv-pop button { border: 0; background: transparent; color: #fff; font: inherit; font-size: .84rem; font-weight: 700; padding: 6px 10px; border-radius: 8px; cursor: pointer; }
 body.nd .ru-pop button:hover, body.nd .rv-pop button:hover { background: #2b2e35; }
+body.nd .rv-undo { position: fixed; z-index: 75; left: 50%; bottom: 20px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; background: #121316; color: #fff; border-radius: 10px; padding: 8px 8px 8px 14px; font-size: .88rem; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
+body.nd .rv-undo button { border: 0; background: #2b2e35; color: #fff; font: inherit; font-weight: 700; padding: 6px 10px; border-radius: 8px; cursor: pointer; }
+body.nd .rv-doc mark[data-mk] { cursor: pointer; }
 /* 학생부 화면 */
 body.nd .rv .rv-wm { position: absolute; inset: 0; pointer-events: none; z-index: 5; background-repeat: repeat; }
 body.nd .rv-stage { display: inline-flex; gap: 2px; background: #2b2e35; border-radius: 99px; padding: 2px; }

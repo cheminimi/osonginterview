@@ -2156,3 +2156,6 @@ body.nd .gr-tw { overflow-x: auto; }
 body.nd .ru-doc tr.flash td, body.nd .ru-doc tr.flash th { box-shadow: inset 0 0 0 2px #3e63a8; }
 body.nd .ru-edit-acts { gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
 body.nd #ruCut .row { gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+/* 성적 요약 칸: 진로 선택 성취도가 많으면 칸 안에서 줄바꿈 (단추 기본 nowrap 때문에 칸 밖으로 나가던 것, 2026-11-01) */
+body.nd .gr-k, body.nd .gr-k b { white-space: normal; overflow-wrap: anywhere; }
+body.nd .gr-k b { line-height: 1.25; }

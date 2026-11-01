@@ -106,7 +106,7 @@ export function pqCardHtml(no, q, { num = 0, showStatus = false } = {}) {
   if (!isStudentPq(q)) {
     // 선생님이 넣은 질문: 읽기·삭제만 (기존과 같음)
     return `<div class="q-item pq-tcard" data-key="${esc(key)}">
-      <div class="pq-tline"><span class="pq-tag teacher">선생님</span><span class="muted">${esc([q.category, q.addedBy].filter(Boolean).join(" · "))}</span></div>
+      <div class="pq-tline"><span class="pq-tag teacher">선생님</span>${q.source === "record" ? '<span class="pq-tag rec">생기부에서</span>' : ""}<span class="muted">${esc([q.category, q.addedBy].filter(Boolean).join(" · "))}</span></div>
       <div class="pq-row"><div class="pq-main">
         <div class="q-text">${n}${esc(q.text)}</div>
         ${q.basis ? `<div class="q-meta"><span class="pq-bl">근거</span> · ${esc(q.basis)}</div>` : ""}

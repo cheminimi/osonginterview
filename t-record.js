@@ -1019,7 +1019,8 @@ export function closeRecordViewer() {
   clearTimeout(V.idle); clearInterval(V.tick);
   V.off.forEach((f) => f());
   document.getElementById("recView")?.remove();
-  V = null;
+  const done = V.onClose; V = null;
+  try { done?.(); } catch (e) { console.warn(e); }
 }
 function guessStage(st, preset) {
   if (preset?.stage) return Number(preset.stage);
@@ -1027,7 +1028,8 @@ function guessStage(st, preset) {
   const done = new Set((S.meetings || []).filter((m) => m.studentNo === st.studentNo && !m.planned).map((m) => Number(m.stage)));
   return mine.find((k) => !done.has(k)) || mine[0] || [1, 2, 3].find((k) => !done.has(k)) || 1;
 }
-export async function openRecordViewer(no, { stage = 0, preset = null } = {}) {
+// mode: "interview"(모의면접, 지금 화면) | "prep"(질문 준비 — 질문 탭에서, 타이머·기록 쓰기 없음) · onClose: 닫힌 뒤 할 일
+export async function openRecordViewer(no, { stage = 0, preset = null, mode = "interview", onClose = null } = {}) {
   const st = studentByNo(no);
   if (!canSeeRec(st)) return toast("이 학생의 학생부는 배정 선생님·관리자만 볼 수 있어요.", "error");
   closeRecordViewer();
@@ -1035,11 +1037,14 @@ export async function openRecordViewer(no, { stage = 0, preset = null } = {}) {
   let rec;
   try { const s = await getDoc(doc(db, "records", no)); if (!s.exists()) return toast("아직 학생부가 없어요.", "error"); rec = s.data(); }
   catch (e) { return showError(e, "학생부 열기"); }
-  V = { no, st, rec, stage: stage || guessStage(st, preset), preset, marks: [], pending: [], pqs: [], notes: null, asked: new Map(),
-    flt: "all", otherHl: true, idle: null, tick: null, t0: 0, run: false, used: 0, off: [], sel: null,
+  const prep = mode === "prep";
+  const myStages = myRoles(st).map((r) => Number(r[0])).filter(Boolean);
+  V = { no, st, rec, stage: stage || (prep ? myStages[0] || 1 : guessStage(st, preset)), preset, marks: [], pending: [], pqs: [], notes: null, asked: new Map(),
+    mode, prep, onClose, newIds: [], editQ: null,
+    flt: "mine", otherHl: true, idle: null, tick: null, t0: 0, run: false, used: 0, off: [], sel: null,
     // 보기 상태: 접기(구역·학년·목차)는 열려 있는 동안만, 글자 크기·문장 나누기만 브라우저에 기억
     openS: {}, openY: {}, tocOpen: {}, fs: viewPref("rvFs", 16), sent: viewPref("rvSent", 0) === 1, find: "", wide: false, bulkAt: 0 };
-  log(no, "open");
+  log(no, prep ? "open:prep" : "open");
   const me = myName() || S.ctx.user.email;
   const ov = document.createElement("div");
   ov.id = "recView"; ov.className = "rec-ov rv";
@@ -1050,9 +1055,12 @@ export async function openRecordViewer(no, { stage = 0, preset = null } = {}) {
     return `<span class="rv-ap${announceFailed(u) ? " out" : ""}">${u.univ ? `<b>${esc(univName(u.univ))}</b>` : ""}${rest ? " " + esc(rest) : ""}${announceFailed(u) ? "<i>1차 불합격</i>" : ""}</span>`;
   }).join("");
   ov.innerHTML = `<div class="rv-wm" style="background-image:url(&quot;data:image/svg+xml;utf8,${encodeURIComponent(wm)}&quot;)"></div>
-    <div class="rv-hd"><b>${esc(no)} ${esc(st.name)}</b><span class="rv-gr rv-main"><button type="button" data-main="rec" class="on">학생부</button><button type="button" data-main="gr">성적</button></span><span class="rv-stage">${[1, 2, 3].map((k) => `<button type="button" data-stage="${k}" class="${V.stage === k ? "on" : ""} c${k}">${k}차</button>`).join("")}</span>
+    <div class="rv-hd"><b>${esc(no)} ${esc(st.name)}</b><span class="rv-gr rv-main"><button type="button" data-main="rec" class="on">학생부</button><button type="button" data-main="gr">성적</button></span>
+      ${prep ? `<span class="rv-preptag" id="rvPrepTag">질문 준비</span>${myStages.length !== 1 ? `<span class="rv-stage">${(myStages.length ? myStages : [1, 2, 3]).map((k) => `<button type="button" data-stage="${k}" class="${V.stage === k ? "on" : ""} c${k}">${k}차</button>`).join("")}</span>` : ""}<span class="muted">면접 전에 질문을 뽑아 두는 화면 · 학생에게 안 보임</span><span class="sp"></span>
+      <button type="button" class="btn-sm" id="rvClose">질문 탭으로 돌아가기</button>`
+    : `<span class="rv-stage">${[1, 2, 3].map((k) => `<button type="button" data-stage="${k}" class="${V.stage === k ? "on" : ""} c${k}">${k}차</button>`).join("")}</span>
       <span class="muted">모의면접${preset?.date ? ` · ${esc(fmtDay(preset.date))}` : ""}</span><span class="sp"></span>
-      <span class="rv-tm" id="rvTm">면접 00:00</span><button type="button" class="btn-sm" id="rvTmBtn">면접 시작</button><button type="button" class="btn-sm" id="rvClose">닫기</button>
+      <span class="rv-tm" id="rvTm">면접 00:00</span><button type="button" class="btn-sm" id="rvTmBtn">면접 시작</button><button type="button" class="btn-sm" id="rvClose">닫기</button>`}
       ${apps ? `<div class="rv-apps" id="rvApps"><span class="apl">지원</span>${apps}</div>` : ""}</div>
     <div class="rv-body">
       <nav class="rv-toc" id="rvToc"><div id="rvTocL"></div>
@@ -1065,9 +1073,13 @@ export async function openRecordViewer(no, { stage = 0, preset = null } = {}) {
           <input type="search" id="rvFind" placeholder="학생부에서 찾기" autocomplete="off"><span class="muted sm" id="rvFindN"></span>
           <span class="sp"></span><button type="button" class="rv-tog" id="rvWide">질문 칸 접기 ▸</button></div>
         <div class="rv-in" id="rvIn"></div></article>
-      <aside class="rv-side"><div class="rv-tabs"><button type="button" class="on" data-tab="q">질문 <span id="rvQn"></span></button><button type="button" data-tab="p">지난 면접 <span id="rvPn"></span></button></div>
+      <aside class="rv-side">${prep
+        ? `<div class="rv-tabs"><button type="button" class="on" data-tab="mine">뽑은 질문 <span id="rvQn"></span></button><button type="button" data-tab="other">다른 질문 <span id="rvPn"></span></button></div>
         <div class="rv-sb" id="rvSb"></div>
-        <div class="rv-foot"><span class="muted sm" id="rvAsk"></span><button type="button" class="btn-primary" id="rvRec">기록 쓰기 →</button></div></aside>
+        <div class="rv-foot"><span class="muted sm" id="rvAsk">뽑은 질문은 ${esc(no)} ${esc(st.name)} 질문 목록에 저장돼요</span><button type="button" class="btn-primary" id="rvDone">다 뽑았어요</button></div>`
+        : `<div class="rv-tabs"><button type="button" class="on" data-tab="q">질문 <span id="rvQn"></span></button><button type="button" data-tab="p">지난 면접 <span id="rvPn"></span></button></div>
+        <div class="rv-sb" id="rvSb"></div>
+        <div class="rv-foot"><span class="muted sm" id="rvAsk"></span><button type="button" class="btn-primary" id="rvRec">기록 쓰기 →</button></div>`}</aside>
     </div>
     <div class="rv-grades" id="rvGrades" hidden></div>
     <div class="rv-pop" id="rvPop" hidden><button type="button" id="rvHl">하이라이트</button><button type="button" id="rvQ">질문 만들기</button></div>
@@ -1091,7 +1103,7 @@ export async function openRecordViewer(no, { stage = 0, preset = null } = {}) {
   V.off.push(() => document.body.classList.remove("rv-open"));
   $("#rvUnCover", ov).onclick = () => { $("#rvCover", ov).hidden = true; };
   $("#rvClose", ov).onclick = closeRecordViewer;
-  $("#rvTmBtn", ov).onclick = () => {
+  if ($("#rvTmBtn", ov)) $("#rvTmBtn", ov).onclick = () => {
     V.run = !V.run;
     if (V.run) { V.t0 = Date.now() - V.used * 1000; V.tick = setInterval(() => { V.used = Math.floor((Date.now() - V.t0) / 1000); $("#rvTm", ov).textContent = `면접 ${String(Math.floor(V.used / 60)).padStart(2, "0")}:${String(V.used % 60).padStart(2, "0")}`; }, 500); }
     else clearInterval(V.tick);
@@ -1100,7 +1112,8 @@ export async function openRecordViewer(no, { stage = 0, preset = null } = {}) {
   $$("[data-stage]", ov).forEach((b) => b.onclick = () => { V.stage = Number(b.dataset.stage); $$("[data-stage]", ov).forEach((x) => x.classList.toggle("on", x === b)); drawSide(); });
   $("#rvOther", ov).onchange = (e) => { V.otherHl = e.target.checked; drawDoc(); };
   $$(".rv-tabs [data-tab]", ov).forEach((b) => b.onclick = () => { $$(".rv-tabs [data-tab]", ov).forEach((x) => x.classList.toggle("on", x === b)); V.tab = b.dataset.tab; drawSide(); });
-  $("#rvRec", ov).onclick = toMeetingForm;
+  if ($("#rvRec", ov)) $("#rvRec", ov).onclick = toMeetingForm;
+  if ($("#rvDone", ov)) $("#rvDone", ov).onclick = closeRecordViewer;
   // [학생부 | 성적]: 성적은 학생부를 넣을 때 '성적 표도 넣기'를 고른 경우에만 있음
   const grSt = { on: new Set(["주요과목", "전과목"]), bars: "all", view: "sum", sem: "" };
   $$("[data-main]", ov).forEach((b) => b.onclick = () => {
@@ -1109,7 +1122,7 @@ export async function openRecordViewer(no, { stage = 0, preset = null } = {}) {
     $(".rv-body", ov).hidden = gr; $("#rvGrades", ov).hidden = !gr; $("#rvPop", ov).hidden = true;
     if (gr) renderGrades($("#rvGrades", ov), V.rec.grades || [], grSt);
   });
-  V.tab = "q";
+  V.tab = prep ? "mine" : "q";
   drawDoc(); drawSide();
   // 선택 → 띄움
   const docEl = $("#rvDoc", ov), pop = $("#rvPop", ov);
@@ -1321,7 +1334,8 @@ function questionForm() {
       <label class="inline-check"><input type="radio" name="rvPub" value="now"> 바로 공개</label></div>
     <div class="muted sm" id="rvQErr" style="color:var(--danger)"></div>
     <div class="row"><button type="button" class="btn-sm" id="rvQX">취소</button><div class="spacer"></div><button type="button" class="btn-primary btn-sm" id="rvQOk">저장</button></div></div>`;
-  $("#rvQX", sb).onclick = () => { V.sel = null; V.tab = "q"; $(".rv-tabs [data-tab=q]")?.classList.add("on"); drawSide(); };
+  const home = V.prep ? "mine" : "q";
+  $("#rvQX", sb).onclick = () => { V.sel = null; V.tab = home; $(`.rv-tabs [data-tab=${home}]`)?.classList.add("on"); drawSide(); };
   $("#rvQOk", sb).onclick = async () => {
     const text = $("#rvQt", sb).value.trim(), fu = $("#rvQf", sb).value.split("\n").map((x) => x.trim()).filter(Boolean);
     const bad = !text ? "질문을 적어 주세요." : badQuestionText(text + "\n" + fu.join("\n"), V.no);
@@ -1338,7 +1352,7 @@ function questionForm() {
         const b = writeBatch(db);
         b.set(pref, p); b.set(mref, { ...mark, qid: pref.id });
         await b.commit();
-        V.pending.push({ id: pref.id, ...p, createdAt: { seconds: Date.now() / 1000 } }); V.marks.push({ id: mref.id, ...mark, qid: pref.id });
+        V.pending.push({ id: pref.id, ...p, createdAt: { seconds: Date.now() / 1000 } }); V.marks.push({ id: mref.id, ...mark, qid: pref.id }); V.newIds.push(pref.id);
       } else {
         const col = collection(db, "students", V.no, "personalQuestions");
         const cur = (await getDocs(col)).docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -1349,35 +1363,76 @@ function questionForm() {
         b.set(qref, { ...row, createdAt: serverTimestamp() }); b.set(mref, { ...mark, qid: qref.id }); b.update(doc(db, "students", V.no), stats);
         await b.commit();
         Object.assign(studentByNo(V.no) || {}, stats);
-        V.pqs = [...cur, { id: qref.id, ...row, createdAt: { seconds: Date.now() / 1000 } }]; V.marks.push({ id: mref.id, ...mark, qid: qref.id });
+        V.pqs = [...cur, { id: qref.id, ...row, createdAt: { seconds: Date.now() / 1000 } }]; V.marks.push({ id: mref.id, ...mark, qid: qref.id }); V.newIds.push(qref.id);
         log(V.no, "publish");
       }
       V.sel = null; getSelection().removeAllRanges();
       toast(pub === "after" ? "질문을 저장했어요 (면접 뒤 공개)" : "질문을 학생에게 공개했어요");
-      V.tab = "q"; $(".rv-tabs [data-tab=q]")?.classList.add("on");
+      V.tab = home; V.flt = "mine"; $$(".rv-tabs [data-tab]").forEach((x) => x.classList.toggle("on", x.dataset.tab === home));
       drawDoc(); drawSide();
     } catch (e) { $("#rvQOk", sb).disabled = false; showError(e, "질문 저장"); }
   };
   $("#rvQt", sb).focus();
 }
 // 질문 카드 목록: 이 학생의 '내 생기부 면접' + 공개 전 질문
+// mine = 내가 만든 공개 전 질문 + 내가 생기부에서 공개한 질문(addedBy 가 내 이름이거나 내 하이라이트가 가리키는 질문)
 function cards() {
   const me = S.ctx.user.uid, myNm = myName();
   const stageOf = (q) => Number(q.stage) || Number(String(q.category || "").match(/^(\d)차/)?.[1]) || 0;
+  const at = (x) => x.createdAt?.seconds || 0;
   const out = [];
-  V.pending.forEach((p) => out.push({ key: "p:" + p.id, pend: p.id, text: p.text, basis: p.basis, followUps: p.followUps || [], stage: Number(p.stage), by: p.by, mine: p.byUid === me, status: "after", kind: "teacher" }));
+  V.pending.forEach((p) => out.push({ key: "p:" + p.id, pend: p.id, text: p.text, basis: p.basis, followUps: p.followUps || [], stage: Number(p.stage), by: p.by, mine: p.byUid === me, status: "after", kind: "teacher", at: at(p) }));
   V.pqs.forEach((q) => {
     const stu = q.by === "student";
     const rec = q.source === "record" || q.source === "meeting";
+    const mine = !stu && ((rec && !!myNm && q.addedBy === myNm) || V.marks.some((m) => m.qid === q.id && m.byUid === me));
     out.push({ key: "q:" + q.id, pq: q.id, text: q.text, basis: q.basis, followUps: q.followUps || [], stage: stageOf(q), by: stu ? "학생" : (q.addedBy || "선생님"),
-      mine: !stu && rec && !!myNm && q.addedBy === myNm, status: "pub", kind: stu ? "student" : rec ? "teacher" : "old" });
+      mine, status: "pub", kind: stu ? "student" : rec ? "teacher" : "old", at: at(q) });
   });
-  return out;
+  // 내 질문: 이 화면에서 방금 만든 것이 맨 위(새것 먼저), 그다음 만든 순서
+  const fresh = (c) => V.newIds.indexOf(c.pend || c.pq);
+  return out.sort((x, y) => (fresh(y) - fresh(x)) || (x.at - y.at));
+}
+function cardTag(c) {
+  return c.kind === "student" ? '<span class="tag">학생</span>' : c.kind === "old" ? '<span class="tag">예전 질문</span>' : `<span class="tag c${c.stage || 1}">${c.stage || "?"}차</span>`;
 }
 function drawSide() {
   if (!V) return;
   const sb = document.getElementById("rvSb"); if (!sb) return;
   const all = cards();
+  if (V.prep) {
+    // 질문 준비: [뽑은 질문 | 다른 질문] · 물어봄·답 메모·↻ 다시 없음 · 내 질문은 [고치기], 공개 전은 [지우기]
+    $("#rvQn").textContent = all.filter((c) => c.mine).length;
+    $("#rvPn").textContent = all.filter((c) => !c.mine).length;
+    if (V.tab === "new") return;
+    const list = all.filter((c) => (V.tab === "other") !== c.mine);
+    sb.innerHTML = list.map((c) => {
+      if (V.editQ === c.key) return `<div class="rv-card rv-edit" data-card="${esc(c.key)}">
+        <div class="row">${cardTag(c)}<span class="muted sm">고치는 중</span></div>
+        <div class="field"><label>질문</label><textarea data-e="text" rows="3">${esc(c.text)}</textarea></div>
+        <div class="field"><label>꼬리질문 (선택 · 한 줄에 하나)</label><textarea data-e="fu" rows="2">${esc(c.followUps.join("\n"))}</textarea></div>
+        ${c.pend ? `<div class="field"><label>공개 시점</label>
+          <label class="inline-check"><input type="radio" name="rvEPub" value="after" checked> 면접 뒤 공개</label>
+          <label class="inline-check"><input type="radio" name="rvEPub" value="now"> 바로 공개 <span class="muted sm">(학생 '내 생기부 면접'에 더해져요)</span></label></div>`
+          : '<div class="muted sm">이미 공개된 질문이라 공개 시점은 그대로예요.</div>'}
+        <div class="muted sm" data-e="err" style="color:var(--danger)"></div>
+        <div class="row"><button type="button" class="btn-sm" data-ex>취소</button><div class="spacer"></div><button type="button" class="btn-primary btn-sm" data-eok>저장</button></div></div>`;
+      const mk = V.marks.find((m) => m.qid === (c.pend || c.pq));
+      return `<div class="rv-card" data-card="${esc(c.key)}" ${mk ? `data-mk="${esc(mk.id)}"` : ""}>
+        <div class="row">${cardTag(c)}<span class="muted sm">${esc(c.by || "")}${c.mine ? " (나)" : ""}</span><div class="spacer"></div><span class="badge ${c.status === "after" ? "badge-orange" : "badge-green"}">${c.status === "after" ? "면접 뒤 공개" : "공개됨"}</span></div>
+        <div class="rv-qt">${esc(c.text)}</div>${c.followUps.length ? `<div class="muted sm">↳ ${c.followUps.map(esc).join(" · ")}</div>` : ""}
+        ${c.basis ? `<div class="rv-basis">${maskSpans(c.basis)}</div>` : ""}
+        ${c.mine ? `<div class="row rv-acts"><button type="button" class="btn-sm" data-edq>고치기</button>${c.pend ? '<button type="button" class="btn-sm btn-danger" data-delq>지우기</button>' : ""}</div>` : ""}</div>`;
+    }).join("") || `<div class="muted sm">${V.tab === "other" ? "다른 질문이 없어요." : "아직 뽑은 질문이 없어요. 학생부 글을 드래그해 [질문 만들기]."}</div>`;
+    $$("[data-card]", sb).forEach((el) => {
+      const c = all.find((x) => x.key === el.dataset.card);
+      $("[data-edq]", el)?.addEventListener("click", () => { V.editQ = c.key; drawSide(); });
+      $("[data-ex]", el)?.addEventListener("click", () => { V.editQ = null; drawSide(); });
+      $("[data-eok]", el)?.addEventListener("click", () => saveEditQ(c, el));
+      $("[data-delq]", el)?.addEventListener("click", () => delPendingQ(c));
+    });
+    return;
+  }
   $("#rvQn").textContent = all.length;
   const ag = V.notes ? againOf() : [];
   $("#rvPn").textContent = ag.length ? `↻${ag.length}` : "";
@@ -1385,21 +1440,23 @@ function drawSide() {
   $("#rvAsk").textContent = asked ? `물어봄 ${asked}개 → 받은 질문으로 가요` : "";
   if (V.tab === "new") return;
   if (V.tab === "p") return drawPast(sb);
+  // 모의면접: 처음 거르기 = 내가 준비한 질문 → 다른 선생님·학생 → 모두
   const f = V.flt;
-  const list = all.filter((c) => f === "all" || (f === "mine" ? c.mine : f === "other" ? c.kind === "teacher" && !c.mine : c.kind !== "teacher"));
+  const list = all.filter((c) => f === "all" || (f === "mine") === c.mine);
+  const n = { mine: all.filter((c) => c.mine).length, other: all.filter((c) => !c.mine).length, all: all.length };
   const pendN = V.pending.filter((p) => Number(p.stage) === V.stage).length;
-  sb.innerHTML = `<div class="rv-flt">${[["all", "모두"], ["mine", "내 질문"], ["other", "다른 선생님"], ["stu", "학생·예전 질문"]].map(([k, t]) => `<button type="button" data-flt="${k}" class="${f === k ? "on" : ""}">${t}</button>`).join("")}</div>
+  sb.innerHTML = `<div class="rv-flt">${[["mine", "내가 준비한 질문"], ["other", "다른 선생님·학생"], ["all", "모두"]].map(([k, t]) => `<button type="button" data-flt="${k}" class="${f === k ? "on" : ""}">${t} ${n[k]}</button>`).join("")}</div>
     ${pendN ? `<div class="muted sm" style="margin:6px 0">${V.stage}차 '면접 뒤 공개' 질문 ${pendN}개 — 이 차수 대면 기록을 저장할 때 학생에게 공개돼요</div>` : ""}
     ${list.map((c) => { const a = V.asked.get(c.key) || {}; const mk = V.marks.find((m) => m.qid === (c.pend || c.pq));
       return `<div class="rv-card${a.asked ? " asked" : ""}" data-card="${esc(c.key)}" ${mk ? `data-mk="${esc(mk.id)}"` : ""}>
-        <div class="row">${c.kind === "student" ? '<span class="tag">학생</span>' : c.kind === "old" ? '<span class="tag">예전 질문</span>' : `<span class="tag c${c.stage || 1}">${c.stage || "?"}차</span>`}
+        <div class="row">${cardTag(c)}
           <span class="muted sm">${esc(c.by || "")}${c.mine ? " (나)" : ""}</span><div class="spacer"></div><span class="badge ${c.status === "after" ? "badge-orange" : "badge-green"}">${c.status === "after" ? "면접 뒤 공개" : "공개됨"}</span></div>
         ${c.basis ? `<div class="rv-basis">${maskSpans(c.basis)}</div>` : ""}
         <div class="rv-qt">${esc(c.text)}</div>${c.followUps.length ? `<div class="muted sm">↳ ${c.followUps.map(esc).join(" · ")}</div>` : ""}
         <div class="row rv-acts"><button type="button" class="btn-sm${a.asked ? " on" : ""}" data-asked>${a.asked ? "물어봄 ✓" : "물어봄"}</button>
           <button type="button" class="btn-sm mt-ag${a.again ? " on" : ""}" data-again>↻ 다음 차수에 다시</button>
           ${c.pend && c.mine ? '<div class="spacer"></div><button type="button" class="btn-sm btn-danger" data-delq>지우기</button>' : ""}</div>
-        ${a.asked ? `<input class="mt-memo" data-memo placeholder="학생 답 메모 (선생님끼리만)" value="${esc(a.memo || "")}">` : ""}</div>`; }).join("") || '<div class="muted sm">질문이 없어요. 학생부 글을 드래그해 [질문 만들기].</div>'}`;
+        ${a.asked ? `<input class="mt-memo" data-memo placeholder="학생 답 메모 (선생님끼리만)" value="${esc(a.memo || "")}">` : ""}</div>`; }).join("") || `<div class="muted sm">${f === "mine" ? "내가 준비한 질문이 없어요. 학생부 글을 드래그해 [질문 만들기]." : "질문이 없어요."}</div>`}`;
   $$("[data-flt]", sb).forEach((b) => b.onclick = () => { V.flt = b.dataset.flt; drawSide(); });
   $$("[data-card]", sb).forEach((el) => {
     const c = all.find((x) => x.key === el.dataset.card);
@@ -1407,18 +1464,48 @@ function drawSide() {
     $("[data-asked]", el).onclick = () => { const a = st(); a.asked = !a.asked; drawSide(); };
     $("[data-again]", el).onclick = () => { const a = st(); a.again = !a.again; if (a.again) a.asked = true; drawSide(); };
     $("[data-memo]", el)?.addEventListener("input", (e) => { st().memo = e.target.value; });
-    $("[data-delq]", el)?.addEventListener("click", async () => {
-      if (!(await confirmBox({ title: "이 질문을 지울까요?", what: esc(c.text), note: "공개 전 질문만 지울 수 있어요. 하이라이트도 같이 지워져요.", yes: "지우기" }))) return;
-      try {
-        const b = writeBatch(db);
-        b.delete(doc(db, "records", V.no, "pending", c.pend));
-        V.marks.filter((m) => m.qid === c.pend).forEach((m) => b.delete(doc(db, "records", V.no, "marks", m.id)));
-        await b.commit();
-        V.pending = V.pending.filter((p) => p.id !== c.pend); V.marks = V.marks.filter((m) => m.qid !== c.pend); V.asked.delete(c.key);
-        drawDoc(); drawSide();
-      } catch (e) { showError(e, "질문 지우기"); }
-    });
+    $("[data-delq]", el)?.addEventListener("click", () => delPendingQ(c));
   });
+}
+async function delPendingQ(c) {
+  if (!(await confirmBox({ title: "이 질문을 지울까요?", what: esc(c.text), note: "공개 전 질문만 지울 수 있어요. 하이라이트도 같이 지워져요.", yes: "지우기" }))) return;
+  try {
+    const b = writeBatch(db);
+    b.delete(doc(db, "records", V.no, "pending", c.pend));
+    V.marks.filter((m) => m.qid === c.pend).forEach((m) => b.delete(doc(db, "records", V.no, "marks", m.id)));
+    await b.commit();
+    V.pending = V.pending.filter((p) => p.id !== c.pend); V.marks = V.marks.filter((m) => m.qid !== c.pend); V.asked.delete(c.key);
+    drawDoc(); drawSide();
+  } catch (e) { showError(e, "질문 지우기"); }
+}
+// [고치기] (질문 준비, 내 질문만): 질문·꼬리질문. 공개 시점은 공개 전 질문만 '바로 공개'로 바꿀 수 있음 (사용자 결정 2026-11-01 — 예상질문은 더하기만)
+async function saveEditQ(c, el) {
+  const text = $("[data-e=text]", el).value.trim(), fu = $("[data-e=fu]", el).value.split("\n").map((x) => x.trim()).filter(Boolean);
+  const bad = !text ? "질문을 적어 주세요." : badQuestionText(text + "\n" + fu.join("\n"), V.no);
+  if (bad) { $("[data-e=err]", el).textContent = bad; return; }
+  const now = c.pend && $("input[name=rvEPub]:checked", el)?.value === "now";
+  $("[data-eok]", el).disabled = true;
+  try {
+    if (c.pend) {
+      await updateDoc(doc(db, "records", V.no, "pending", c.pend), { text, followUps: fu });
+      const p = V.pending.find((x) => x.id === c.pend); Object.assign(p, { text, followUps: fu });
+      if (now) {
+        await publishPending(V.no, [p]);
+        await reloadQs();
+        toast("질문을 학생에게 공개했어요");
+      } else toast("고쳤어요");
+    } else {
+      await updateDoc(doc(db, "students", V.no, "personalQuestions", c.pq), { text, followUps: fu });
+      Object.assign(V.pqs.find((x) => x.id === c.pq) || {}, { text, followUps: fu });
+      toast("고쳤어요");
+    }
+    V.editQ = null; drawDoc(); drawSide();
+  } catch (e) { $("[data-eok]", el).disabled = false; showError(e, "질문 고치기"); }
+}
+async function reloadQs() {
+  const [mk, pd, pq] = await Promise.all([getDocs(collection(db, "records", V.no, "marks")), getDocs(collection(db, "records", V.no, "pending")), getDocs(collection(db, "students", V.no, "personalQuestions"))]);
+  if (!V) return;
+  V.marks = mk.docs.map((d) => ({ id: d.id, ...d.data() })); V.pending = pd.docs.map((d) => ({ id: d.id, ...d.data() })); V.pqs = pq.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 // 하이라이트 지우기: 화면에서는 바로 지우고 "지웠어요 [되돌리기]"를 몇 초 보여 줌. 실제 지우기는 그 뒤(또는 창을 닫을 때)
 // — 관리자가 다른 선생님 것을 지운 뒤에도 되돌릴 수 있게 (만들기 규칙은 byUid 가 나인 것만이라 다시 만들 수 없음)
@@ -1451,7 +1538,9 @@ function undoDelMark() {
 function focusQuestion(markId) {
   const m = V?.marks.find((x) => x.id === markId); if (!m) return;
   if (m.kind !== "q") return;
-  V.tab = "q"; V.flt = "all"; $$(".rv-tabs [data-tab]").forEach((x) => x.classList.toggle("on", x.dataset.tab === "q")); drawSide();
+  const c = cards().find((x) => (x.pend || x.pq) === m.qid);
+  if (V.prep) V.tab = c && !c.mine ? "other" : "mine"; else { V.tab = "q"; V.flt = "all"; }
+  $$(".rv-tabs [data-tab]").forEach((x) => x.classList.toggle("on", x.dataset.tab === V.tab)); drawSide();
   const el = $(`#rvSb [data-mk="${CSS.escape(markId)}"]`);
   el?.scrollIntoView({ block: "center" }); el?.classList.add("flash"); setTimeout(() => el?.classList.remove("flash"), 1200);
 }

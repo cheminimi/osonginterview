@@ -2159,3 +2159,16 @@ body.nd #ruCut .row { gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 /* 성적 요약 칸: 진로 선택 성취도가 많으면 칸 안에서 줄바꿈 (단추 기본 nowrap 때문에 칸 밖으로 나가던 것, 2026-11-01) */
 body.nd .gr-k, body.nd .gr-k b { white-space: normal; overflow-wrap: anywhere; }
 body.nd .gr-k b { line-height: 1.25; }
+/* 생기부에서 질문 뽑기 (2026-11-01): 질문 탭 [생기부에서] · 공개 전 묶음 · 학생부 화면 '질문 준비' */
+body.nd .qrec { display: grid; gap: 10px; }
+body.nd .qrec .row { gap: 8px; flex-wrap: wrap; align-items: center; }
+body.nd .qrec-big { width: 100%; justify-content: center; }
+body.nd .qrec-mini { display: grid; gap: 6px; }
+body.nd .qrec-mini .m { background: #f6f8fb; border-radius: 12px; padding: 8px 10px; display: grid; gap: 2px; font-size: .88rem; overflow-wrap: anywhere; }
+body.nd .q-sect { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; }
+body.nd .q-sect::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+body.nd .q-sect-t { background: #121316; color: #fff; border-radius: 99px; padding: 2px 11px; font-size: .78rem; font-weight: 700; }
+body.nd .q-sect-t.w { background: var(--warn-bg); color: var(--warn); }
+body.nd .pq-tag.rec { background: var(--lime-soft); color: #5d6a14; border: 1px solid var(--lime-line); }
+body.nd .rv-preptag { background: #dbe97f; color: #121316; border-radius: 99px; padding: 2px 10px; font-size: .8rem; font-weight: 800; }
+body.nd .rv-card.rv-edit textarea { width: 100%; }

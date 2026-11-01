@@ -1,11 +1,11 @@
 import {
-  db, collection, doc, getDocs, updateDoc, writeBatch, serverTimestamp,
-  $, $$, esc, toast, showError, copyText, parseLooseJSON, pqStats
+  db, collection, doc, getDoc, getDocs, updateDoc, writeBatch, serverTimestamp,
+  $, $$, esc, toast, showError, copyText, parseLooseJSON, pqStats, confirmBox
 } from "./common.js";
 import { S, register, rerender, readForm, lines, opt, studentByNo, myName } from "./t-core.js";
 import { loadList, listOf, pqCardHtml, bindPqActions } from "./t-pqreview.js";
 import { personalQuestionPrompt } from "./prompts.js";
-import { importSheetQuestions } from "./importers.js";
+import { canSeeRec, canUploadRec, recordExists, openRecordViewer, openRecordUpload, loadPending } from "./t-record.js";
 
 let root, parsed = [], existing = [];
 export function init(el) {
@@ -18,15 +18,11 @@ export function init(el) {
         <div class="step">
           <label>질문 가져오기</label>
           <div class="tabs sub" style="margin-bottom:10px">
-            <button type="button" class="active" data-src="sheet">준비 시트에서</button>
+            <button type="button" class="active" data-src="rec">생기부에서</button>
             <button type="button" data-src="claude">AI로 질문 만들기</button>
             <button type="button" data-src="manual">직접 입력</button>
           </div>
-          <div data-srcpanel="sheet">
-            <p class="muted" style="margin-top:0">학생 준비 시트의 <b>교과 선생님 질문</b> 표에서 머리행(번호·관련 활동·교사 예상 질문·꼬리질문 1·꼬리질문 2)부터 필요한 행까지 복사해 붙여넣으세요.</p>
-            <textarea id="qSheetPaste" placeholder="번호	관련 활동·생기부 내용	교사 예상 질문	꼬리질문 1	꼬리질문 2 …"></textarea>
-            <div style="margin-top:6px"><button id="qSheetParse">미리보기</button></div>
-          </div>
+          <div data-srcpanel="rec" id="qRecBox"><div class="empty">학생을 선택하세요.</div></div>
           <div data-srcpanel="claude" hidden>
             <div class="ai-intro">학생 <b>생기부</b>를 AI(Claude)에게 보여 주고 <b>면접 예상질문</b>을 받아오는 방법이에요. 비용은 들지 않고, 선생님의 Claude 계정(claude.ai)을 씁니다.</div>
             <div class="ai-step">
@@ -86,6 +82,8 @@ export function init(el) {
         </div>
         <div class="card"><h3>저장된 예상질문 <span class="muted" id="qCount"></span></h3>
           <p class="muted" style="margin-top:0">'내 생기부 면접' 연습에 모두 나와요. 면접 부스에는 선생님 질문과 검토한 학생 질문만 나와요.</p>
+          <div id="qPendBox"></div>
+          <div class="q-sect" id="qPubHead" hidden><span class="q-sect-t">공개된 질문</span></div>
           <div id="qExisting"><div class="empty">학생을 선택하세요.</div></div></div>
       </div>
     </div>`;
@@ -94,12 +92,6 @@ export function init(el) {
     $$("[data-src]", root).forEach((x) => x.classList.toggle("active", x === b));
     $$("[data-srcpanel]", root).forEach((p) => p.hidden = p.dataset.srcpanel !== b.dataset.src);
   });
-  $("#qSheetParse", root).onclick = () => {
-    const { list } = importSheetQuestions($("#qSheetPaste", root).value);
-    if (!list.length) return toast("질문을 찾지 못했습니다. '교사 예상 질문' 머리행까지 함께 복사했는지 확인하세요.", "error", 6000);
-    parsed = list.map((q) => ({ ...q, category: "교과 선생님 질문", source: "sheet", _on: true }));
-    renderPreview();
-  };
   $("#qSaveRecord", root).onclick = saveRecord;
   $("#qCopy", root).onclick = copyPrompt;
   $("#qParse", root).onclick = parseClaude;
@@ -110,7 +102,7 @@ export function init(el) {
     if (!sel.length) return toast("선택한 질문이 없습니다.", "error");
     try {
       await savePersonal(no, sel.map(({ _on, ...q }) => q));
-      $("#qPaste", root).value = ""; $("#qSheetPaste", root).value = ""; parsed = []; $("#qPreviewCard", root).hidden = true;
+      $("#qPaste", root).value = ""; parsed = []; $("#qPreviewCard", root).hidden = true;
     } catch (_) {}
   };
   $("#qManual", root).onsubmit = async (e) => {
@@ -140,8 +132,59 @@ async function onStudent() {
   $("#qRecordState", root).textContent = "";
   $("#qSheetRow", root).innerHTML = st?.sheetUrl ? `<a class="btn btn-sm" href="${esc(st.sheetUrl)}" target="_blank" rel="noopener">${esc(st.name)} 준비 시트 열기</a>` : "";
   parsed = []; $("#qPreviewCard", root).hidden = true;
-  if (!st) { $("#qExisting", root).innerHTML = `<div class="empty">학생을 선택하세요.</div>`; $("#qCount", root).textContent = ""; return; }
+  if (!st) { $("#qExisting", root).innerHTML = `<div class="empty">학생을 선택하세요.</div>`; $("#qCount", root).textContent = ""; $("#qRecBox", root).innerHTML = `<div class="empty">학생을 선택하세요.</div>`; $("#qPendBox", root).innerHTML = ""; $("#qPubHead", root).hidden = true; return; }
   await loadExisting(st.studentNo);
+  await renderRecPanel(st.studentNo);
+}
+
+// ===== [생기부에서] (2026-11-01): 학생부 화면을 '질문 준비'로 열어 드래그로 질문 뽑기 =====
+// 오른쪽 '공개 전 · 면접 뒤 공개' 묶음은 선생님만 (pending 을 읽을 수 있는 배정 선생님·관리자 — 못 읽으면 숨김)
+let pend = [];
+async function renderRecPanel(no) {
+  const st = studentByNo(no), box = $("#qRecBox", root);
+  const see = canSeeRec(st);
+  pend = [];
+  if (see) { try { pend = await loadPending(no); } catch (_) { pend = []; } }
+  if ($("#qStudent", root).value !== no) return;
+  const has = see ? await recordExists(no, true) : false;
+  let info = null;
+  if (has) { try { const d = (await getDoc(doc(db, "records", no))).data() || {}; info = { ver: d.ver || 1, at: d.savedAt?.seconds ? d.savedAt.seconds * 1000 : 0, by: d.savedBy || "" }; } catch (_) {} }
+  if ($("#qStudent", root).value !== no) return;
+  const me = S.ctx.user.uid, myNm = myName();
+  const minePend = pend.filter((p) => p.byUid === me);
+  const minePub = existing.filter((q) => q.by !== "student" && q.source === "record" && !!myNm && q.addedBy === myNm);
+  const mine = [...minePend.map((p) => ({ ...p, _w: 1 })), ...minePub];
+  box.innerHTML = !see ? `<div class="qrec"><div class="row"><b>학생부</b><span class="muted">배정 선생님만 볼 수 있어요</span></div>
+      <button type="button" class="btn-primary qrec-big" disabled>생기부 열고 질문 뽑기</button></div>`
+    : !has ? `<div class="qrec"><div class="row"><b>학생부</b><span class="muted">아직 학생부가 없어요</span></div>
+      ${canUploadRec(st) ? '<button type="button" class="btn-sm" id="qRecUp">학생부 넣기</button>' : '<div class="muted sm">1차 담임 선생님·관리자가 학생부를 넣으면 질문을 뽑을 수 있어요.</div>'}
+      <button type="button" class="btn-primary qrec-big" disabled>생기부 열고 질문 뽑기</button></div>`
+    : `<div class="qrec"><div class="row"><b>학생부</b><span class="badge badge-green">넣음 · ${info?.ver || 1}번째 판</span><span class="muted sm">${info?.at ? new Date(info.at).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" }) : ""} ${esc(info?.by || "")}</span></div>
+      <button type="button" class="btn-primary qrec-big" id="qRecOpen">생기부 열고 질문 뽑기</button>
+      <div class="muted sm">학생부 화면이 <b>'질문 준비'</b>로 열려요. 글을 드래그해 [질문 만들기] → 이 학생 질문 목록에 들어가요. 근거 문장은 자동으로 붙어요.</div>
+      <div class="row qrec-sum"><span class="muted sm">내가 이 학생에게 뽑은 질문</span><span class="badge" id="qRecN">${mine.length}</span><span class="badge badge-orange">면접 뒤 공개 ${minePend.length}</span><span class="badge badge-green">공개 ${minePub.length}</span></div>
+      <div class="qrec-mini" id="qRecMini">${mine.slice(0, 6).map((q) => `<div class="m"><b>${esc(q.text)}</b>${q.basis ? `<span class="muted sm">${esc(q.basis)}</span>` : ""}</div>`).join("")}${mine.length > 6 ? `<div class="muted sm">… ${mine.length - 6}개 더</div>` : ""}</div></div>`;
+  $("#qRecOpen", box)?.addEventListener("click", () => openRecordViewer(no, { mode: "prep", onClose: () => { if ($("#qStudent", root).value === no) loadExisting(no).then(() => renderRecPanel(no)); } }));
+  $("#qRecUp", box)?.addEventListener("click", () => openRecordUpload(no));
+  // 오른쪽: 공개 전 묶음 + '공개된 질문' 제목
+  const pb = $("#qPendBox", root);
+  pb.innerHTML = see ? `<div class="q-sect"><span class="q-sect-t w">공개 전 · 면접 뒤 공개</span><span class="muted sm">${pend.length} · 선생님만 보임</span></div>
+    ${pend.length ? pend.map((p) => `<div class="q-item pq-tcard" data-pend="${esc(p.id)}"><div class="pq-tline"><span class="pq-tag teacher">${Number(p.stage) || "?"}차 · ${esc(p.by || "")}${p.byUid === me ? " (나)" : ""}</span><span class="pq-tag wait2">${Number(p.stage) || "?"}차 면접 뒤 공개</span></div>
+      <div class="pq-row"><div class="pq-main"><div class="q-text">${esc(p.text)}</div>${p.basis ? `<div class="q-meta"><span class="pq-bl">근거</span> · ${esc(p.basis)}</div>` : ""}
+      ${(p.followUps || []).length ? `<ul class="follow">${p.followUps.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}</div>
+      ${p.byUid === me ? '<div class="pq-btns2"><button type="button" class="btn-sm pq-del" data-pdel>지우기</button></div>' : ""}</div></div>`).join("") : '<div class="muted sm" style="padding:6px 0">없어요</div>'}` : "";
+  $("#qPubHead", root).hidden = !see;
+  $$("[data-pdel]", pb).forEach((b) => b.onclick = async () => {
+    const id = b.closest("[data-pend]").dataset.pend, p = pend.find((x) => x.id === id);
+    if (!(await confirmBox({ title: "이 질문을 지울까요?", what: esc(p.text), note: "공개 전 질문만 지울 수 있어요. 하이라이트도 같이 지워져요.", yes: "지우기" }))) return;
+    try {
+      const bt = writeBatch(db);
+      bt.delete(doc(db, "records", no, "pending", id));
+      (await getDocs(collection(db, "records", no, "marks"))).docs.filter((m) => m.data().qid === id).forEach((m) => bt.delete(m.ref));
+      await bt.commit();
+      await renderRecPanel(no);
+    } catch (e) { showError(e, "질문 지우기"); }
+  });
 }
 
 async function loadExisting(no) {

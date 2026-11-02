@@ -604,8 +604,9 @@ export function splitRecord(pages, { withGrades = false, keepP1 = false } = {}) 
     reg.attend.forEach((l) => { const m = l.text.match(/^([1-3])\s+(.*)$/); if (m) rows.push({ label: `${m[1]}학년`, text: m[2] }); else if (rows.length) rows.at(-1).text += " " + l.text; });   // 첫 학년 줄 앞은 표 머리(결석 종류 등) — 넣지 않음
     secs.attend = rows;
   }
-  // 세특 과목 후보 정하기 (2026-11-02): 같은 학년 성적 표 과목 이름 목록이 있으면 그 목록에 있는 이름만 새 과목.
-  // 목록이 없으면 이어 붙임 — 콜론 양쪽이 숫자(1:1) · 이름 첫 낱말이 조사 · 앞 과목 글이 마침표로 안 끝남. 이어 붙일 때는 콜론 포함 줄 원문 그대로
+  // 세특 과목 후보 정하기 (2026-11-02): 이어 붙이는 표시 — 콜론 양쪽이 숫자(1:1) · 이름 첫 낱말이 조사 · 앞 과목 글이 마침표로 안 끝남.
+  // 같은 학년 성적 표 과목 이름 목록이 있으면 '목록에 없음 + 표시'일 때만 이어 붙임 (목록에 없다는 것만으로는 안 붙임 — 성적 표 이름을 잘못 읽어도 과목이 조용히 사라지지 않게).
+  // 이어 붙일 때는 콜론 포함 줄 원문 그대로
   if (subj.rows.length > 1) {
     const normN = (x) => String(x || "").replace(/\(\s*\d\s*학기\s*\)/g, "").replace(/\s+/g, "");
     let names = new Map();
@@ -614,8 +615,8 @@ export function splitRecord(pages, { withGrades = false, keepP1 = false } = {}) 
     subj.rows.slice(1).forEach((r) => {
       const prev = kept.at(-1), list = names.get(r.g);
       const prevEnd = String(prev.lines.at(-1)?.t || "").trim();
-      const join = list?.size ? !list.has(normN(r.nm))
-        : /\d\s*[:：]\s*\d/.test(r.raw) || /^(을|를|이|가|은|는|의|에|와|과|로|도|및)(\s|$)/.test(r.nm) || !/[.。]$/.test(prevEnd);
+      const join = (list?.size ? !list.has(normN(r.nm)) : true)
+        && (/\d\s*[:：]\s*\d/.test(r.raw) || /^(을|를|이|가|은|는|의|에|와|과|로|도|및)(\s|$)/.test(r.nm) || !/[.。]$/.test(prevEnd));
       if (!join) { kept.push(r); return; }
       r.lines[0].t = r.raw;   // 원문 그대로 (글자 빠짐 없게)
       prev.lines.push(...r.lines);

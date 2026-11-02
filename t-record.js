@@ -243,11 +243,15 @@ const areaIdx = (n) => /^자율/.test(n) ? 0 : /^동아리/.test(n) ? 1 : /^봉�
 const segText = (segs) => { let t = "", end = null; for (const s of segs) { if (end != null && s.x - end > 2) t += " "; t += s.s; end = s.x + (s.w || 0); } return t.replace(/\s+/g, " ").trim(); };
 const isHg = (c) => !!c && /[가-힣]/.test(c);
 // 줄 이어 붙이기: 앞 줄이 오른쪽 끝까지 찼고 한글끼리 이어지면 낱말 중간에서 끊긴 것
+// 줄 이어 붙이기: 앞 줄이 오른쪽 끝까지 찼고 한글끼리 이어지면 낱말 중간에서 끊긴 것 (붙임)
+// '찼다' = 줄 끝과 오른쪽 끝 사이가 반 글자 너비보다 좁음 (글자 너비 = 그 줄 글자 폭 평균 cw). 반 글자 이상 비면 띄어쓰기 자리에서 줄바꿈 (2026-11-02)
+const lineCw = (x, r, text) => { const n = String(text || "").replace(/\s+/g, "").length; return n && r > x ? (r - x) / n : 0; };
 function joinLines(lines, maxR) {
   let t = "", prev = null;
   for (const l of lines) {
     const s = l.t.trim(); if (!s) continue;
-    const glue = prev && prev.r >= maxR - 15 && isHg(t.slice(-1)) && isHg(s[0]) ? "" : " ";
+    const room = prev ? maxR - prev.r : 99, half = prev?.cw ? prev.cw / 2 : 15;
+    const glue = prev && room < half && isHg(t.slice(-1)) && isHg(s[0]) ? "" : " ";
     t = t ? t + glue + s : s; prev = l;
   }
   return t;
@@ -390,7 +394,8 @@ export function parseGradeTables(tables, tol) {
 }
 
 // 쪽 → 구역·칸 (나이스 '학교생활기록부' PDF 기준. 섞인 칸은 미리 보기에서 선생님이 고침)
-export function splitRecord(pages, { withGrades = false } = {}) {
+// keepP1: 선생님이 [1쪽도 넣기]를 체크 — 1쪽에 출결·창체(자율활동) 글이 이어지는 학생 (인적·학적사항 구역은 그대로 버림)
+export function splitRecord(pages, { withGrades = false, keepP1 = false } = {}) {
   // p1: 1쪽 인적사항 — "drop"(버림) | "none"(없음 — 이미 뺀 파일, 남김)
   const info = { read: pages.length, kept: 0, dropped: [], headerLines: 0, lost: [], p1: "none" };
   // 빠진 글 검사: 특기사항 칸 줄(창체·세특·행특)마다 번호를 붙이고, 칸에 들어간 줄과 견줌
@@ -414,7 +419,8 @@ export function splitRecord(pages, { withGrades = false } = {}) {
   const gaps = [];
   for (const p of pages) {
     const pw = p === pages[0] ? piiWhy(p, isHF) : "";
-    if (pw) { info.p1 = "drop"; info.dropped.push({ page: p.n, why: `인적사항(${pw})이 있는 쪽`, pii: true }); continue; }
+    if (pw && keepP1) info.p1 = "kept";
+    else if (pw) { info.p1 = "drop"; info.dropped.push({ page: p.n, why: `인적사항(${pw})이 있는 쪽`, pii: true }); continue; }
     info.kept++;
     p.lines.forEach((l, i) => { if (i && p.lines[i - 1].y - l.y < 30) gaps.push(p.lines[i - 1].y - l.y); });
     const maxR = Math.max(...p.lines.map((l) => l.right || 0));
@@ -453,11 +459,12 @@ export function splitRecord(pages, { withGrades = false } = {}) {
       if (sub !== "seteuk") return;
       const m = t.match(/^((?:\(\d학기\))?\s*[가-힣A-Za-z0-9ⅠⅡⅢⅣ·ㆍ\s()]{1,24}?)\s*[:：]\s*(.*)$/);
       const lg = median(gaps);
-      if (m) { subj.rows.push({ label: `${grade ? grade + "학년 " : ""}${m[1].trim()}`, lines: [track({ t: m[2], r: l.right }, p.n)], maxR }); lastSubY = l.y; lastSubPage = p.n; return; }
+      // '이름: 내용' 줄은 일단 과목 후보 — 진짜 과목인지는 다 읽은 뒤 성적 표 과목 이름으로 정함 (아니면 앞 과목에 원문 그대로)
+      if (m) { subj.rows.push({ label: `${grade ? grade + "학년 " : ""}${m[1].trim()}`, g: Number(grade) || 0, nm: m[1].trim(), raw: t, lines: [track({ t: m[2], r: l.right, cw: lineCw(l.x, l.right, t) }, p.n)], maxR }); lastSubY = l.y; lastSubPage = p.n; return; }
       // 표 밖 글(묶음 제목·빈 줄 다음 글)은 버림: 같은 쪽에서 줄 간격이 크게 벌어지면 표가 끝난 것
       if (lastSubY != null && lastSubPage === p.n && lastSubY - l.y > lg * 1.8) { sub = "skip"; track({ t }, p.n); return; }
       const r = subj.rows.at(-1); if (!r) { track({ t }, p.n); return; }
-      r.lines.push(track({ t, r: l.right }, p.n)); lastSubY = l.y; lastSubPage = p.n;
+      r.lines.push(track({ t, r: l.right, cw: lineCw(l.x, l.right, t) }, p.n)); lastSubY = l.y; lastSubPage = p.n;
     });
   }
   const lg = median(gaps), tol = lg * 0.55;
@@ -465,8 +472,10 @@ export function splitRecord(pages, { withGrades = false } = {}) {
   // 2) 창체: 영역 이름(자율·동아리·진로)이 칸 가운데. 학년 숫자도 학년 칸 가운데(쪽마다 다 있지는 않음)
   if (reg.creative.length) {
     // 특기사항 칸이 시작하는 x: 영역 이름·숫자가 아닌 긴 조각 중 가장 왼쪽 (영역 이름보다는 오른쪽)
-    const areaX = Math.max(0, ...reg.creative.flatMap((l) => (l.segs || []).filter((s) => AREA_RE.test(s.s.trim())).map((s) => s.x)));
-    const areaX0 = Math.min(9999, ...reg.creative.flatMap((l) => (l.segs || []).filter((s) => AREA_RE.test(s.s.trim())).map((s) => s.x)));
+    // 영역 이름 칸: 가장 왼쪽에 찍힌 영역 이름 근처만 (특기사항 글 속 '자율활동'·'진로활동' 같은 낱말은 빼고)
+    const areaXs = reg.creative.flatMap((l) => (l.segs || []).filter((s) => AREA_RE.test(s.s.trim())).map((s) => s.x));
+    const areaX0 = Math.min(9999, ...areaXs);
+    const areaX = Math.max(0, ...areaXs.filter((x) => x <= areaX0 + 40));
     const textX = Math.min(...reg.creative.map((l) => (l.segs || []).find((s) => s.x > areaX + 4 && !AREA_RE.test(s.s.trim()) && !/^\d{1,3}$/.test(s.s.trim()))?.x ?? 9999)) - 4;
     const frag = [];   // 쪽별 칸 조각
     const gAnch = [];
@@ -484,7 +493,7 @@ export function splitRecord(pages, { withGrades = false } = {}) {
         if (right.length) {
           const t = segText(right), hm = right[0].s.replace(/\s+/g, "") === "희망분야" ? [null, segText(right.slice(1))] : null;
           // 진로활동의 '희망분야 | ○○' 줄: 글이 아니라 칸 머리 (쪽을 넘겨 다시 찍힌 빈 줄은 값이 없음)
-          T.push(hm ? { y: l.y, t: "", hope: hm[1].trim(), r: l.right, maxR: l.maxR } : track({ y: l.y, t, r: l.right, maxR: l.maxR }, pg));
+          T.push(hm ? { y: l.y, t: "", hope: hm[1].trim(), r: l.right, maxR: l.maxR } : track({ y: l.y, t, r: l.right, maxR: l.maxR, cw: lineCw(right[0].x, l.right, t) }, pg));
         }
       });
       const P = partitionByRules(T, A, rulesOf.get(pg), areaX0 - 4, textX + 40) || partition(T, A, tol);   // 영역 칸까지 덮는 선 = 칸 경계 (희망분야 밑 점선은 아님)
@@ -529,8 +538,8 @@ export function splitRecord(pages, { withGrades = false } = {}) {
         const segs = l.segs || [{ x: l.x, w: (l.right || 0) - l.x, s: l.text }];
         const d = segs.length && /^[1-3]$/.test(segs[0].s.trim()) ? segs[0] : null;
         if (d && segs.length === 1) { A.push({ y: l.y, g: Number(d.s.trim()), x: d.x }); return; }
-        if (d) { A.push({ y: l.y, g: Number(d.s.trim()), x: d.x }); T.push(track({ y: l.y, t: segText(segs.slice(1)), r: l.right, maxR: l.maxR }, pg)); return; }
-        T.push(track({ y: l.y, t: segText(segs), r: l.right, maxR: l.maxR }, pg));
+        if (d) { A.push({ y: l.y, g: Number(d.s.trim()), x: d.x }); const tt = segText(segs.slice(1)); T.push(track({ y: l.y, t: tt, r: l.right, maxR: l.maxR, cw: lineCw(segs[1]?.x, l.right, tt) }, pg)); return; }
+        T.push(track({ y: l.y, t: segText(segs), r: l.right, maxR: l.maxR, cw: lineCw(segs[0]?.x, l.right, segText(segs)) }, pg));
       });
       const dX = A.length ? Math.min(...A.map((a) => a.x ?? 50)) : 50, tX = Math.min(9999, ...Ls.map((l) => (l.segs || []).find((sg) => sg.x > dX + 8)?.x ?? 9999));
       const P = partitionByRules(T, A, rulesOf.get(pg), dX - 4, tX + 40) || partition(T, A, tol);   // 학년 칸까지 덮는 선 = 칸 경계
@@ -592,8 +601,26 @@ export function splitRecord(pages, { withGrades = false } = {}) {
   // 4) 출결: 줄 앞 학년 숫자로
   if (reg.attend.length) {
     const rows = [];
-    reg.attend.forEach((l) => { const m = l.text.match(/^([1-3])\s+(.*)$/); if (m) rows.push({ label: `${m[1]}학년`, text: m[2] }); else if (rows.length) rows.at(-1).text += " " + l.text; else rows.push({ label: "", text: l.text }); });
+    reg.attend.forEach((l) => { const m = l.text.match(/^([1-3])\s+(.*)$/); if (m) rows.push({ label: `${m[1]}학년`, text: m[2] }); else if (rows.length) rows.at(-1).text += " " + l.text; });   // 첫 학년 줄 앞은 표 머리(결석 종류 등) — 넣지 않음
     secs.attend = rows;
+  }
+  // 세특 과목 후보 정하기 (2026-11-02): 같은 학년 성적 표 과목 이름 목록이 있으면 그 목록에 있는 이름만 새 과목.
+  // 목록이 없으면 이어 붙임 — 콜론 양쪽이 숫자(1:1) · 이름 첫 낱말이 조사 · 앞 과목 글이 마침표로 안 끝남. 이어 붙일 때는 콜론 포함 줄 원문 그대로
+  if (subj.rows.length > 1) {
+    const normN = (x) => String(x || "").replace(/\(\s*\d\s*학기\s*\)/g, "").replace(/\s+/g, "");
+    let names = new Map();
+    try { parseGradeTables(gt, tol).forEach((r) => { if (r.sub) (names.get(r.y) || names.set(r.y, new Set()).get(r.y)).add(normN(r.sub)); }); } catch (e) { names = new Map(); }
+    const kept = [subj.rows[0]];
+    subj.rows.slice(1).forEach((r) => {
+      const prev = kept.at(-1), list = names.get(r.g);
+      const prevEnd = String(prev.lines.at(-1)?.t || "").trim();
+      const join = list?.size ? !list.has(normN(r.nm))
+        : /\d\s*[:：]\s*\d/.test(r.raw) || /^(을|를|이|가|은|는|의|에|와|과|로|도|및)(\s|$)/.test(r.nm) || !/[.。]$/.test(prevEnd);
+      if (!join) { kept.push(r); return; }
+      r.lines[0].t = r.raw;   // 원문 그대로 (글자 빠짐 없게)
+      prev.lines.push(...r.lines);
+    });
+    subj.rows = kept;
   }
   if (subj.rows.length) secs.subject = subj.rows.map((r) => { r.lines.forEach((x) => { x.used = true; }); return { label: r.label, text: joinLines(r.lines, r.maxR) }; });
   // 빠진 글: 남긴 쪽 특기사항 칸 글자 수 합과 칸에 들어간 글자 수의 차이 (일부러 버린 창체 봉사 칸은 뺌)
@@ -659,20 +686,24 @@ function stepPick(msg = "") {
       const pages = await readPdf(buf);
       if (!upState) return;
       if (!pages.some((p) => p.lines.length > 3)) return stepPick("이 PDF 에는 글자가 없어요(스캔한 그림). 나이스에서 'PDF로 저장'한 파일을 올려 주세요.");
-      upState.pages = pages;
+      upState.pages = pages; upState.keepP1 = false;
       stepPages();
-    } catch (err) { console.warn(err); stepPick("PDF 를 읽지 못했어요. 나이스에서 'PDF로 저장'한 파일인지 확인해 주세요."); }
+    } catch (err) { console.warn(err); stepPick("PDF 를 읽지 못했어요. 나이스에서 'PDF로 저장'한 파일인지 확인해 주세요. (구글 드라이브 파일이면 먼저 내려받아서 올려 주세요)"); }
   };
 }
 function stepPages() {
   steps(3);
-  const { sections, info, grades } = splitRecord(upState.pages, { withGrades: upState.withGrades });
+  let res;
+  try { res = splitRecord(upState.pages, { withGrades: upState.withGrades, keepP1: !!upState.keepP1 }); }
+  catch (err) { console.warn(err); return stepPick("PDF 는 읽었지만 칸을 나누다 문제가 생겼어요. 이 파일 이름(학번)을 담당 선생님께 알려 주세요."); }
+  const { sections, info, grades } = res;
   upState.info = info; upState.grades = grades;
   upState.lostWarn = lostWarn(info);
   const dropPages = new Set(info.dropped.filter((d) => /쪽/.test(d.why)).map((d) => d.page));
   body().innerHTML = `<div class="ru-card"><h3>쪽 확인</h3>
     <div class="ru-pages">${upState.pages.map((p) => { const d = info.dropped.find((x) => x.page === p.n && /쪽/.test(x.why)); return `<span class="ru-pg ${d ? "drop" : "keep"}" title="${esc(d?.why || "남김")}">${p.n}쪽 ${d ? "버림" : "남김"}${d ? `<small>${esc(d.why)}</small>` : ""}</span>`; }).join("")}</div>
-    <div class="ru-p1" id="ruP1">${info.p1 === "drop" ? "1쪽 인적사항 → 버림" : "1쪽 인적사항 없음(이미 뺀 파일) → 남김"}</div>
+    <div class="ru-p1" id="ruP1">${info.p1 === "drop" ? "1쪽 인적사항 → 버림" : info.p1 === "kept" ? "1쪽 인적사항 → 1쪽도 넣음 (인적·학적사항 구역은 뺌)" : "1쪽 인적사항 없음(이미 뺀 파일) → 남김"}</div>
+    ${info.p1 !== "none" ? `<label class="inline-check"><input type="checkbox" id="ruKeepP1" ${upState.keepP1 ? "checked" : ""}> 1쪽도 넣기 <span class="muted sm">(1쪽에 출결·창의적 체험활동(자율활동) 글이 있을 때 — 인적·학적사항 구역은 그대로 빼요)</span></label>` : ""}
     ${upState.lostWarn}
     <ul class="ru-info">
       <li>남긴 구역: ${sections.filter((s) => s.key !== "grades").map((s) => esc(SEC_SHORT[s.key])).join(" · ") || '<b style="color:var(--danger)">없음</b>'}</li>
@@ -685,6 +716,7 @@ function stepPages() {
     <div class="row" style="margin-top:12px"><button type="button" class="btn-sm" id="ruBack">다른 파일</button><div class="spacer"></div>
       <button type="button" class="btn-primary" id="ruNext3" ${sections.length ? "" : "disabled"}>가림 확인으로</button></div></div>`;
   $("#ruGrades").onchange = (e) => { upState.withGrades = e.target.checked; stepPages(); };
+  $("#ruKeepP1")?.addEventListener("change", (e) => { upState.keepP1 = e.target.checked; stepPages(); });
   $("#ruBack").onclick = () => { upState.pages = null; stepPick(); };
   $("#ruNext3").onclick = () => {
     const names = namesList(upState.no);

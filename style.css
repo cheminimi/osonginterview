@@ -2172,3 +2172,130 @@ body.nd .q-sect-t.w { background: var(--warn-bg); color: var(--warn); }
 body.nd .pq-tag.rec { background: var(--lime-soft); color: #5d6a14; border: 1px solid var(--lime-line); }
 body.nd .rv-preptag { background: #dbe97f; color: #121316; border-radius: 99px; padding: 2px 10px; font-size: .8rem; font-weight: 800; }
 body.nd .rv-card.rv-edit textarea { width: 100%; }
+
+/* ===== AI 맞춤 예상질문 · 암기 카드 (2026-11-03, 목업 ①~⑥ 그대로) — 보라 점선 = AI 관련 ===== */
+body.nd .ai-tag { display: inline-flex; align-items: center; background: #121316; color: #dbe97f; border-radius: 99px; padding: 1px 9px; font-size: .72rem; font-weight: 800; white-space: nowrap; }
+body.nd .ai-consent { margin-top: 12px; border: 1.5px dashed #b9a6ea; background: #faf8ff; border-radius: 14px; padding: 12px 14px; display: grid; gap: 6px; }
+body.nd .ai-run { margin-top: 14px; border: 1.5px dashed #b9a6ea; background: #faf8ff; border-radius: 16px; padding: 14px 16px; display: grid; gap: 10px; }
+body.nd .ai-run ol, body.nd .qai-run { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+body.nd .qai-run { gap: 5px; font-size: .88rem; }
+body.nd .ai-run li, body.nd .qai-run li { display: flex; gap: 8px; align-items: center; color: #9aa1ad; }
+body.nd .ai-run li i, body.nd .qai-run li i { width: 20px; height: 20px; border-radius: 50%; border: 2px solid #d6dbe4; display: inline-grid; place-items: center; font-style: normal; font-size: .75rem; flex: none; }
+body.nd .qai-run li i { width: 18px; height: 18px; font-size: .7rem; }
+body.nd .ai-run li.on, body.nd .qai-run li.on { color: #121316; font-weight: 700; }
+body.nd .ai-run li.on i, body.nd .qai-run li.on i { border-color: #7d5bd6; border-top-color: transparent; animation: aiSpin .8s linear infinite; }
+body.nd .ai-run li.done, body.nd .qai-run li.done { color: #121316; }
+body.nd .ai-run li.done i, body.nd .qai-run li.done i { border-color: #1e7a5a; background: #1e7a5a; color: #fff; }
+@keyframes aiSpin { to { transform: rotate(360deg); } }
+body.nd .ai-sum { border-collapse: collapse; font-size: .85rem; }
+body.nd .ai-sum td { border-top: 1px solid #e3d7ff; padding: 4px 10px 4px 0; vertical-align: top; }
+/* 질문 탭 [AI 맞춤 질문] */
+body.nd .qai { display: grid; gap: 10px; }
+body.nd .qai-h { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+body.nd .qai-t { width: 100%; border-collapse: collapse; font-size: .88rem; }
+body.nd .qai-t td { border-top: 1px solid #e1e6ee; padding: 8px 6px; vertical-align: top; overflow-wrap: anywhere; }
+body.nd .qai-t td.r { text-align: right; font-weight: 700; white-space: nowrap; }
+body.nd .qai-t tr.out td { color: var(--ink-3); }
+body.nd .src-b { font-size: .78rem; font-weight: 800; border-radius: 99px; padding: 1px 8px; }
+body.nd .src-b.fb { background: #fff7e8; color: #95590a; }
+body.nd .src-b.ok { background: #e8f5ee; color: #1e7a5a; }
+body.nd .qai-st { border: 1.5px dashed #b9a6ea; background: #faf8ff; border-radius: 14px; padding: 10px 12px; display: grid; gap: 4px; }
+body.nd .qai-st .row { gap: 8px; flex-wrap: wrap; align-items: center; }
+body.nd #qaiHave, body.nd #qaiNone { display: grid; gap: 10px; }
+/* 학생부 화면 · 질문 준비 [AI 초안] */
+body.nd .rv mark.ai { background: transparent !important; box-shadow: none; border-bottom: 2px dashed #7d5bd6; border-radius: 0; padding: 0 0 1px; }
+body.nd .rv mark.ai.flash { background: #efe9ff !important; }
+body.nd .rv-lg .ai-lg { display: inline-block; width: 18px; border-bottom: 2px dashed #7d5bd6; margin-right: 6px; vertical-align: middle; }
+body.nd .ai-ban { background: #f5f1ff; border: 1px solid #e3d7ff; border-radius: 12px; padding: 10px 12px; display: grid; gap: 6px; font-size: .84rem; }
+body.nd .ai-ban ol { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+body.nd .ai-ban .opts { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+body.nd .gchips { display: flex; gap: 4px; flex-wrap: wrap; }
+body.nd .gchips button { border: 1px solid #d6dbe4; background: #fff; border-radius: 99px; padding: 4px 10px; font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer; }
+body.nd .gchips button.on { background: #121316; color: #fff; border-color: #121316; }
+body.nd .gchips button.dim { opacity: .5; }
+body.nd .uhd { margin: 2px 0 0; font-size: .9rem; }
+body.nd .rv-sb .src { border-radius: 10px; padding: 8px 10px; font-size: .8rem; display: grid; gap: 2px; }
+body.nd .rv-sb .src.fallback { background: #fff7e8; border: 1px solid #f3d9a6; }
+body.nd .rv-sb .src.exact { background: #e8f5ee; border: 1px solid #b8dfc8; }
+body.nd .rv-sb .guide { background: #fff; border: 1px solid #e1e6ee; border-radius: 10px; padding: 8px 10px; font-size: .8rem; }
+body.nd .rv-sb .guide ul, body.nd .rv-sb .guide ol { margin: 4px 0 2px; padding-left: 16px; display: grid; gap: 3px; }
+body.nd .rv-card.ai-card { border: 1.5px dashed #b9a6ea; gap: 5px; }
+body.nd .rv-card.ai-card.flash { box-shadow: 0 0 0 3px #e3d7ff; }
+body.nd .ai-card .tier { font-size: .72rem; font-weight: 800; border-radius: 99px; padding: 1px 8px; background: #eef1f5; color: #4f5663; }
+body.nd .ai-card .pri { font-size: .72rem; font-weight: 800; border-radius: 99px; padding: 1px 8px; }
+body.nd .ai-card .pri.pA { background: #fde8e8; color: #b42318; }
+body.nd .ai-card .pri.pB { background: #fbeeda; color: #95590a; }
+body.nd .ai-card .pri.pC { background: #eef1f5; color: #737b89; }
+body.nd .ai-card .kt { font-size: .72rem; font-weight: 800; border-radius: 99px; padding: 1px 8px; background: #e7f1fb; color: #2d4f8f; }
+body.nd .ai-card .edt { font-size: .72rem; font-weight: 800; border-radius: 99px; padding: 1px 8px; background: #e8f5ee; color: #1e7a5a; }
+body.nd .ai-int { font-size: .76rem; color: #737b89; }
+body.nd .ai-card .rv-basis u { text-decoration: underline 2px #7d5bd6; text-underline-offset: 2px; }
+body.nd .ai-kw { font-size: .82rem; font-weight: 800; background: #f3f7d9; border-radius: 10px; padding: 6px 9px; color: #3f4a0b; }
+body.nd .ai-kw i { font-style: normal; color: #a8b746; margin: 0 2px; }
+body.nd .ai-back summary { cursor: pointer; font-size: .8rem; color: #4f5663; font-weight: 600; }
+body.nd .pv { display: grid; gap: 5px; margin-top: 6px; background: #fafbfd; border: 1px solid #e1e6ee; border-radius: 10px; padding: 8px 10px; }
+body.nd .pv ul { margin: 6px 0 4px; padding-left: 16px; font-size: .82rem; display: grid; gap: 4px; }
+body.nd .pv .pt { color: #737b89; font-size: .78rem; }
+body.nd .pv-l { font-size: .72rem; font-weight: 800; color: #737b89; margin-top: 2px; }
+body.nd .aiw { font-weight: 600; color: #7d5bd6; margin-left: 4px; }
+body.nd .pv-con { display: grid; gap: 3px; font-size: .82rem; }
+body.nd .pv-con b { color: #2d4f8f; margin-right: 4px; }
+body.nd .pv .chk { font-size: .78rem; color: #95590a; }
+body.nd .pv .chk span { background: #fff7e8; border-radius: 6px; padding: 0 4px; }
+body.nd .ai-ed { display: grid; gap: 6px; font-size: .82rem; }
+body.nd .ai-ed label { display: grid; gap: 2px; font-weight: 700; color: #4f5663; font-size: .76rem; margin: 0; }
+body.nd .ai-ed textarea, body.nd .ai-ed input:not([type=radio]) { font: inherit; font-size: .84rem; font-weight: 400; color: #121316; border: 1px solid #d6dbe4; border-radius: 8px; padding: 5px 7px; width: 100%; min-height: 0; }
+body.nd .ai-ed .hint { font-weight: 500; color: #9aa1ad; }
+body.nd .ai-ed .field label { display: inline-flex; }
+body.nd .ai-ed .pvw { border: 1.5px dashed #a8b746; border-radius: 10px; padding: 6px 8px; background: #fbfdf2; }
+body.nd .ai-ed .pvw > b { font-size: .74rem; color: #5d6a14; }
+/* 학생 · 암기 카드 */
+body.nd .lrow .badge.tag-new { background: #dbe97f; color: #121316; border: 0; font-weight: 700; font-size: .66rem; line-height: 1.4; letter-spacing: .01em; padding: 0 6px; border-radius: 99px; margin-left: 5px; vertical-align: 2px; }
+body.nd .fc-wrap { display: grid; gap: 12px; margin-top: 6px; }
+body.nd .fc-top { display: flex; align-items: center; gap: 10px; font-size: .85rem; color: #4f5663; }
+body.nd .fc-bar { flex: 1; height: 6px; background: #e3e8f0; border-radius: 99px; overflow: hidden; }
+body.nd .fc-bar i { display: block; height: 100%; background: #121316; border-radius: 99px; transition: width .3s; }
+body.nd .fc { perspective: 1200px; cursor: pointer; }
+body.nd .fc-in { position: relative; min-height: 440px; transition: transform .5s; transform-style: preserve-3d; }
+body.nd .fc.flip .fc-in { transform: rotateY(180deg); }
+body.nd .fc-face { position: absolute; inset: 0; background: #fff; border-radius: 24px; padding: 18px; backface-visibility: hidden; -webkit-backface-visibility: hidden; display: flex; flex-direction: column; gap: 10px; }
+body.nd .fc-back { transform: rotateY(180deg); overflow: auto; }
+body.nd .fc-q { font-size: 1.22rem; font-weight: 800; line-height: 1.45; letter-spacing: -.02em; overflow-wrap: anywhere; }
+body.nd .fc-hint { margin-top: auto; color: #9aa1ad; font-size: .85rem; text-align: center; }
+body.nd .fc-lab { font-size: .75rem; font-weight: 800; color: #737b89; margin-bottom: -4px; }
+body.nd .fc-kw { display: flex; flex-wrap: wrap; gap: 4px 2px; align-items: center; background: #f3f7d9; border-radius: 14px; padding: 10px 12px; font-weight: 800; font-size: 1.02rem; color: #2f380a; line-height: 1.5; }
+body.nd .fc-kw i { font-style: normal; color: #a8b746; margin: 0 4px; }
+body.nd .fc-con { display: grid; gap: 6px; font-size: .9rem; line-height: 1.5; }
+body.nd .fc-con div { background: #eef4fc; border-radius: 10px; padding: 7px 10px; }
+body.nd .fc-con b { display: block; color: #2d4f8f; font-size: .85rem; }
+body.nd .fc-src { font-size: .85rem; color: #4f5663; line-height: 1.55; overflow-wrap: anywhere; }
+body.nd .fc-src u { text-decoration: underline 2px #a8b746; text-underline-offset: 3px; color: #121316; }
+body.nd .fc-chk { display: grid; gap: 6px; }
+body.nd .fc-chk label { font-size: .85rem; color: #95590a; font-weight: 700; margin: 0; }
+body.nd .fc-mine { width: 100%; border: 1px dashed #e0c48a; border-radius: 10px; padding: 6px 9px; font: inherit; font-size: .88rem; background: #fffaf0; margin-top: 2px; }
+body.nd .fc-fu { font-size: .86rem; background: #f6f8fb; border-radius: 12px; padding: 8px 10px; display: grid; gap: 4px; }
+body.nd .fc-fu .pt { color: #2d4f8f; font-weight: 700; font-size: .8rem; }
+body.nd .fc-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+body.nd .fc-btns button, body.nd .fc-end button { height: 52px; border-radius: 16px; font-weight: 800; font-size: 1rem; border: 1px solid #d6dbe4; background: #fff; color: #121316; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 100%; }
+body.nd .fc-btns #fcOk, body.nd .fc-end .btn-primary { background: #121316; color: #fff; border-color: #121316; }
+body.nd .fc-end { background: #fff; border-radius: 24px; padding: 28px 20px; text-align: center; display: grid; gap: 10px; }
+body.nd .fc-end b { font-size: 1.3rem; }
+body.nd .fc-note { font-size: .82rem; color: #737b89; text-align: center; }
+body.nd .gtag { font-size: .72rem; font-weight: 800; border-radius: 99px; padding: 2px 9px; background: #e7f1fb; color: #2d4f8f; }
+/* 관리 · AI 사용 비용 */
+body.nd .ai-cost { margin-top: 16px; }
+body.nd .ai-cost h3 { display: flex; gap: 8px; align-items: center; }
+body.nd .ai-cost .adm { font-size: .72rem; font-weight: 800; background: #121316; color: #dbe97f; border-radius: 99px; padding: 1px 9px; }
+body.nd .ai-cost .mo { display: inline-flex; flex-wrap: wrap; gap: 4px; background: #f2f4f8; border-radius: 99px; padding: 3px; margin: 4px 0 10px; }
+body.nd .ai-cost .mo button { border: 0; background: transparent; border-radius: 99px; padding: 5px 12px; font: inherit; font-weight: 700; cursor: pointer; }
+body.nd .ai-cost .mo button.on { background: #121316; color: #fff; }
+body.nd .ai-cost table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+body.nd .ai-cost th, body.nd .ai-cost td { border-bottom: 1px solid #e1e6ee; padding: 9px 8px; text-align: left; }
+body.nd .ai-cost th { font-size: .8rem; color: #737b89; font-weight: 700; }
+body.nd .ai-cost td.n, body.nd .ai-cost th.n { text-align: right; white-space: nowrap; }
+body.nd .ai-cost tr.sum td { font-weight: 800; border-bottom: 0; }
+body.nd .ai-cost tr.q td { background: #faf8ff; }
+body.nd .ai-cost .det { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+body.nd .ai-cost .det span { background: #f6f8fb; border-radius: 99px; padding: 3px 10px; font-size: .82rem; }
+body.nd .ai-cost .ai-tw { overflow-x: auto; }
+@media (max-width: 720px) { body.nd .ai-cost table { font-size: .82rem; } body.nd .ai-cost th, body.nd .ai-cost td { padding: 7px 4px; } }

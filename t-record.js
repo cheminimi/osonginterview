@@ -2,11 +2,12 @@
 // - records/{학번}: 가림본 학생부 (배정 선생님 1·2·3차 + 관리자만 읽기, 넣기는 1차 담임·관리자)
 // - records/{학번}/marks: 하이라이트·질문 표시 · records/{학번}/pending: '면접 뒤 공개' 질문
 // - recordLogs: 열람·넣기·공개 기록 (관리자만 읽기)
+// - records/{학번}/aiq · aimeta: AI 맞춤 예상질문 초안·실행 상태 (2026-11-03, booth-ai Apps Script 가 만듦 — 배정 선생님·관리자만)
 // 학생부 글은 브라우저 저장소·캐시 목록·백업에 넣지 않는다. 화면을 닫으면 변수에서도 버린다.
 // PDF 는 이 브라우저 안에서만 읽고 어디에도 올리지 않는다 (저장되는 것은 가림본 글뿐).
 import {
-  db, collection, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, writeBatch, serverTimestamp,
-  $, $$, esc, toast, showError, confirmBox, pqStats, fmtDay, STAGES, univName, announceFailed
+  db, collection, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, writeBatch, serverTimestamp, runTransaction, onSnapshot,
+  $, $$, esc, toast, showError, confirmBox, pqStats, fmtDay, STAGES, univName, announceFailed, aiCall
 } from "./common.js";
 import { S, myName, myRoles, studentByNo, closeModal } from "./t-core.js";
 import { openMeetingForm, loadMeetingNotes, againList, renderPast } from "./t-meetings.js";
@@ -666,9 +667,11 @@ function stepConsent() {
   body().innerHTML = `<div class="ru-card"><h3>학생·보호자 동의</h3>
     <p class="muted">학생부는 이 학생의 배정 선생님(1·2·3차)과 관리자만 볼 수 있어요. 학생 본인도 이 화면은 볼 수 없어요. 입시가 끝나면 한꺼번에 지워요.</p>
     <label class="inline-check"><input type="checkbox" id="ruConsent"> 학생·보호자의 동의를 받았어요</label>
+    <div class="ai-consent"><label class="inline-check"><input type="checkbox" id="ruAiOk" checked> <b>AI 맞춤 예상질문·암기 카드 만들기</b>에도 동의를 받았어요</label>
+      <div class="muted sm">저장하면 가림 처리된 글(이름·학교 가림)과 지원 대학·전형·학과를 AI(Claude)로 보내, 충북교육청 면접후기 사례집의 기출을 참고해 질문 초안과 암기 카드를 만들어요. AI 회사는 이 글을 학습에 쓰지 않아요. 끄면 AI 없이 학생부만 저장해요.</div></div>
     <div class="row" style="margin-top:12px"><button type="button" class="btn-primary" id="ruNext1" disabled>다음</button></div></div>`;
   $("#ruConsent").onchange = (e) => { $("#ruNext1").disabled = !e.target.checked; };
-  $("#ruNext1").onclick = () => { upState.consent = true; stepPick(); };
+  $("#ruNext1").onclick = () => { upState.consent = true; upState.aiOk = $("#ruAiOk").checked; stepPick(); };
 }
 function stepPick(msg = "") {
   steps(2);
@@ -864,8 +867,11 @@ async function saveUpload() {
     body().innerHTML = `<div class="ru-card"><h3>저장했어요 ✓</h3>
       <p>${esc(st?.name || no)} 학생 학생부 ${ver > 1 ? `${ver}번째 판` : ""}을 저장했어요. <b>가림본 글만 저장됐고 PDF 는 남지 않아요.</b></p>
       ${old ? `<p class="muted">하이라이트·질문은 새 판에서 근거 문장을 다시 찾아 붙였어요.${lost ? ` 찾지 못한 하이라이트 ${lost}개는 뺐어요(질문은 그대로).` : ""}</p>` : ""}
-      <div class="row"><button type="button" class="btn-primary" id="ruDone">닫기</button></div></div>`;
+      ${upState.aiOk ? '<div class="ai-run" id="ruAi"></div>' : '<p class="muted">AI 만들기를 끄고 저장했어요.</p>'}
+      <div class="row" style="margin-top:12px"><button type="button" class="btn-primary" id="ruDone">닫기</button></div></div>`;
     $("#ruDone").onclick = () => { closeUpload(); window.dispatchEvent(new CustomEvent("records-changed", { detail: { no } })); };
+    // AI 맞춤 예상질문 (1단계에서 AI 동의를 켰을 때만) — 창을 닫아도 Apps Script 는 서버에서 계속 돎
+    if (upState.aiOk) runAiq(no, { scope: "all", consent: true, box: $("#ruAi"), big: true });
   } catch (e) { btn.disabled = false; showError(e, "학생부 저장"); }
 }
 // 다시 넣었을 때: 하이라이트를 새 판에서 고른 글(quote)로 다시 찾아 자리만 고침, 못 찾으면 그 하이라이트만 지움
@@ -895,7 +901,7 @@ export async function deleteRecords(nos, { all = false } = {}) {
   const list = nos.filter(Boolean);
   if (!list.length) return toast("지울 학생부가 없어요.");
   if (!(await confirmBox({ title: all ? `학생부 ${list.length}명을 모두 지울까요?` : "이 학생의 학생부를 지울까요?", what: all ? `학생부 ${list.length}명 · 하이라이트 · 공개 전 질문` : `${esc(list[0])} ${esc(studentByNo(list[0])?.name || "")}`,
-    note: "열람 기록은 남아요 (학생부 내용은 없음).", yes: "다음" }))) return false;
+    note: "열람 기록은 남아요 (학생부 내용은 없음). AI 맞춤 초안도 같이 지워져요.", yes: "다음" }))) return false;
   if (!(await confirmBox({ title: "되돌릴 수 없어요", what: "지운 학생부·하이라이트는 다시 살릴 수 없어요. 학생 '내 생기부 면접'에 이미 공개된 질문은 그대로 남아요.", note: "열람 기록은 남아요 (학생부 내용은 없음).", yes: "지우기" }))) return false;
   try {
     const pend = [];
@@ -907,6 +913,8 @@ export async function deleteRecords(nos, { all = false } = {}) {
       const b = writeBatch(db);
       (await getDocs(collection(db, "records", no, "marks"))).docs.forEach((d) => b.delete(d.ref));
       (await getDocs(collection(db, "records", no, "pending"))).docs.forEach((d) => b.delete(d.ref));
+      (await getDocs(collection(db, "records", no, "aiq"))).docs.forEach((d) => b.delete(d.ref));      // AI 초안(근거 구절이 학생부 글)도 같이
+      b.delete(doc(db, "records", no, "aimeta", "main"));
       b.delete(doc(db, "records", no));
       await b.commit();
       exists.set(no, false);
@@ -932,7 +940,8 @@ export async function publishPending(no, list) {
   const rows = [];
   list.forEach((p) => {
     const ref = doc(col);
-    const row = { text: p.text, basis: p.basis || "", followUps: p.followUps || [], category: `${p.stage}차 선생님 질문`, type: "document", by: "teacher", addedBy: p.by || "", source: "record", stage: Number(p.stage) || 0 };
+    const row = { text: p.text, basis: p.basis || "", followUps: p.followUps || [], category: `${p.stage}차 선생님 질문`, type: "document", by: "teacher", addedBy: p.by || "", source: p.aiId ? "ai" : "record", stage: Number(p.stage) || 0,
+      ...(p.card ? { card: p.card } : {}), ...(p.aiId ? { aiId: p.aiId } : {}) };   // (2026-11-03) 암기 카드 내용·AI 초안 표시도 함께 옮김
     rows.push(row);
     b.set(ref, { ...row, createdAt: serverTimestamp() });
     b.delete(doc(db, "records", no, "pending", p.id));
@@ -1062,7 +1071,7 @@ function guessStage(st, preset) {
   return mine.find((k) => !done.has(k)) || mine[0] || [1, 2, 3].find((k) => !done.has(k)) || 1;
 }
 // mode: "interview"(모의면접, 지금 화면) | "prep"(질문 준비 — 질문 탭에서, 타이머·기록 쓰기 없음) · onClose: 닫힌 뒤 할 일
-export async function openRecordViewer(no, { stage = 0, preset = null, mode = "interview", onClose = null } = {}) {
+export async function openRecordViewer(no, { stage = 0, preset = null, mode = "interview", onClose = null, tab = "" } = {}) {
   const st = studentByNo(no);
   if (!canSeeRec(st)) return toast("이 학생의 학생부는 배정 선생님·관리자만 볼 수 있어요.", "error");
   closeRecordViewer();
@@ -1071,8 +1080,16 @@ export async function openRecordViewer(no, { stage = 0, preset = null, mode = "i
   try { const s = await getDoc(doc(db, "records", no)); if (!s.exists()) return toast("아직 학생부가 없어요.", "error"); rec = s.data(); }
   catch (e) { return showError(e, "학생부 열기"); }
   const prep = mode === "prep";
+  // 질문 준비: AI 맞춤 초안이 있으면 [AI 초안] 탭을 맨 앞에 (모의면접 모드에는 없음)
+  let aiq = [], aimeta = null;
+  if (prep) {
+    try { const [a, m] = await Promise.all([getDocs(collection(db, "records", no, "aiq")), getDoc(doc(db, "records", no, "aimeta", "main"))]); aiq = a.docs.map((d) => ({ id: d.id, ...d.data() })); aimeta = m.exists() ? m.data() : null; }
+    catch (e) { console.warn("AI 초안 불러오기", e); }
+  }
+  const hasAi = prep && (aiq.length > 0 || !!aimeta?.unis?.length);
   const myStages = myRoles(st).map((r) => Number(r[0])).filter(Boolean);
   V = { no, st, rec, stage: stage || (prep ? myStages[0] || 1 : guessStage(st, preset)), preset, marks: [], pending: [], pqs: [], notes: null, asked: new Map(),
+    aiq, aimeta, hasAi, aiGrp: "common", aiEdit: null,
     mode, prep, onClose, newIds: [], editQ: null,
     flt: "mine", otherHl: true, idle: null, tick: null, t0: 0, run: false, used: 0, off: [], sel: null,
     // 보기 상태: 접기(구역·학년·목차)는 열려 있는 동안만, 글자 크기·문장 나누기만 브라우저에 기억
@@ -1098,7 +1115,7 @@ export async function openRecordViewer(no, { stage = 0, preset = null, mode = "i
     <div class="rv-body">
       <nav class="rv-toc" id="rvToc"><div id="rvTocL"></div>
         <div class="rv-lg"><b>하이라이트</b><br><i class="c1"></i>1차 담임<br><i class="c2"></i>2차 교과<br><i class="c3"></i>3차 위원
-          <label class="inline-check"><input type="checkbox" id="rvOther" checked> 다른 선생님 하이라이트</label><br><b>가림</b> <span class="rv-mask">○○</span> 이름·학교</div></nav>
+          <label class="inline-check"><input type="checkbox" id="rvOther" checked> 다른 선생님 하이라이트</label><br><b>가림</b> <span class="rv-mask">○○</span> 이름·학교${hasAi ? '<br><span class="ai-lg"></span>AI 초안 근거' : ""}</div></nav>
       <article class="rv-doc" id="rvDoc"><div class="rv-bar" id="rvBar">
           <span class="rv-grp"><button type="button" data-fs="-1" aria-label="글자 작게">가−</button><button type="button" data-fs="0" id="rvFsN" title="16으로">${V.fs}</button><button type="button" data-fs="1" aria-label="글자 크게">가+</button></span>
           <span class="rv-grp"><button type="button" data-all="1">모두 펼치기</button><button type="button" data-all="0">모두 접기</button></span>
@@ -1107,7 +1124,7 @@ export async function openRecordViewer(no, { stage = 0, preset = null, mode = "i
           <span class="sp"></span><button type="button" class="rv-tog" id="rvWide">질문 칸 접기 ▸</button></div>
         <div class="rv-in" id="rvIn"></div></article>
       <aside class="rv-side">${prep
-        ? `<div class="rv-tabs"><button type="button" class="on" data-tab="mine">뽑은 질문 <span id="rvQn"></span></button><button type="button" data-tab="other">다른 질문 <span id="rvPn"></span></button></div>
+        ? `<div class="rv-tabs">${hasAi ? '<button type="button" data-tab="ai">AI 초안 <span id="rvAn"></span></button>' : ""}<button type="button" data-tab="mine">뽑은 질문 <span id="rvQn"></span></button><button type="button" data-tab="other">다른 질문 <span id="rvPn"></span></button></div>
         <div class="rv-sb" id="rvSb"></div>
         <div class="rv-foot"><span class="muted sm" id="rvAsk">뽑은 질문은 ${esc(no)} ${esc(st.name)} 질문 목록에 저장돼요</span><button type="button" class="btn-primary" id="rvDone">다 뽑았어요</button></div>`
         : `<div class="rv-tabs"><button type="button" class="on" data-tab="q">질문 <span id="rvQn"></span></button><button type="button" data-tab="p">지난 면접 <span id="rvPn"></span></button></div>
@@ -1155,8 +1172,19 @@ export async function openRecordViewer(no, { stage = 0, preset = null, mode = "i
     $(".rv-body", ov).hidden = gr; $("#rvGrades", ov).hidden = !gr; $("#rvPop", ov).hidden = true;
     if (gr) renderGrades($("#rvGrades", ov), V.rec.grades || [], grSt);
   });
-  V.tab = prep ? "mine" : "q";
+  V.tab = prep ? (hasAi && tab !== "mine" ? "ai" : "mine") : "q";
+  $$(".rv-tabs [data-tab]", ov).forEach((x) => x.classList.toggle("on", x.dataset.tab === V.tab));
   drawDoc(); drawSide();
+  // AI 초안은 다른 선생님이 채택·버리면 바로 사라지게 (질문 준비 화면이 열려 있는 동안만 구독)
+  if (hasAi) {
+    const un = onSnapshot(collection(db, "records", no, "aiq"), (snap) => {
+      if (!V || V.no !== no) return;
+      V.aiq = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      if (V.aiEdit && !V.aiq.some((a) => a.id === V.aiEdit && a.status === "new")) V.aiEdit = null;
+      drawDoc(); drawSide();
+    }, () => {});
+    V.off.push(un);
+  }
   // 선택 → 띄움
   const docEl = $("#rvDoc", ov), pop = $("#rvPop", ov);
   const showPop = () => setTimeout(() => {
@@ -1175,7 +1203,8 @@ export async function openRecordViewer(no, { stage = 0, preset = null, mode = "i
   docEl.addEventListener("click", (e) => {
     const jb = e.target.closest("[data-jump]");
     if (jb) { const el = document.getElementById(jb.dataset.jump); if (el) goTo(el, true); return; }
-    const mk = e.target.closest("mark[data-mk]"); if (mk) markPop(mk);
+    const mk = e.target.closest("mark[data-mk]"); if (mk) { markPop(mk); return; }
+    const am = e.target.closest("mark.ai[data-ai]"); if (am) focusAi(am.dataset.ai);
   });
   // 회색 막대: 글자 크기 · 모두 펼치기/접기 · 문단/문장마다 줄 · 찾기 · 질문 칸 접기
   $$("[data-fs]", ov).forEach((b) => b.onclick = () => { const d = Number(b.dataset.fs); V.fs = d ? Math.min(20, Math.max(14, V.fs + d)) : 16; savePref("rvFs", V.fs); $("#rvFsN", ov).textContent = V.fs; drawDoc(); });
@@ -1281,11 +1310,13 @@ function drawDoc() {
   const mine = (m) => m.byUid === S.ctx.user.uid;
   const secs = viewSections();
   let found = 0;
+  const aiShow = V.prep && V.hasAi ? aiVisible() : [];
   const cell = (s, r) => {
     const ms = V.marks.filter((m) => (V.otherHl || mine(m))).map((m) => ({ ...m, ...placeOf(m, s.key, r.ri, r.text) })).filter((m) => m.ok);
     const h = s.key === "creative" ? hopeOf(r.text) : { hope: "", cut: 0 };
     const fr = findRanges(r.text, h.cut); found += fr.length;
-    return { h, html: paint(r.text, ms, { hide: h.cut, sent: V.sent, find: fr }) };
+    const ai = aiShow.filter((a) => a.at?.sec === s.key && Number(a.at?.row) === r.ri).map((a) => { const i = a.b ? r.text.indexOf(a.b) : -1; return i >= h.cut ? { id: a.id, s: i, e: i + a.b.length } : null; }).filter(Boolean);
+    return { h, html: paint(r.text, ms, { hide: h.cut, sent: V.sent, find: fr, ai }) };
   };
   const ent = (s, r) => {
     const c = cell(s, r);
@@ -1320,11 +1351,12 @@ function placeOf(m, sec, row, text) {
   const i = m.quote ? text.indexOf(m.quote) : -1;
   return i >= 0 ? { ok: true, s: i, e: i + m.quote.length } : { ok: false };
 }
-function paint(text, ms, { hide = 0, sent = false, find = [] } = {}) {
+function paint(text, ms, { hide = 0, sent = false, find = [], ai = [] } = {}) {
   // 글자 위치는 원래 글 그대로: 희망분야 머리는 숨긴 채 남기고(hidden), 문장 나누기는 감싸기만(글자를 더하지 않음)
   const cuts = new Set([0, text.length, hide]);
   ms.forEach((m) => { cuts.add(m.s); cuts.add(m.e); });
   find.forEach((f) => { cuts.add(f.s); cuts.add(f.e); });
+  ai.forEach((f) => { cuts.add(f.s); cuts.add(f.e); });
   const sents = [hide];
   if (sent) { const re = /\.(\s+)(?=\S)/g; let m; while ((m = re.exec(text))) { const b = m.index + m[0].length; if (b > hide) { sents.push(b); cuts.add(b); } } }
   const pts = [...cuts].filter((x) => x >= 0 && x <= text.length).sort((a, b) => a - b);
@@ -1333,8 +1365,9 @@ function paint(text, ms, { hide = 0, sent = false, find = [] } = {}) {
     const a = pts[i], b = pts[i + 1]; if (a < hide) continue;
     if (sent && sents.includes(a)) { if (open) h += "</span>"; h += '<span class="s">'; open = true; }
     const seg = text.slice(a, b);
-    const top = ms.filter((m) => m.s <= a && m.e >= b).at(-1);
+    const top = ms.filter((m) => m.s <= a && m.e >= b).at(-1), ax = ai.find((f) => f.s <= a && f.e >= b);
     h += top ? `<mark class="${markStageCls(top)}${top.kind === "q" ? " q" : ""}" data-mk="${esc(top.id)}">${maskSpans(seg)}</mark>`
+      : ax ? `<mark class="ai" data-ai="${esc(ax.id)}">${maskSpans(seg)}</mark>`
       : find.some((f) => f.s <= a && f.e >= b) ? `<mark class="rv-find">${maskSpans(seg)}</mark>` : maskSpans(seg);
   }
   return h + (open ? "</span>" : "");
@@ -1414,13 +1447,14 @@ function cards() {
   const stageOf = (q) => Number(q.stage) || Number(String(q.category || "").match(/^(\d)차/)?.[1]) || 0;
   const at = (x) => x.createdAt?.seconds || 0;
   const out = [];
-  V.pending.forEach((p) => out.push({ key: "p:" + p.id, pend: p.id, text: p.text, basis: p.basis, followUps: p.followUps || [], stage: Number(p.stage), by: p.by, mine: p.byUid === me, status: "after", kind: "teacher", at: at(p) }));
+  V.pending.forEach((p) => out.push({ key: "p:" + p.id, pend: p.id, text: p.text, basis: p.basis, followUps: p.followUps || [], stage: Number(p.stage), by: p.by, mine: p.byUid === me, status: "after", kind: "teacher", at: at(p),
+    card: p.card || null, ai: !!p.aiId }));
   V.pqs.forEach((q) => {
     const stu = q.by === "student";
-    const rec = q.source === "record" || q.source === "meeting";
+    const rec = q.source === "record" || q.source === "meeting" || q.source === "ai";
     const mine = !stu && ((rec && !!myNm && q.addedBy === myNm) || V.marks.some((m) => m.qid === q.id && m.byUid === me));
     out.push({ key: "q:" + q.id, pq: q.id, text: q.text, basis: q.basis, followUps: q.followUps || [], stage: stageOf(q), by: stu ? "학생" : (q.addedBy || "선생님"),
-      mine, status: "pub", kind: stu ? "student" : rec ? "teacher" : "old", at: at(q) });
+      mine, status: "pub", kind: stu ? "student" : rec ? "teacher" : "old", at: at(q), card: q.card || null, ai: q.source === "ai" || !!q.aiId });
   });
   // 내 질문: 이 화면에서 방금 만든 것이 맨 위(새것 먼저), 그다음 만든 순서
   const fresh = (c) => V.newIds.indexOf(c.pend || c.pq);
@@ -1437,22 +1471,20 @@ function drawSide() {
     // 질문 준비: [뽑은 질문 | 다른 질문] · 물어봄·답 메모·↻ 다시 없음 · 내 질문은 [고치기], 공개 전은 [지우기]
     $("#rvQn").textContent = all.filter((c) => c.mine).length;
     $("#rvPn").textContent = all.filter((c) => !c.mine).length;
+    if ($("#rvAn")) $("#rvAn").textContent = aiVisible().length;
     if (V.tab === "new") return;
+    if (V.tab === "ai") return drawAi(sb);
     const list = all.filter((c) => (V.tab === "other") !== c.mine);
     sb.innerHTML = list.map((c) => {
-      if (V.editQ === c.key) return `<div class="rv-card rv-edit" data-card="${esc(c.key)}">
-        <div class="row">${cardTag(c)}<span class="muted sm">고치는 중</span></div>
-        <div class="field"><label>질문</label><textarea data-e="text" rows="3">${esc(c.text)}</textarea></div>
-        <div class="field"><label>꼬리질문 (선택 · 한 줄에 하나)</label><textarea data-e="fu" rows="2">${esc(c.followUps.join("\n"))}</textarea></div>
-        ${c.pend ? `<div class="field"><label>공개 시점</label>
+      // [고치기]: 질문·꼬리질문 + 학생 암기 카드에 나갈 내용(핵심 키워드·개념·정리할 것·답변 포인트) — 카드가 없는 예전 질문은 빈 칸으로 열림
+      if (V.editQ === c.key) return edHtml(edOf(c), { key: c.key, head: `${cardTag(c)}<span class="muted sm">고치는 중 · 질문과 학생 암기 카드에 나갈 내용</span>`,
+        extra: c.pend ? `<div class="field"><label>공개 시점</label>
           <label class="inline-check"><input type="radio" name="rvEPub" value="after" checked> 면접 뒤 공개</label>
           <label class="inline-check"><input type="radio" name="rvEPub" value="now"> 바로 공개 <span class="muted sm">(학생 '내 생기부 면접'에 더해져요)</span></label></div>`
-          : '<div class="muted sm">이미 공개된 질문이라 공개 시점은 그대로예요.</div>'}
-        <div class="muted sm" data-e="err" style="color:var(--danger)"></div>
-        <div class="row"><button type="button" class="btn-sm" data-ex>취소</button><div class="spacer"></div><button type="button" class="btn-primary btn-sm" data-eok>저장</button></div></div>`;
+          : '<div class="muted sm">이미 공개된 질문이라 공개 시점은 그대로예요.</div>' });
       const mk = V.marks.find((m) => m.qid === (c.pend || c.pq));
       return `<div class="rv-card" data-card="${esc(c.key)}" ${mk ? `data-mk="${esc(mk.id)}"` : ""}>
-        <div class="row">${cardTag(c)}<span class="muted sm">${esc(c.by || "")}${c.mine ? " (나)" : ""}</span><div class="spacer"></div><span class="badge ${c.status === "after" ? "badge-orange" : "badge-green"}">${c.status === "after" ? "면접 뒤 공개" : "공개됨"}</span></div>
+        <div class="row">${cardTag(c)}<span class="muted sm">${esc(c.by || "")}${c.mine ? " (나)" : ""}${c.ai ? " · AI 초안에서" : ""}${c.card?.t ? ` · 기출 유형 · ${esc(c.card.t)}` : ""}</span><div class="spacer"></div><span class="badge ${c.status === "after" ? "badge-orange" : "badge-green"}">${c.status === "after" ? "면접 뒤 공개" : "공개됨"}</span></div>
         <div class="rv-qt">${esc(c.text)}</div>${c.followUps.length ? `<div class="muted sm">↳ ${c.followUps.map(esc).join(" · ")}</div>` : ""}
         ${c.basis ? `<div class="rv-basis">${maskSpans(c.basis)}</div>` : ""}
         ${c.mine ? `<div class="row rv-acts"><button type="button" class="btn-sm" data-edq>고치기</button>${c.pend ? '<button type="button" class="btn-sm btn-danger" data-delq>지우기</button>' : ""}</div>` : ""}</div>`;
@@ -1460,8 +1492,9 @@ function drawSide() {
     $$("[data-card]", sb).forEach((el) => {
       const c = all.find((x) => x.key === el.dataset.card);
       $("[data-edq]", el)?.addEventListener("click", () => { V.editQ = c.key; drawSide(); });
-      $("[data-ex]", el)?.addEventListener("click", () => { V.editQ = null; drawSide(); });
-      $("[data-eok]", el)?.addEventListener("click", () => saveEditQ(c, el));
+      $("[data-ecancel]", el)?.addEventListener("click", () => { V.editQ = null; drawSide(); });
+      $("[data-esave]", el)?.addEventListener("click", () => saveEditQ(c, el));
+      if (el.classList.contains("ai-ed")) bindEd(el);
       $("[data-delq]", el)?.addEventListener("click", () => delPendingQ(c));
     });
     return;
@@ -1513,27 +1546,30 @@ async function delPendingQ(c) {
 }
 // [고치기] (질문 준비, 내 질문만): 질문·꼬리질문. 공개 시점은 공개 전 질문만 '바로 공개'로 바꿀 수 있음 (사용자 결정 2026-11-01 — 예상질문은 더하기만)
 async function saveEditQ(c, el) {
-  const text = $("[data-e=text]", el).value.trim(), fu = $("[data-e=fu]", el).value.split("\n").map((x) => x.trim()).filter(Boolean);
+  const e = readEd(el), text = e.q, fu = e.fu.map((x) => x.q);
   const bad = !text ? "질문을 적어 주세요." : badQuestionText(text + "\n" + fu.join("\n"), V.no);
   if (bad) { $("[data-e=err]", el).textContent = bad; return; }
   const now = c.pend && $("input[name=rvEPub]:checked", el)?.value === "now";
-  $("[data-eok]", el).disabled = true;
+  // 암기 카드: 이미 있거나 이번에 키워드·개념·정리할 것·답변 포인트를 적었을 때만
+  const card = c.card || hasCard(e) ? { ...(c.card || basisParts(c.basis)), kw: e.kw, con: e.con, chk: e.chk, fu: e.fu } : null;
+  const upd = { text, followUps: fu, ...(card ? { card } : {}) };
+  $("[data-esave]", el).disabled = true;
   try {
     if (c.pend) {
-      await updateDoc(doc(db, "records", V.no, "pending", c.pend), { text, followUps: fu });
-      const p = V.pending.find((x) => x.id === c.pend); Object.assign(p, { text, followUps: fu });
+      await updateDoc(doc(db, "records", V.no, "pending", c.pend), upd);
+      const p = V.pending.find((x) => x.id === c.pend); Object.assign(p, upd);
       if (now) {
         await publishPending(V.no, [p]);
         await reloadQs();
         toast("질문을 학생에게 공개했어요");
       } else toast("고쳤어요");
     } else {
-      await updateDoc(doc(db, "students", V.no, "personalQuestions", c.pq), { text, followUps: fu });
-      Object.assign(V.pqs.find((x) => x.id === c.pq) || {}, { text, followUps: fu });
+      await updateDoc(doc(db, "students", V.no, "personalQuestions", c.pq), upd);
+      Object.assign(V.pqs.find((x) => x.id === c.pq) || {}, upd);
       toast("고쳤어요");
     }
     V.editQ = null; drawDoc(); drawSide();
-  } catch (e) { $("[data-eok]", el).disabled = false; showError(e, "질문 고치기"); }
+  } catch (err) { $("[data-esave]", el).disabled = false; showError(err, "질문 고치기"); }
 }
 async function reloadQs() {
   const [mk, pd, pq] = await Promise.all([getDocs(collection(db, "records", V.no, "marks")), getDocs(collection(db, "records", V.no, "pending")), getDocs(collection(db, "students", V.no, "personalQuestions"))]);
@@ -1594,6 +1630,252 @@ async function toMeetingForm() {
   const existing = p?.id && (S.meetings || []).find((m) => m.id === p.id && !m.planned);
   openMeetingForm(existing ? { id: existing.id, fromRecord: { stage: V.stage, rows } }
     : { studentNo: V.no, preset: p && p.id ? { ...p, stage: p.stage || V.stage } : null, fromRecord: { stage: V.stage, rows } });
+}
+
+// ================= AI 맞춤 예상질문 (2026-11-03, spec-ai-questions) =================
+// 초안(records/{학번}/aiq)은 booth-ai Apps Script 가 만들고, 선생님이 질문 준비 화면의 [AI 초안] 탭에서 채택·고치기·버리기.
+// 채택 = 지금 [질문 만들기] 저장과 같은 길 (면접 뒤 공개 → pending, 바로 공개 → personalQuestions source "ai") + 하이라이트 + 암기 카드(card)
+// 카드: { kw[], con[{t,d}], chk[], fu[{q,pt}], g(묶음 이름), t(기출 유형), sec, b } — Firestore 는 배열 안 배열을 못 담아 {t,d}·{q,pt} 꼴
+const univShort = (u) => univName(u).replace(/대학교/g, "대");
+const PRI_LABEL = { A: "A 최우선", B: "B 권장", C: "C 확인" };
+const TIER_ORDER = { 핵심: 0, 심화: 1, 확장: 2, 맞춤: 3 };
+const SRC_CLS = { exact: "exact", "same-uni": "fallback", fallback: "fallback", none: "fallback" };
+const SRC_NOTE = "출처: 충북교육청 면접후기 사례집 — 질문만 참고, 선배 답변은 쓰지 않음";
+// 대학 묶음: aimeta.unis 중 지금 면접일 자료에 있는 대학만 (1차 불합격은 흐리게 · 초안 숨김)
+function aiUnis() {
+  const ivs = V.st.universities || [];
+  return (V.aimeta?.unis || []).map((u) => { const iv = ivs.find((x) => x.id === u.iid); return iv ? { ...u, failed: announceFailed(iv) } : null; }).filter(Boolean);
+}
+const grpLabel = (g) => { if (g === "common") return "공통"; const u = (V?.aimeta?.unis || []).find((x) => x.key === g); return u ? [univShort(u.univ), u.dept].filter(Boolean).join(" ") : "대학 맞춤"; };
+function aiVisible() {
+  const ok = new Set(aiUnis().filter((u) => !u.failed).map((u) => u.key));
+  return (V.aiq || []).filter((a) => a.status === "new" && (a.grp === "common" || ok.has(a.grp)))
+    .sort((a, b) => (a.pri || "B").localeCompare(b.pri || "B") || (TIER_ORDER[a.tier] ?? 9) - (TIER_ORDER[b.tier] ?? 9));
+}
+const arr = (x) => (Array.isArray(x) ? x : []);
+// 학생 암기 카드 뒷면 미리 보기 (핵심 키워드 → 핵심 개념 → 학생이 정리할 것 → 꼬리질문)
+function backHtml(o) {
+  return `<div class="pv">${arr(o.kw).length ? `<div class="pv-l">핵심 키워드</div><div class="ai-kw">${arr(o.kw).map(esc).join(" <i>→</i> ")}</div>` : ""}
+    ${arr(o.con).length ? `<div class="pv-l">핵심 개념 <span class="aiw">AI 작성 — 교과 내용과 맞는지 확인해 주세요</span></div><div class="pv-con">${arr(o.con).map((c) => `<div><b>${esc(c.t)}</b> ${esc(c.d)}</div>`).join("")}</div>` : ""}
+    ${arr(o.chk).length ? `<div class="pv-l">학생이 직접 정리할 것</div><div class="chk">${arr(o.chk).map((c) => `<span>[${esc(c)}]</span>`).join(" ")}</div>` : ""}
+    ${arr(o.fu).length ? `<div class="pv-l">꼬리질문 대비</div><ul>${arr(o.fu).map((f) => `<li>${esc(f.q)}${f.pt ? `<br><span class="pt">답변 포인트 · ${esc(f.pt)}</span>` : ""}</li>`).join("")}</ul>` : ""}
+    ${!arr(o.kw).length && !arr(o.con).length && !arr(o.chk).length && !arr(o.fu).length ? '<div class="muted sm">아직 카드 내용이 없어요 — 핵심 키워드를 적으면 학생 암기 카드가 돼요</div>' : ""}</div>`;
+}
+function aiCardHtml(a) {
+  return `<div class="rv-card ai-card" data-ai="${esc(a.id)}">
+    <div class="row"><span class="ai-tag">AI 초안</span><span class="tier">${esc(a.tier || "")}</span><span class="pri p${esc(a.pri || "B")}">${PRI_LABEL[a.pri] || esc(a.pri || "")}</span>${a.type ? `<span class="kt">기출 유형 · ${esc(a.type)}</span>` : ""}${a.edited ? '<span class="edt">고침</span>' : ""}<div class="spacer"></div><span class="muted sm">근거 ✓</span></div>
+    <div class="rv-qt">${esc(a.q)}</div>
+    ${arr(a.intent).length ? `<div class="ai-int">의도 · ${arr(a.intent).map(esc).join(" · ")}</div>` : ""}
+    <div class="rv-basis">${esc(a.sec || "")} "<u>${maskSpans(a.b || "")}</u>"</div>
+    ${arr(a.kw).length ? `<div class="ai-kw">${arr(a.kw).map(esc).join(" <i>→</i> ")}</div>` : ""}
+    <details class="ai-back"><summary>학생 암기 카드 뒷면 미리 보기${arr(a.con).length ? ` · 개념 ${arr(a.con).length}` : ""} · 꼬리질문 ${arr(a.fu).length}</summary>${backHtml(a)}</details>
+    <div class="row rv-acts"><button type="button" class="btn-sm btn-primary" data-adopt>채택</button><button type="button" class="btn-sm" data-edit>고치기</button><div class="spacer"></div><button type="button" class="btn-sm btn-danger" data-drop>버리기</button></div></div>`;
+}
+// 편집 칸 (AI 초안 · 뽑은 질문 같이 씀): 질문 / 핵심 키워드(→) / 핵심 개념(용어 — 정리) / 정리할 것 / 꼬리질문 | 답변 포인트 + 미리 보기
+const edOf = (c) => ({ q: c.text, kw: arr(c.card?.kw), con: arr(c.card?.con), chk: arr(c.card?.chk), fu: arr(c.card?.fu).length ? c.card.fu : c.followUps.map((q) => ({ q, pt: "" })) });
+function edHtml(o, { key = "", ai = "", head = "", extra = "" } = {}) {
+  return `<div class="rv-card rv-edit ai-card ai-ed"${key ? ` data-card="${esc(key)}"` : ""}${ai ? ` data-ed="${esc(ai)}"` : ""}><div class="row">${head}</div>
+    <label>질문<textarea data-f="q" rows="2">${esc(o.q || "")}</textarea></label>
+    <label>핵심 키워드 <span class="hint">→ 로 나눠 적기</span><input data-f="kw" value="${esc(arr(o.kw).join(" → "))}"></label>
+    <label>핵심 개념 <span class="hint">한 줄에 하나 · 용어 — 한 줄 정리</span><textarea data-f="con" rows="3">${esc(arr(o.con).map((c) => `${c.t} — ${c.d}`).join("\n"))}</textarea></label>
+    <label>학생이 직접 정리할 것 <span class="hint">한 줄에 하나</span><textarea data-f="chk" rows="2">${esc(arr(o.chk).join("\n"))}</textarea></label>
+    <label>꼬리질문 | 답변 포인트 <span class="hint">한 줄에 하나</span><textarea data-f="fu" rows="3">${esc(arr(o.fu).map((f) => f.pt ? `${f.q} | ${f.pt}` : f.q).join("\n"))}</textarea></label>
+    <div class="pvw"><b>학생 카드 뒷면 미리 보기</b><div></div></div>${extra}
+    <div class="muted sm" data-e="err" style="color:var(--danger)"></div>
+    <div class="row"><button type="button" class="btn-sm" data-ecancel>취소</button><div class="spacer"></div><button type="button" class="btn-sm btn-primary" data-esave>저장</button></div></div>`;
+}
+const edLines = (t) => String(t || "").split("\n").map((x) => x.trim()).filter(Boolean);
+function readEd(el) {
+  const v = (k) => $(`[data-f="${k}"]`, el).value;
+  return {
+    q: v("q").trim(),
+    kw: v("kw").split(/→|->/).map((x) => x.trim()).filter(Boolean).slice(0, 8),
+    con: edLines(v("con")).slice(0, 4).map((l) => { const k = l.search(/\s[—–-]\s|—/); return k < 0 ? { t: l, d: "" } : { t: l.slice(0, k).trim(), d: l.slice(k).replace(/^\s*[—–-]\s*/, "").trim() }; }),
+    chk: edLines(v("chk")).slice(0, 5),
+    fu: edLines(v("fu")).slice(0, 6).map((l) => { const [q, ...p] = l.split("|"); return { q: q.trim(), pt: p.join("|").trim() }; }).filter((f) => f.q)
+  };
+}
+function bindEd(el) { const pv = () => { $(".pvw > div", el).innerHTML = backHtml(readEd(el)); }; pv(); el.addEventListener("input", pv); }
+const hasCard = (e) => e.kw.length > 0 || e.con.length > 0 || e.chk.length > 0 || e.fu.some((f) => f.pt);
+// 예전 질문 근거 '구역 · 칸 "글"' → { sec, b } (카드 뒷면 '내 학생부'용)
+function basisParts(basis) { const m = String(basis || "").match(/^(.*?)\s*"([^"]+)"\s*$/); return m ? { g: "", t: "", sec: m[1].trim(), b: m[2].replace(/…$/, "") } : { g: "", t: "", sec: "", b: String(basis || "") }; }
+
+function drawAi(sb) {
+  const unis = aiUnis(), vis = aiVisible(), ax = arr(V.aimeta?.axes);
+  if (V.aiGrp !== "common" && !unis.some((u) => u.key === V.aiGrp)) V.aiGrp = "common";
+  const n = (g) => vis.filter((a) => a.grp === g).length;
+  const kindLab = (u) => u.kind === "passage" ? "제시문" : u.kind === "given" ? "대학 제공 질문" : "";
+  const chip = (u) => `<button type="button" data-gc="${esc(u.key)}" class="${V.aiGrp === u.key ? "on" : ""}${u.failed ? " dim" : ""}">${esc(grpLabel(u.key))} ${u.failed ? "· 1차 불합격" : kindLab(u) ? "· " + kindLab(u) : u.todo ? "· 아직 못 만듦" : `<span>${n(u.key)}</span>`}</button>`;
+  const g = V.aiGrp, u = unis.find((x) => x.key === g);
+  const list = vis.filter((a) => a.grp === g);
+  const editing = (a) => V.aiEdit === a.id;
+  const cardsHtml = list.map((a) => editing(a) ? edHtml(a, { ai: a.id, head: '<span class="ai-tag">AI 초안</span><b>고치기</b><span class="muted sm">질문과 학생 암기 카드에 나갈 내용</span>' }) : aiCardHtml(a)).join("");
+  let body = "";
+  if (!u) body = cardsHtml || `<div class="muted sm">${V.aimeta?.status === "running" ? "AI 가 만드는 중이에요… 질문 탭에서 진행을 볼 수 있어요." : "남은 공통 초안이 없어요."}</div>`;
+  else {
+    const src = u.src || {};
+    body = `<div class="uhd"><b>${esc(grpLabel(u.key))}</b> <span class="muted sm">${esc([u.admission, u.format ? "면접 유형 " + u.format : ""].filter(Boolean).join(" · "))}</span></div>
+      <div class="src ${SRC_CLS[src.kind] || "fallback"}"><b>${src.kind === "exact" ? "✓" : "⚠"} ${esc(src.title || "기출 정보 없음")}</b><div class="muted sm">${src.who ? esc(src.who) + " · " : ""}판단: ${esc(u.why || src.why || "")} · ${SRC_NOTE}</div></div>
+      ${arr(u.guide).length ? `<div class="guide"><b>면접 안내 (기출 요약)</b><ul>${u.guide.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
+      ${u.failed ? '<div class="muted sm">1차 불합격으로 남긴 대학이라 이 대학 초안은 숨겼어요. 채택한 질문은 그대로예요. 결과를 되돌리면 다시 보여요.</div>'
+        : u.todo ? '<div class="muted sm">시간이 모자라 아직 못 만들었어요. 질문 탭 [대학별 다시 만들기]를 누르면 이 대학부터 만들어요.</div>'
+        : (u.kind === "passage" || u.kind === "given") ? "" : cardsHtml || '<div class="muted sm">남은 초안이 없어요.</div>'}
+      ${!u.failed && arr(u.past).length ? `<div class="guide"><b>${u.kind === "record" || u.kind === "personality" ? "제시문 기출 질문" : "기출 질문"} (${u.past.length})</b><ol>${u.past.map((x) => `<li>${esc(x)}</li>`).join("")}</ol>
+        ${u.kind === "passage" || u.kind === "given" ? `<div class="muted sm">${kindLab(u)} 면접이라 학생부 질문은 만들지 않았어요.</div>` : ""}</div>` : ""}`;
+  }
+  sb.innerHTML = `<div class="ai-ban"><b>AI 맞춤 초안 · ${esc(V.no)} ${esc(V.st.name)} <span class="muted sm" style="font-weight:500">선생님만 보임</span></b>
+      ${ax.length ? `<details><summary style="cursor:pointer;font-weight:700;font-size:.8rem">면접 핵심 축 ${ax.length}</summary><ol>${ax.map((x) => `<li>${esc(x)}</li>`).join("")}</ol></details>` : ""}
+      <div class="muted sm">근거 문장이 학생부에 있는 것만 남겼어요. 채택하면 내 질문(${V.stage}차)이 되고 아래 공개 시점에 맞춰 학생에게 보여요. 다른 배정 선생님도 같은 초안을 봐요 — 먼저 채택한 사람 것이 돼요.</div>
+      <div class="opts"><span class="muted sm">채택하면</span><label class="inline-check"><input type="radio" name="aipub" value="after"${V.aiPub !== "now" ? " checked" : ""}> 면접 뒤 공개</label><label class="inline-check"><input type="radio" name="aipub" value="now"${V.aiPub === "now" ? " checked" : ""}> 바로 공개</label></div></div>
+    <div class="gchips"><button type="button" data-gc="common" class="${g === "common" ? "on" : ""}">공통 <span>${n("common")}</span></button>${unis.map(chip).join("")}</div>
+    <div data-g="${esc(g)}">${body}</div>`;
+  $$("input[name=aipub]", sb).forEach((r) => r.onchange = () => { V.aiPub = r.value; });
+  $$("[data-gc]", sb).forEach((b) => b.onclick = () => { V.aiGrp = b.dataset.gc; V.aiEdit = null; drawSide(); });
+  $$(".ai-card[data-ai]", sb).forEach((el) => {
+    const a = V.aiq.find((x) => x.id === el.dataset.ai); if (!a) return;
+    const mk = () => document.querySelector(`#rvIn mark.ai[data-ai="${CSS.escape(a.id)}"]`);
+    el.addEventListener("mouseenter", () => mk()?.classList.add("flash"));
+    el.addEventListener("mouseleave", () => mk()?.classList.remove("flash"));
+    $("[data-adopt]", el)?.addEventListener("click", () => adoptAi(a, $("[data-adopt]", el)));
+    $("[data-edit]", el)?.addEventListener("click", () => { V.aiEdit = a.id; drawSide(); });
+    $("[data-drop]", el)?.addEventListener("click", () => dropAi(a));
+  });
+  $$(".ai-ed[data-ed]", sb).forEach((el) => {
+    const a = V.aiq.find((x) => x.id === el.dataset.ed); if (!a) return;
+    bindEd(el);
+    $("[data-ecancel]", el).onclick = () => { V.aiEdit = null; drawSide(); };
+    $("[data-esave]", el).onclick = () => saveAiEdit(a, el);
+  });
+}
+function focusAi(id) {
+  const a = V?.aiq.find((x) => x.id === id); if (!a) return;
+  V.tab = "ai"; V.aiGrp = a.grp;
+  $$(".rv-tabs [data-tab]").forEach((x) => x.classList.toggle("on", x.dataset.tab === "ai")); drawSide();
+  const el = $(`#rvSb .ai-card[data-ai="${CSS.escape(id)}"]`);
+  el?.scrollIntoView({ block: "center", behavior: "smooth" }); el?.classList.add("flash"); setTimeout(() => el?.classList.remove("flash"), 1200);
+}
+async function saveAiEdit(a, el) {
+  const e = readEd(el);
+  const bad = !e.q ? "질문을 적어 주세요." : !e.kw.length ? "핵심 키워드를 하나 이상 적어 주세요." : badQuestionText([e.q, ...e.fu.map((f) => f.q)].join("\n"), V.no);
+  if (bad) { $("[data-e=err]", el).textContent = bad; return; }
+  $("[data-esave]", el).disabled = true;
+  try {
+    await updateDoc(doc(db, "records", V.no, "aiq", a.id), { q: e.q, kw: e.kw, con: e.con, chk: e.chk, fu: e.fu, edited: true });
+    Object.assign(a, { q: e.q, kw: e.kw, con: e.con, chk: e.chk, fu: e.fu, edited: true });
+    V.aiEdit = null; drawSide();
+    toast("고쳤어요 — 채택하면 이 내용이 학생 암기 카드에 나가요");
+  } catch (err) { $("[data-esave]", el).disabled = false; showError(err, "AI 초안 고치기"); }
+}
+async function dropAi(a) {
+  try {
+    await updateDoc(doc(db, "records", V.no, "aiq", a.id), { status: "dropped", droppedBy: myName() || S.ctx.user.email, droppedAt: serverTimestamp() });
+    a.status = "dropped"; drawDoc(); drawSide(); toast("버렸어요");
+  } catch (e) { showError(e, "AI 초안 버리기"); }
+}
+// 채택: 트랜잭션으로 아직 'new' 인지 확인하고(먼저 채택한 사람 것) 질문·하이라이트·카드를 한 번에
+async function adoptAi(a, btn) {
+  const pub = V.aiPub === "now" ? "now" : "after", no = V.no, me = myName() || S.ctx.user.email, stage = V.stage;
+  const bad = badQuestionText([a.q, ...arr(a.fu).map((f) => f.q)].join("\n"), no);
+  if (bad) return toast(bad, "error", 6000);
+  const card = { kw: arr(a.kw), con: arr(a.con), chk: arr(a.chk), fu: arr(a.fu), g: grpLabel(a.grp), t: a.type || "", sec: a.sec || "", b: a.b || "" };
+  const basis = `${a.sec || ""} "${a.b || ""}"`.trim();
+  const followUps = arr(a.fu).map((f) => f.q);
+  // 하이라이트 자리: 초안이 가리키는 칸에서 근거를 찾고, 없으면 학생부 전체에서
+  const rows = V.rec.sections || [];
+  let hit = null;
+  const row = rows.find((x) => x.key === a.at?.sec)?.rows?.[Number(a.at?.row)];
+  const i = row && a.b ? row.text.indexOf(a.b) : -1;
+  hit = i >= 0 ? { sec: a.at.sec, row: Number(a.at.row), start: i, end: i + a.b.length } : findQuote(rows, { quote: a.b, sec: a.at?.sec, row: Number(a.at?.row) });
+  const aref = doc(db, "records", no, "aiq", a.id), mref = doc(collection(db, "records", no, "marks"));
+  const ref = pub === "after" ? doc(collection(db, "records", no, "pending")) : doc(collection(db, "students", no, "personalQuestions"));
+  const data = pub === "after"
+    ? { text: a.q, followUps, basis, sec: a.at?.sec || "", stage, by: me, byUid: S.ctx.user.uid, ...(hit ? { markId: mref.id } : {}), card, aiId: a.id, createdAt: serverTimestamp() }
+    : { text: a.q, basis, followUps, category: `${stage}차 선생님 질문`, type: "document", by: "teacher", addedBy: me, source: "ai", stage, card, aiId: a.id, createdAt: serverTimestamp() };
+  const mark = hit ? { kind: "q", stage, by: me, byUid: S.ctx.user.uid, ...hit, quote: a.b, at: Date.now(), qid: ref.id } : null;
+  if (btn) btn.disabled = true;
+  try {
+    let cur = null;
+    if (pub === "now") cur = (await getDocs(collection(db, "students", no, "personalQuestions"))).docs.map((d) => ({ id: d.id, ...d.data() }));
+    await runTransaction(db, async (tx) => {
+      const s = await tx.get(aref);
+      if (!s.exists() || s.data().status !== "new") throw Object.assign(new Error("taken"), { code: "taken" });
+      tx.update(aref, { status: "adopted", adoptedBy: me, adoptedAt: serverTimestamp(), toId: ref.id, toPub: pub });
+      tx.set(ref, data);
+      if (mark) tx.set(mref, mark);
+    });
+    a.status = "adopted";
+    if (pub === "now") {
+      const stats = pqStats([...cur, { ...data, by: "teacher" }]);
+      await updateDoc(doc(db, "students", no), stats);   // 개수 칸 (캐시 목록이라 쓰기 래퍼로)
+      Object.assign(studentByNo(no) || {}, stats);
+      V.pqs = [...cur, { id: ref.id, ...data, createdAt: { seconds: Date.now() / 1000 } }];
+      log(no, "publish");
+    } else V.pending.push({ id: ref.id, ...data, createdAt: { seconds: Date.now() / 1000 } });
+    if (mark) V.marks.push({ id: mref.id, ...mark });
+    V.newIds.push(ref.id);
+    drawDoc(); drawSide();
+    toast(pub === "now" ? "채택했어요 — 바로 공개, 학생 암기 카드에도 생겼어요" : `채택했어요 — ${stage}차 면접 기록을 저장할 때 학생에게 공개돼요`);
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    if (e?.code === "taken") { toast("다른 선생님이 먼저 채택했거나 버린 초안이에요.", "error"); a.status = "taken"; drawDoc(); drawSide(); }
+    else showError(e, "AI 초안 채택");
+  }
+}
+
+// ---- 만들기·진행 표시 (학생부 넣기 5단계 · 질문 탭 [AI 맞춤 질문]이 같이 씀)
+// Apps Script 는 요청 안에서 끝까지 돎(최대 6분). 진행은 aimeta.step 을 구독해서 보여 줌. 창을 닫아도 서버 실행은 이어짐
+// 끝난 뒤 '아직 못 만듦' 대학이 있고 화면이 열려 있으면 그 대학만 한 번 더 자동으로 (사용자 결정 2026-11-03)
+const AI_STEPS_BIG = (unis) => ["학생부 읽기 (가림본)", `지원 대학·전형·학과 확인 (대학별 면접일 자료)${unis ? " — " + unis : ""}`, "기출 찾기 (충북교육청 면접후기 사례집)", "공통 질문 · 대학별 맞춤 질문 만들기", "근거 문장이 학생부에 있는지 확인", "암기 카드(핵심 키워드·확인할 것) 만들기"];
+const AI_STEPS_SM = ["저장된 학생부 읽기 (가림본)", "지원 대학·전형·학과 확인", "기출 찾기 (면접후기 사례집)", "공통·대학별 맞춤 질문 만들기", "근거 문장 확인", "암기 카드 만들기"];
+export const AI_ERR = {
+  no_consent: "AI 사용 동의가 없어요. 동의를 받았다고 표시한 뒤 다시 눌러 주세요.", running: "이미 만드는 중이에요. 잠시 뒤 다시 확인해 주세요.",
+  limited: "오늘 AI 맞춤 질문 한도(학생 수)를 넘었어요. 내일 다시 해 주세요.", no_access: "이 학생 학생부를 볼 수 있는 선생님(배정 선생님·관리자)만 만들 수 있어요.",
+  no_record: "학생부가 없어요.", auth: "로그인을 다시 확인해 주세요.", timeout: "응답을 기다리다 끊겼어요. 서버에서는 계속 만들 수 있어요 — 잠시 뒤 질문 탭에서 확인해 주세요.",
+  network: "연결이 끊겼어요. 서버에서는 계속 만들 수 있어요 — 잠시 뒤 질문 탭에서 확인해 주세요."
+};
+export const aiErrText = (r) => AI_ERR[r?.error] || `AI 맞춤 질문을 만들지 못했어요${r?.error ? ` (${r.error})` : ""}. 잠시 뒤 다시 해 주세요.`;
+export async function runAiq(no, { scope = "all", only = null, consent = false, box, big = false, onDone = null } = {}) {
+  const st = studentByNo(no), by = myName() || S.ctx.user.email;
+  const uniNames = (st?.universities || []).filter((u) => !announceFailed(u)).map((u) => [univShort(u.univ), u.dept].filter(Boolean).join(" ")).join(" · ");
+  const labels = big ? AI_STEPS_BIG(uniNames) : AI_STEPS_SM;
+  const live = () => box?.isConnected;
+  const draw = (step, title = "맞춤 예상질문·암기 카드를 만들고 있어요") => {
+    if (!live()) return;
+    const ol = `<ol class="${big ? "" : "qai-run"}">${labels.map((t, i) => `<li class="${i < step ? "done" : i === step ? "on" : ""}"><i>${i < step ? "✓" : ""}</i>${esc(t)}</li>`).join("")}</ol>`;
+    box.innerHTML = big ? `<div class="row" style="gap:8px;align-items:center"><span class="ai-tag">AI</span><b>${esc(title)}</b><span class="muted sm">약 1~2분 · 창을 닫아도 계속돼요</span></div>${ol}` : ol;
+  };
+  draw(0);
+  const un = onSnapshot(doc(db, "records", no, "aimeta", "main"), (s) => { const m = s.exists() ? s.data() : null; if (m?.status === "running") draw(Number(m.step) || 0); }, () => {});
+  let res = await aiCall(S.ctx.user, "aiq", { no, scope, ...(only ? { only } : {}), consent, by });
+  if (res?.ok && res.todo?.length && live()) {
+    draw(3, "시간이 모자란 대학을 한 번 더 만들고 있어요");
+    const r2 = await aiCall(S.ctx.user, "aiq", { no, scope: "unis", only: res.todo, consent: false, by });
+    if (r2?.ok) res = { ...r2, first: res };
+  }
+  un();
+  let meta = null;
+  try { const m = await getDoc(doc(db, "records", no, "aimeta", "main")); meta = m.exists() ? m.data() : null; } catch (_) {}
+  if (live()) {
+    if (!res?.ok) box.innerHTML = `<div class="notice">${esc(aiErrText(res))}</div>`;
+    else {
+      box.innerHTML = (big ? `<div class="row" style="gap:8px;align-items:center"><span class="ai-tag">AI</span><b>맞춤 예상질문·암기 카드를 만들었어요</b></div>` : "") + aiSummaryHtml(meta, st)
+        + `<div class="muted sm">배정 선생님(1·2·3차)이 학생부 '질문 준비' 화면의 <b>AI 초안</b>에서 채택해야 학생에게 보여요.</div>
+        ${canSeeRec(st) ? '<div class="row" style="margin-top:6px"><button type="button" class="btn-sm btn-primary" data-aireview>AI 초안 검토하기 →</button></div>' : ""}`;
+      $("[data-aireview]", box)?.addEventListener("click", () => { if (big) { closeUpload(); window.dispatchEvent(new CustomEvent("records-changed", { detail: { no } })); } openRecordViewer(no, { mode: "prep", tab: "ai", onClose: () => onDone?.(res, meta, true) }); });
+    }
+  }
+  onDone?.(res, meta);
+  return res;
+}
+export function aiSummaryHtml(meta, st) {
+  const c = meta?.counts || {}, ivs = st?.universities || [];
+  const unis = (meta?.unis || []).filter((u) => { const iv = ivs.find((x) => x.id === u.iid); return iv && !announceFailed(iv); });
+  const nCom = c.common || 0;
+  const rows = [`<tr><td><b>공통</b></td><td>${nCom}개${nCom < 15 ? " — 학생부에서 근거가 충분한 것만" : ""}${c.dropped ? ` (근거를 학생부에서 못 찾은 ${c.dropped}개는 뺌)` : ""}</td></tr>`]
+    .concat(unis.map((u) => `<tr><td><b>${esc([univShort(u.univ), u.dept].filter(Boolean).join(" "))}</b></td><td>${u.todo ? "아직 못 만듦 — 질문 탭 [대학별 다시 만들기]"
+      : u.kind === "passage" || u.kind === "given" ? `${u.kind === "given" ? "대학 제공 질문" : "제시문"} 면접 — 학생부 질문 대신 기출 안내 · ${esc(u.src?.title || "")}`
+      : `맞춤 ${(c.byUni || {})[u.key] || 0}개 — ${esc(u.src?.title || "")}`}</td></tr>`));
+  return `<table class="ai-sum">${rows.join("")}</table>`;
 }
 
 // ================= E. 관리 화면 '학생부' =================

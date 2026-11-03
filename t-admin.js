@@ -1,7 +1,7 @@
 import {
   db, collection, doc, getDocs, setDoc, updateDoc, deleteDoc, writeBatch, query, where, serverTimestamp,
   $, $$, esc, toast, showError, copyText, issueAccount, loginDocId, randomPw, defaultEmail, createAuthUser,
-  deleteField, TRACKS, SPECIALS, isoDay, confirmBox, univName
+  deleteField, TRACKS, SPECIALS, isoDay, confirmBox, univName, aiCall
 } from "./common.js";
 import { S, register, rerender, loadAll, openModal, closeModal, opt, studentByNo, myName, readForm } from "./t-core.js";
 import { renderRecordAdmin } from "./t-record.js";
@@ -734,6 +734,49 @@ async function renderReviewExport() {
   draw();
 }
 
+// ================= AI 사용 비용 (2026-11-03, 관리자만) =================
+// booth-ai Apps Script 가 Claude 응답의 토큰 수로 기능별·월별로 계산해 쌓은 추정 비용 (부스 꼬리질문 · 부스 피드백 · AI 맞춤 질문)
+const AI_KIND = [["booth-follow", "부스 꼬리질문"], ["booth-report", "부스 피드백"], ["aiq", "AI 맞춤 질문"]];
+const modelName = (m) => ({ "claude-haiku-4-5": "Claude Haiku 4.5", "claude-sonnet-5-5": "Claude Sonnet 5.5", "claude-opus-5-5": "Claude Opus 5.5", "claude-opus-5": "Claude Opus 5", "claude-opus-4-8": "Claude Opus 4.8" })[m] || m;
+async function renderAiCost(box, data = null, month = "") {
+  if (!box) return;
+  const r = data || await aiCall(S.ctx.user, "usage", {}, 30000);
+  const t = $("#aiCostT", box); if (!t) return;
+  if (!r?.ok) { t.innerHTML = `<div class="muted">비용을 불러오지 못했어요 (${esc(r?.error || "연결 실패")}). booth-ai Apps Script 를 새 버전으로 배포했는지 확인해 주세요.</div>`; return; }
+  const now = new Date(), cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const months = [...new Set([cur, ...Object.keys(r.months || {})])].sort().reverse().slice(0, 6);
+  const m = month || cur, d = r.months?.[m] || { kinds: {}, aiq: {} }, krw = Number(r.krw) || 1400;
+  const won = (u) => u ? `$${u.toFixed(2)} <span class="muted">(약 ${(Math.round(u * krw / 100) * 100).toLocaleString("ko-KR")}원)</span>` : "—";
+  const M = (x) => `${((x || 0) / 1e6).toFixed(2)}M`;
+  const rows = AI_KIND.map(([k, lab]) => {
+    const x = d.kinds?.[k];
+    const ms = Object.entries(x?.models || {}).sort((a, b) => b[1] - a[1]);
+    const model = ms.length ? modelName(ms[0][0]) + (ms.length > 1 ? ` 외 ${ms.length - 1}` : "") : { "booth-follow": "Claude Haiku 4.5", "booth-report": "Claude Sonnet 5.5", aiq: "Claude Opus 5.5" }[k];
+    const calls = x ? `${x.calls.toLocaleString("ko-KR")}회${k === "aiq" && d.aiq?.students ? ` · 학생 ${d.aiq.students}명` : ""}` : "—";
+    return { k, usd: x?.usd || 0, html: `<tr class="${k === "aiq" ? "q" : ""}"><td><b>${lab}</b></td><td>${esc(model)}</td><td class="n">${calls}</td><td class="n">${x ? `${M((x.in || 0) + (x.cacheRead || 0) + (x.cacheWrite || 0))} / ${M(x.out)}` : "—"}</td><td class="n">${won(x?.usd || 0)}</td></tr>` };
+  });
+  const sum = rows.reduce((a, x) => a + x.usd, 0), q = d.aiq || {}, aiqUsd = d.kinds?.aiq?.usd || 0;
+  t.innerHTML = `<div class="mo">${months.map((x) => `<button type="button" data-mo="${x}" class="${x === m ? "on" : ""}">${Number(x.slice(5))}월${x === cur ? " (이번 달)" : ""}</button>`).join("")}</div>
+    <div class="ai-tw"><table><tr><th>기능</th><th>모델</th><th class="n">호출</th><th class="n">입력 / 출력 토큰</th><th class="n">비용</th></tr>${rows.map((x) => x.html).join("")}
+      <tr class="sum"><td>합계</td><td></td><td></td><td></td><td class="n">${won(sum)}</td></tr></table></div>
+    <div class="det"><span>AI 맞춤 질문 · 처음 만들기 ${q.first || 0}</span><span>대학별 다시 만들기 ${q.rerun || 0}</span><span>실패 ${q.fail || 0}</span>
+      <span>학생 1명 평균 ${q.students ? `약 ${(Math.round(aiqUsd / q.students * krw / 10) * 10).toLocaleString("ko-KR")}원` : "—"}</span><span>하루 한도 학생 ${r.limit}명</span></div>
+    <p class="muted" style="margin-bottom:0">Apps Script 가 Claude 응답의 토큰 수로 계산한 <b>추정 비용</b>이에요 (부스와 AI 맞춤 질문이 같은 API 키를 쓰지만 기능별로 따로 셈). 실제 청구액은 Anthropic 콘솔에서 확인해요. 환율 1달러 = ${krw.toLocaleString("ko-KR")}원
+      <button class="btn-sm" type="button" id="aiKrw">환율 바꾸기</button> <button class="btn-sm" type="button" id="aiLim">하루 한도 바꾸기</button>
+      <a class="btn btn-sm" href="https://console.anthropic.com/" target="_blank" rel="noopener">Anthropic 콘솔 ↗</a></p>`;
+  $$("[data-mo]", t).forEach((b) => b.onclick = () => renderAiCost(box, r, b.dataset.mo));
+  const set = async (key, ask, min, max) => {
+    const v = prompt(ask); if (v == null) return;
+    const n = Number(String(v).replace(/[^\d.]/g, ""));
+    if (!(n >= min && n <= max)) return toast(`${min}~${max} 사이 숫자로 적어 주세요.`, "error");
+    const res = await aiCall(S.ctx.user, "usage-set", { [key]: n }, 30000);
+    if (!res?.ok) return toast(`바꾸지 못했어요 (${res?.error || "연결 실패"})`, "error");
+    toast("바꿨어요"); renderAiCost(box, res, m);
+  };
+  $("#aiKrw", t).onclick = () => set("krw", `1달러는 몇 원으로 셀까요? (지금 ${krw})`, 500, 5000);
+  $("#aiLim", t).onclick = () => set("limit", `AI 맞춤 질문 하루 한도 — 학생 몇 명까지? (지금 ${r.limit})`, 1, 500);
+}
+
 async function renderBackup() {
   const p = $("[data-adpanel=backup]", root);
   let last = null;
@@ -768,7 +811,9 @@ async function renderBackup() {
         </div>
         <p class="muted" style="margin-bottom:0">화면 내용이 시트나 다른 선생님 화면과 다르게 보일 때 '다시 받기'를 누르세요. 사용량 그래프에서 하루 읽기가 4만 건을 넘는 날이 잦으면 알려 주세요.</p>
       </div>
-    </div>`;
+    </div>
+    ${S.ctx.isAdmin ? '<div class="card ai-cost" id="aiCost"><h3>AI 사용 비용 <span class="adm">관리자만</span></h3><div id="aiCostT"><div class="muted">불러오는 중…</div></div></div>' : ""}`;
+  if (S.ctx.isAdmin) renderAiCost($("#aiCost", p));
   $("#bkDrive", p).onclick = async () => {
     const cfg = await getSyncConfig(true).catch(() => ({}));
     if (!cfg.url || !cfg.token) return toast("① 시트 연동에서 웹 앱 URL·토큰을 먼저 저장하세요.", "error");

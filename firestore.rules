@@ -83,6 +83,15 @@ service cloud.firestore {
           && pqTextOk(request.resource.data);
         allow delete: if isStudent(no) && resource.data.get('by', '') == 'student' && resource.data.get('reviewedAt', null) == null;
       }
+
+      // (2026-11-03) 암기 카드 상태·'정리할 것' 메모 (문서 ID = 예상질문 ID). 학생 본인만 쓰고, 선생님은 읽기·지우기만
+      match /cardNotes/{qid} {
+        allow read: if isStaff() || isStudent(no);
+        allow create, update: if isStudent(no)
+          && request.resource.data.keys().hasOnly(['mine', 'known', 'again', 'seenAt', 'updatedAt'])
+          && request.resource.data.get('mine', []) is list && request.resource.data.get('mine', []).size() <= 10;
+        allow delete: if isStaff() || isStudent(no);
+      }
     }
 
     // 대학별 면접일 (시트 '앱연동_면접일'과 쌍방 동기화). 학생은 자기 것만 읽기
@@ -221,6 +230,9 @@ service cloud.firestore {
         allow create: if canSeeRecord(no) && request.resource.data.byUid == request.auth.uid;
         allow update, delete: if canSeeRecord(no);
       }
+      // (2026-11-03) AI 맞춤 예상질문 초안·실행 상태 (booth-ai Apps Script 가 선생님 토큰으로 씀). 배정 선생님·관리자만
+      match /aiq/{id} { allow read, write: if canSeeRecord(no); }
+      match /aimeta/{id} { allow read, write: if canSeeRecord(no); }
     }
     // 열람·넣기·지우기·공개 기록. 관리자만 읽음, 지우기 없음 (입시 후 일괄 삭제 때도 남김 — 사용자 결정 2026-10-30)
     match /recordLogs/{id} {

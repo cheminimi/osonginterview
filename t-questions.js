@@ -1,13 +1,14 @@
 import {
-  db, collection, doc, getDoc, getDocs, updateDoc, writeBatch, serverTimestamp,
-  $, $$, esc, toast, showError, copyText, parseLooseJSON, pqStats, confirmBox
+  db, collection, doc, getDoc, getDocs, writeBatch, serverTimestamp, onSnapshot,
+  $, $$, esc, toast, showError, pqStats, confirmBox, univName, announceFailed
 } from "./common.js";
 import { S, register, rerender, readForm, lines, opt, studentByNo, myName } from "./t-core.js";
 import { loadList, listOf, pqCardHtml, bindPqActions } from "./t-pqreview.js";
-import { personalQuestionPrompt } from "./prompts.js";
-import { canSeeRec, canUploadRec, recordExists, openRecordViewer, openRecordUpload, loadPending } from "./t-record.js";
+import { canSeeRec, canUploadRec, recordExists, openRecordViewer, openRecordUpload, loadPending, runAiq } from "./t-record.js";
 
-let root, parsed = [], existing = [];
+// 질문 가져오기 = [생기부에서 뽑기 | AI 맞춤 질문 | 직접 입력] (2026-11-03). 예전 claude.ai 복사·붙여넣기 화면은 뺌 —
+// students/{학번}.recordSummary(예전 생기부 붙여넣기 칸) 데이터는 지우지 않고 그대로 둠
+let root, existing = [];
 export function init(el) {
   root = el;
   root.innerHTML = `
@@ -18,50 +19,12 @@ export function init(el) {
         <div class="step">
           <label>질문 가져오기</label>
           <div class="tabs sub" style="margin-bottom:10px">
-            <button type="button" class="active" data-src="rec">생기부에서</button>
-            <button type="button" data-src="claude">AI로 질문 만들기</button>
+            <button type="button" class="active" data-src="rec">생기부에서 뽑기</button>
+            <button type="button" data-src="ai">AI 맞춤 질문</button>
             <button type="button" data-src="manual">직접 입력</button>
           </div>
           <div data-srcpanel="rec" id="qRecBox"><div class="empty">학생을 선택하세요.</div></div>
-          <div data-srcpanel="claude" hidden>
-            <div class="ai-intro">학생 <b>생기부</b>를 AI(Claude)에게 보여 주고 <b>면접 예상질문</b>을 받아오는 방법이에요. 비용은 들지 않고, 선생님의 Claude 계정(claude.ai)을 씁니다.</div>
-            <div class="ai-step">
-              <div class="ai-num">1</div>
-              <div class="ai-body">
-                <b>생기부 붙여넣기</b>
-                <div class="muted">학생의 세특·창체·행특 문장을 복사해 붙여넣으세요. 길수록 질문이 구체적이에요.</div>
-                <textarea id="qRecord" style="min-height:160px;margin-top:6px" placeholder="예) [화학Ⅱ 세특] 산화·환원 단원에서 …&#10;[자율·동아리] 과학랩크루에서 시약 재고 관리 시스템을 …"></textarea>
-                <div class="row" style="margin-top:6px"><button class="btn-sm" id="qSaveRecord">이 학생 생기부로 저장</button><span class="muted" id="qRecordState"></span></div>
-              </div>
-            </div>
-            <div class="ai-step">
-              <div class="ai-num">2</div>
-              <div class="ai-body">
-                <b>요청문 복사 → Claude에 보내기</b>
-                <div class="muted">버튼을 누르면 생기부가 들어간 요청문이 복사돼요. Claude 새 채팅에 붙여넣고(Ctrl+V) 보내세요.</div>
-                <div class="row" style="margin-top:8px">
-                  <button class="btn-primary" id="qCopy">요청문 복사</button>
-                  <a class="btn" href="https://claude.ai/new" target="_blank" rel="noopener">Claude 열기 ↗</a>
-                </div>
-                <details style="margin-top:8px"><summary class="muted">옵션 (질문 개수 · 이름 가리기)</summary>
-                  <div class="row" style="margin-top:6px">
-                    <label class="inline-check">질문 <select id="qN" style="width:auto;padding:4px 8px"><option>10</option><option selected>15</option><option>20</option></select>개</label>
-                    <label class="inline-check"><input type="checkbox" id="qMask" checked> 학생 이름 가리기</label>
-                    <label class="inline-check"><input type="checkbox" id="qNoDup" checked> 이미 넣은 질문과 겹치지 않게</label>
-                  </div>
-                </details>
-              </div>
-            </div>
-            <div class="ai-step">
-              <div class="ai-num">3</div>
-              <div class="ai-body">
-                <b>Claude 답변 붙여넣기</b>
-                <div class="muted">Claude가 답을 다 쓰면 답변 아래 <b>복사</b> 버튼을 눌러 여기에 붙여넣으세요. <span style="color:var(--danger)">요청문이 아니라 Claude의 답변</span>이에요.</div>
-                <textarea id="qPaste" style="margin-top:6px" placeholder="Claude 답변을 그대로 붙여넣으세요.&#10;([{&quot;text&quot;: … 처럼 시작하는 글자들)"></textarea>
-                <div style="margin-top:6px"><button class="btn-primary" id="qParse">질문 확인하기</button></div>
-              </div>
-            </div>
-          </div>
+          <div data-srcpanel="ai" id="qAiBox" hidden><div class="empty">학생을 선택하세요.</div></div>
           <div data-srcpanel="manual" hidden>
             <form id="qManual">
               <div class="field"><label>질문 *</label><textarea name="text" required style="min-height:70px"></textarea></div>
@@ -75,11 +38,6 @@ export function init(el) {
         </div>
       </div>
       <div>
-        <div class="card" id="qPreviewCard" hidden>
-          <div class="row" style="margin-bottom:8px"><h3 style="margin:0">가져올 질문</h3><div class="spacer"></div>
-            <button class="btn-sm" id="qToggleAll">전체 선택/해제</button><button class="btn-primary btn-sm" id="qSave">선택 저장</button></div>
-          <div id="qPreview"></div>
-        </div>
         <div class="card"><h3>저장된 예상질문 <span class="muted" id="qCount"></span></h3>
           <p class="muted" style="margin-top:0">'내 생기부 면접' 연습에 모두 나와요. 면접 부스에는 선생님 질문과 검토한 학생 질문만 나와요.</p>
           <div id="qPendBox"></div>
@@ -92,19 +50,6 @@ export function init(el) {
     $$("[data-src]", root).forEach((x) => x.classList.toggle("active", x === b));
     $$("[data-srcpanel]", root).forEach((p) => p.hidden = p.dataset.srcpanel !== b.dataset.src);
   });
-  $("#qSaveRecord", root).onclick = saveRecord;
-  $("#qCopy", root).onclick = copyPrompt;
-  $("#qParse", root).onclick = parseClaude;
-  $("#qToggleAll", root).onclick = () => { const on = !parsed.every((q) => q._on); parsed.forEach((q) => q._on = on); renderPreview(); };
-  $("#qSave", root).onclick = async () => {
-    const no = $("#qStudent", root).value; if (!no) return toast("학생을 먼저 선택하세요.", "error");
-    const sel = parsed.filter((q) => q._on);
-    if (!sel.length) return toast("선택한 질문이 없습니다.", "error");
-    try {
-      await savePersonal(no, sel.map(({ _on, ...q }) => q));
-      $("#qPaste", root).value = ""; parsed = []; $("#qPreviewCard", root).hidden = true;
-    } catch (_) {}
-  };
   $("#qManual", root).onsubmit = async (e) => {
     e.preventDefault();
     const no = $("#qStudent", root).value; if (!no) return toast("학생을 먼저 선택하세요.", "error");
@@ -128,11 +73,8 @@ export function selectStudentForQuestions(no) {
 
 async function onStudent() {
   const st = studentByNo($("#qStudent", root).value);
-  $("#qRecord", root).value = st?.recordSummary || "";
-  $("#qRecordState", root).textContent = "";
   $("#qSheetRow", root).innerHTML = st?.sheetUrl ? `<a class="btn btn-sm" href="${esc(st.sheetUrl)}" target="_blank" rel="noopener">${esc(st.name)} 준비 시트 열기</a>` : "";
-  parsed = []; $("#qPreviewCard", root).hidden = true;
-  if (!st) { $("#qExisting", root).innerHTML = `<div class="empty">학생을 선택하세요.</div>`; $("#qCount", root).textContent = ""; $("#qRecBox", root).innerHTML = `<div class="empty">학생을 선택하세요.</div>`; $("#qPendBox", root).innerHTML = ""; $("#qPubHead", root).hidden = true; return; }
+  if (!st) { $("#qExisting", root).innerHTML = `<div class="empty">학생을 선택하세요.</div>`; $("#qCount", root).textContent = ""; $("#qRecBox", root).innerHTML = $("#qAiBox", root).innerHTML = `<div class="empty">학생을 선택하세요.</div>`; $("#qPendBox", root).innerHTML = ""; $("#qPubHead", root).hidden = true; return; }
   await loadExisting(st.studentNo);
   await renderRecPanel(st.studentNo);
 }
@@ -164,8 +106,9 @@ async function renderRecPanel(no) {
       <div class="muted sm">학생부 화면이 <b>'질문 준비'</b>로 열려요. 글을 드래그해 [질문 만들기] → 이 학생 질문 목록에 들어가요. 근거 문장은 자동으로 붙어요.</div>
       <div class="row qrec-sum"><span class="muted sm">내가 이 학생에게 뽑은 질문</span><span class="badge" id="qRecN">${mine.length}</span><span class="badge badge-orange">면접 뒤 공개 ${minePend.length}</span><span class="badge badge-green">공개 ${minePub.length}</span></div>
       <div class="qrec-mini" id="qRecMini">${mine.slice(0, 6).map((q) => `<div class="m"><b>${esc(q.text)}</b>${q.basis ? `<span class="muted sm">${esc(q.basis)}</span>` : ""}</div>`).join("")}${mine.length > 6 ? `<div class="muted sm">… ${mine.length - 6}개 더</div>` : ""}</div></div>`;
-  $("#qRecOpen", box)?.addEventListener("click", () => openRecordViewer(no, { mode: "prep", onClose: () => { if ($("#qStudent", root).value === no) loadExisting(no).then(() => renderRecPanel(no)); } }));
+  $("#qRecOpen", box)?.addEventListener("click", () => openRecordViewer(no, { mode: "prep", tab: "mine", onClose: () => { if ($("#qStudent", root).value === no) loadExisting(no).then(() => renderRecPanel(no)); } }));
   $("#qRecUp", box)?.addEventListener("click", () => openRecordUpload(no));
+  renderAiPanel(no, { see, has });
   // 오른쪽: 공개 전 묶음 + '공개된 질문' 제목
   const pb = $("#qPendBox", root);
   pb.innerHTML = see ? `<div class="q-sect"><span class="q-sect-t w">공개 전 · 면접 뒤 공개</span><span class="muted sm">${pend.length} · 선생님만 보임</span></div>
@@ -187,6 +130,82 @@ async function renderRecPanel(no) {
   });
 }
 
+// ===== [AI 맞춤 질문] (2026-11-03): 지원 대학·기출 표 + 초안 상태 → [AI 초안 검토하기] / [AI 맞춤 질문 만들기] =====
+// 이미 학생부를 넣은 학생은 다시 올리지 않고 저장된 가림본으로 만듦. 실제 만들기는 booth-ai Apps Script (t-record.js runAiq)
+const uShort = (u) => univName(u).replace(/대학교/g, "대");
+let aiUnsub = null;
+async function renderAiPanel(no, { see, has }) {
+  const st = studentByNo(no), box = $("#qAiBox", root);
+  aiUnsub?.(); aiUnsub = null;
+  if (!see || !has) {
+    box.innerHTML = `<div class="qai"><div class="qai-st"><b>${!see ? "배정 선생님만 볼 수 있어요" : "아직 학생부가 없어요"}</b><div class="muted sm">${!see ? "AI 맞춤 질문은 이 학생의 배정 선생님(1·2·3차)·관리자만 만들고 검토해요." : "학생부를 넣을 때 AI 동의를 켜면 자동으로 만들어요."}</div></div>
+      ${see && canUploadRec(st) ? '<button type="button" class="btn-sm" id="qaiUp">학생부 넣기</button>' : ""}<button type="button" class="btn-primary qrec-big" disabled>AI 맞춤 질문 만들기</button></div>`;
+    $("#qaiUp", box)?.addEventListener("click", () => openRecordUpload(no));
+    return;
+  }
+  let aiq = [], meta = null;
+  try { const [a, m] = await Promise.all([getDocs(collection(db, "records", no, "aiq")), getDoc(doc(db, "records", no, "aimeta", "main"))]); aiq = a.docs.map((d) => ({ id: d.id, ...d.data() })); meta = m.exists() ? m.data() : null; }
+  catch (e) { console.warn("AI 초안 불러오기", e); }
+  if ($("#qStudent", root).value !== no) return;
+  const ivs = st.universities || [];
+  const mu = (iv) => (meta?.unis || []).find((u) => u.iid === iv.id);
+  const ok = new Set(ivs.filter((iv) => !announceFailed(iv)).map((iv) => "u_" + iv.id));
+  const vis = aiq.filter((a) => a.status === "new" && (a.grp === "common" || ok.has(a.grp)));
+  const n = (g) => vis.filter((a) => a.grp === g).length;
+  const badge = (u) => {
+    const s = u?.src; if (!s) return '<span class="muted sm">아직 안 찾음</span>';
+    const nm = uShort(u.univ), tail = s.title.includes("→") ? s.title.split("→").slice(1).join("→").trim() : "";
+    const top = s.kind === "exact" ? `<span class="src-b ok">✓ 기출 ${s.n}건${(s.title.match(/\(([^)]*학년도)\)/) || [])[1] ? ` (${s.title.match(/\(([^)]*학년도)\)/)[1].replace(/학년도$/, "")})` : ""}</span>`
+      : `<span class="src-b fb">⚠ ${s.kind === "same-uni" ? "같은 학과 기출 없음" : s.kind === "none" ? "기출 없음" : nm + " 기출 없음"}</span>`;
+    const sub = u.kind === "passage" ? "제시문 면접" : u.kind === "given" ? "대학 제공 질문 면접" : tail ? "→ " + tail : "";
+    return `${top}${sub ? `<br><span class="muted sm">${esc(sub)}</span>` : ""}<br><span class="muted sm">판단: ${esc(u.why || s.why || "")}</span>`;
+  };
+  const right = (iv, u) => announceFailed(iv) ? "1차 불합격" : !u ? "—" : u.todo ? "아직 못 만듦" : u.kind === "passage" ? "제시문 안내" : u.kind === "given" ? "기출 안내" : `맞춤 ${n(u.key)}`;
+  const table = ivs.length ? `<table class="qai-t"><tbody>${ivs.map((iv) => { const u = mu(iv); return `<tr class="${announceFailed(iv) ? "out" : ""}"><td><b>${esc(univName(iv.univ))}</b><br><span class="muted sm">${esc([iv.admission, iv.dept].filter(Boolean).join(" · "))}${iv.format ? ` · ${esc(iv.format)}` : ""}</span></td>
+      <td>${announceFailed(iv) ? '<span class="muted sm">1차 불합격 — 초안은 숨겨요</span>' : badge(u)}</td><td class="r">${esc(right(iv, u))}</td></tr>`; }).join("")}</tbody></table>`
+    : '<div class="muted sm">대학별 면접일 자료가 없어요. 공통 질문만 만들어요.</div>';
+  const todo = (meta?.unis || []).filter((u) => u.todo && ok.has(u.key)).map((u) => u.key);
+  const missing = ivs.filter((iv) => !announceFailed(iv) && !mu(iv)).map((iv) => "u_" + iv.id);
+  const first = [...new Set([...todo, ...missing])];
+  const running = meta?.status === "running" && Date.now() - (meta.runAt?.seconds ? meta.runAt.seconds * 1000 : 0) < 10 * 60 * 1000;
+  const adopted = aiq.filter((a) => a.status === "adopted").length, dropped = aiq.filter((a) => a.status === "dropped").length;
+  const runAt = meta?.doneAt?.seconds ? new Date(meta.doneAt.seconds * 1000).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" }) : "";
+  const haveHtml = `<div id="qaiHave"><div class="qai-st"><div class="row"><span class="ai-tag">AI 초안</span><b>${vis.length}개 검토 전</b><span class="muted sm">${[`공통 ${n("common")}`, ...(meta?.unis || []).filter((u) => ok.has(u.key) && (u.kind === "record" || u.kind === "personality")).map((u) => `${uShort(u.univ)} ${u.dept} ${n(u.key)}`), `채택 ${adopted}`, `버림 ${dropped}`].join(" · ")}</span></div>
+      <div class="muted sm">${runAt ? `${runAt} ` : ""}${esc(meta?.runBy || "")} 선생님이 만들었어요. 학생부 화면의 <b>AI 맞춤 초안</b>에서 근거 문장을 보며 채택·고치기·버리기 해요. 채택한 질문만 학생에게 공개되고, 암기 카드도 그때 생겨요.</div>
+      ${meta?.error === "common_partial" ? '<div class="muted sm">공통 질문 일부(핵심 또는 심화·확장)를 만들지 못했어요.</div>' : ""}</div>
+    <button type="button" class="btn-primary qrec-big" id="qaiOpen">AI 초안 검토하기 →</button>
+    <div class="row" style="gap:8px;flex-wrap:wrap"><button type="button" class="btn-sm" id="qaiRe">대학별 다시 만들기</button><span class="muted sm">${first.length ? `아직 못 만든 대학 ${first.length}곳부터 만들어요` : "지원 대학이 바뀌었을 때"} · 채택한 질문은 그대로 · 약 200원</span></div>
+    <div id="qaiRun"></div></div>`;
+  const noneHtml = `<div id="qaiNone"><div class="qai-st"><b>${meta?.status === "error" ? "AI 초안을 만들지 못했어요" : "아직 AI 초안이 없어요"}</b><div class="muted sm">${meta?.status === "error" ? `다시 눌러 주세요. (이유: ${esc(meta.error || "알 수 없음")})` : "학생부를 AI 기능 전에 넣은 학생이에요. 저장된 학생부(가림본)로 바로 만들 수 있어요 — 다시 올리지 않아도 돼요."}</div></div>
+    <label class="inline-check"><input type="checkbox" id="qaiOk"> <span>학생·보호자에게 <b>AI 사용 동의</b>를 받았어요 <span class="muted sm">(가림본 글과 지원 대학·학과를 AI 로 보내요)</span></span></label>
+    <button type="button" class="btn-primary qrec-big" id="qaiMake" disabled>AI 맞춤 질문 만들기</button><div class="muted sm">약 1~2분 · 학생 1명 약 500원 · 만든 뒤 학생부 화면에서 검토해요</div>
+    <div id="qaiRun"></div></div>`;
+  box.innerHTML = `<div class="qai"><div class="qai-h"><b>지원 대학 · 전형 · 학과</b><span class="muted sm">대학별 면접일 자료에서 자동으로</span></div>${table}
+    <div class="muted sm">기출: 충북교육청 면접후기 사례집 (질문만 참고, 선배 답변은 쓰지 않음) · 모델: Claude Opus 5.5</div>
+    ${running ? '<div class="qai-st"><div class="row"><span class="ai-tag">AI</span><b>만드는 중이에요</b><span class="muted sm">창을 닫아도 계속돼요</span></div><ol class="qai-run" id="qaiLive"></ol></div>' : aiq.length ? haveHtml : noneHtml}</div>`;
+  const done = () => { if ($("#qStudent", root).value === no) { loadExisting(no).then(() => renderRecPanel(no)); } };
+  if (running) {
+    const L = ["저장된 학생부 읽기 (가림본)", "지원 대학·전형·학과 확인", "기출 찾기 (면접후기 사례집)", "공통·대학별 맞춤 질문 만들기", "근거 문장 확인", "암기 카드 만들기"];
+    aiUnsub = onSnapshot(doc(db, "records", no, "aimeta", "main"), (s) => {
+      const m = s.exists() ? s.data() : null, el = $("#qaiLive", box);
+      if (!m || m.status !== "running") { aiUnsub?.(); aiUnsub = null; if ($("#qStudent", root).value === no) renderRecPanel(no); return; }
+      if (el) el.innerHTML = L.map((t, i) => `<li class="${i < m.step ? "done" : i === Number(m.step) ? "on" : ""}"><i>${i < m.step ? "✓" : ""}</i>${t}</li>`).join("");
+    }, () => {});
+    return;
+  }
+  $("#qaiOpen", box)?.addEventListener("click", () => openRecordViewer(no, { mode: "prep", tab: "ai", onClose: done }));
+  $("#qaiOk", box)?.addEventListener("change", (e) => { $("#qaiMake", box).disabled = !e.target.checked; });
+  $("#qaiMake", box)?.addEventListener("click", () => {
+    $("#qaiMake", box).disabled = true;
+    runAiq(no, { scope: "all", consent: true, box: $("#qaiRun", box), onDone: (r) => { if (r?.ok) setTimeout(done, 400); else $("#qaiMake", box) && ($("#qaiMake", box).disabled = !$("#qaiOk", box).checked); } });
+  });
+  $("#qaiRe", box)?.addEventListener("click", async () => {
+    if (!first.length && !(await confirmBox({ title: "대학별 초안을 다시 만들까요?", what: "대학 맞춤 초안 중 검토 전('new')인 것만 새로 만들어요.", note: "공통 초안·채택한 질문·버린 초안은 그대로예요. 약 200원 들어요.", yes: "다시 만들기" }))) return;
+    $("#qaiRe", box).disabled = true;
+    runAiq(no, { scope: "unis", ...(first.length ? { only: first } : {}), box: $("#qaiRun", box), onDone: (r) => { if (r?.ok) setTimeout(done, 400); else if ($("#qaiRe", box)) $("#qaiRe", box).disabled = false; } });
+  });
+}
+
 async function loadExisting(no) {
   try { existing = await loadList(no); }
   catch (e) { showError(e, "예상질문 불러오기"); existing = []; }
@@ -205,51 +224,6 @@ function renderExisting(no) {
   box.innerHTML = existing.length ? existing.map((q, i) => pqCardHtml(no, q, { num: i + 1, showStatus: true })).join("")
     : `<div class="empty">아직 없습니다.</div>`;
   bindPqActions(box, () => { renderExisting(no); renderSelect(); rerender("students"); });
-}
-
-async function saveRecord() {
-  const no = $("#qStudent", root).value; if (!no) return toast("학생을 먼저 선택하세요.", "error");
-  try {
-    await updateDoc(doc(db, "students", no), { recordSummary: $("#qRecord", root).value });
-    studentByNo(no).recordSummary = $("#qRecord", root).value;
-    $("#qRecordState", root).textContent = "저장됨 · 다음에 이 학생을 고르면 그대로 불러와요";
-  } catch (e) { showError(e, "생기부 저장"); }
-}
-
-function copyPrompt() {
-  const st = studentByNo($("#qStudent", root).value);
-  if (!st) return toast("학생을 먼저 선택하세요.", "error");
-  let record = $("#qRecord", root).value.trim();
-  if (record.length < 30) return toast("1번 칸에 생기부 문장을 먼저 붙여넣으세요 (30자 이상).", "error", 5000);
-  if ($("#qMask", root).checked && st.name) record = record.split(st.name).join("학생");
-  const univ = (st.universities || []).map((u) => `${u.univ} ${u.dept}(${u.admission}, ${u.format})`).join(" / ");
-  copyText(personalQuestionPrompt({
-    record, major: (st.universities || []).map((u) => u.dept).filter(Boolean).join(", "), targets: univ,
-    n: Number($("#qN", root).value), existing: $("#qNoDup", root).checked ? existing.map((q) => q.text) : []
-  }), "요청문을 복사했어요. Claude 새 채팅에 붙여넣고 보내세요.");
-}
-
-function parseClaude() {
-  let arr;
-  try { arr = parseLooseJSON($("#qPaste", root).value); if (!Array.isArray(arr)) arr = [arr]; }
-  catch (e) { return toast(e.message, "error", 9000); }
-  parsed = arr.filter((q) => q && typeof q.text === "string" && q.text.trim()).map((q) => ({
-    text: q.text.trim(), category: q.category || "", basis: q.basis || "", intent: q.intent || "",
-    followUps: Array.isArray(q.followUps) ? q.followUps.filter(Boolean).map(String) : [], source: "claude", _on: true
-  }));
-  if (!parsed.length) return toast("질문을 찾지 못했습니다. text 항목이 있는지 확인하세요.", "error");
-  renderPreview();
-}
-
-function renderPreview() {
-  $("#qPreviewCard", root).hidden = false;
-  $("#qPreview", root).innerHTML = parsed.map((q, i) => `
-    <div class="q-item ${q._on ? "sel" : ""}" data-i="${i}" style="cursor:pointer">
-      <div class="row"><input type="checkbox" ${q._on ? "checked" : ""} style="width:auto"><span class="q-text pre">${esc(q.text)}</span></div>
-      <div class="q-meta">${esc(q.category || "")}${q.basis ? ` · ${esc(q.basis)}` : ""}${q.intent ? ` · 의도: ${esc(q.intent)}` : ""}</div>
-      ${q.followUps?.length ? `<ul class="follow">${q.followUps.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
-    </div>`).join("");
-  $$("#qPreview .q-item", root).forEach((el) => el.onclick = () => { const q = parsed[el.dataset.i]; q._on = !q._on; renderPreview(); });
 }
 
 export async function savePersonal(no, qs, quiet = false) {

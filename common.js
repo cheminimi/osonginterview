@@ -482,6 +482,7 @@ function flushBumps() {
 function markChanged(path, deleted = false) {
   const c = topCollection(path);
   if (!CACHED.includes(c)) return;
+  if (/^students\/[^/]+\/cardNotes\//.test(path)) return;   // 암기 카드 상태(학생이 자주 씀)는 학생 목록 캐시와 무관 (2026-11-03)
   const parts = String(path).split("/");
   if (deleted && parts.length === 2 && INCREMENTAL[c]) (pendingDeleted[c] ||= {})[parts[1]] = Date.now();
   dropCache(c);
@@ -832,4 +833,19 @@ function matchBracket(s, i) {
     }
   }
   return -1;
+}
+
+// ---- AI (booth-ai Apps Script 웹 앱 → Claude API) — 2026-11-03 AI 맞춤 예상질문 · 관리자 비용 보기
+// booth.html 의 AI_ENDPOINT 와 같은 주소 (부스는 아직 자기 상수를 씀. 바꾸면 두 곳을 같이 — 시험이 같은지 확인)
+export const AI_ENDPOINT = "https://script.google.com/macros/s/AKfycbwjf8A45r6UmWsRO0Ut8oNNNii1j68zGNNXm-lJHKgmTvouMmgyY3ENUP9_HvHhB9VC/exec";
+/** 선생님·관리자 액션 부르기 (aiq · usage · usage-set). 실패하면 { ok:false, error } — 예외를 던지지 않음 */
+export async function aiCall(user, action, data = {}, timeoutMs = 400000) {
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const idToken = await user.getIdToken();
+    const res = await fetch(AI_ENDPOINT, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, signal: ctl.signal,
+      body: JSON.stringify({ action, idToken, ...data }) });
+    return await res.json();
+  } catch (e) { return { ok: false, error: e?.name === "AbortError" ? "timeout" : "network" }; }
+  finally { clearTimeout(timer); }
 }

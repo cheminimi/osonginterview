@@ -185,6 +185,11 @@
       <div class="sub-head"><button class="btn-sm btn-back" data-back="1"></button><h2 style="margin:0">지난 연습 기록</h2></div>
       <div id="history"></div>
     </div>
+    <div id="pracCards" hidden>
+      <div class="sub-head pq-head"><button class="btn-sm btn-back" data-back="1"></button><h2 style="margin:0">암기 카드</h2></div>
+      <div class="chips pq-filter" id="fcFilter"></div>
+      <div class="fc-wrap" id="fcWrap"></div>
+    </div>
   </section>
 
   <section data-panel="schedule" hidden><div class="sc-top"><div id="scSwitch"></div></div><div id="schedule"></div><div id="boothBook" hidden></div></section>
@@ -321,11 +326,13 @@ function applyAiUrl(v) {
   renderPracLinks();
 }
 function renderPracLinks() {
+  const cs = cardList();
   const rows = [
+    { sub: "cards", ic: "cards", lime: true, t: `암기 카드${cardsSeen() ? "" : '<span class="badge tag-new">new</span>'}`, d: cs.length ? `${cs.length}장 · ${cardGroups(cs)}` : "선생님이 질문을 공개하면 카드가 생겨요" },
     { sub: "mine", ic: "list", t: "내 예상질문", d: personal.length ? `${personal.length}개 · 실전 연습 전엔 꼬리질문을 가려 둬요` : "아직 올라온 질문이 없어요" },
     { sub: "hist", ic: "history", t: "지난 연습 기록", d: sessions.length ? `${sessions.length}회${sessions[0]?.startedAt ? " · 마지막 " + fmtDay(sessions[0].startedAt) : ""}` : "아직 연습 기록이 없어요" }
   ].map((x) => `<button type="button" class="list-row lrow" data-sub="${x.sub}">
-      <span class="r-ic li">${icon(x.ic, 19)}</span>
+      <span class="r-ic li${x.lime ? " lime" : ""}">${x.ic === "cards" ? CARDS_IC : icon(x.ic, 19)}</span>
       <span class="r-tx"><b>${x.t}</b><span class="muted">${x.d}</span></span>
       <span class="r-end">${icon("chevron", 18)}</span></button>`);
   // rel="noopener noreferrer" 는 꼭 둔다 — 없으면 열린 쪽에서 이 탭 주소를 바꿀 수 있다
@@ -365,7 +372,82 @@ function showPracSub(name) {
   $("#pracHome").hidden = !!name;
   $("#pracMine").hidden = name !== "mine";
   $("#pracHist").hidden = name !== "hist";
+  $("#pracCards").hidden = name !== "cards";
+  if (name === "cards") openCards();
   window.scrollTo({ top: 0, behavior: "instant" });
+}
+
+// ---- 암기 카드 (2026-11-03): 선생님이 채택해 공개한 질문 중 카드 내용(card)이 있는 것만. 모범답안 없음
+// 상태·'정리할 것' 메모는 students/{학번}/cardNotes/{질문 id} (나만 씀). new 꼬리표는 이 기기에서 한 번 열면 사라짐
+const CARDS_IC = `<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="3.5" width="13" height="16" rx="2.5"></rect><path d="M4.5 7v11.5A2.5 2.5 0 0 0 7 21h9"></path><path d="M10 9h6M10 12.5h4"></path></svg>`;
+const ar = (x) => (Array.isArray(x) ? x : []);
+const cardList = () => personal.filter((q) => !isStudentPq(q) && q.card && ar(q.card.kw).length)
+  .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+const grpOf = (q) => q.card?.g || "선생님 질문";
+function cardGroups(cs) { const n = {}; cs.forEach((q) => { n[grpOf(q)] = (n[grpOf(q)] || 0) + 1; }); return Object.entries(n).map(([k, v]) => `${k} ${v}`).join(" · "); }
+function cardsSeen() { try { return localStorage.getItem("cardsSeen:" + me.studentNo) === "1"; } catch (_) { return true; } }
+let notes = null, fcF = "today", fcList = [], fcI = 0, fcKnown = 0, fcAgain = 0;
+const DAY3 = 3 * 24 * 3600 * 1000;
+const noteOf = (q) => notes?.get(q.id) || {};
+const isKnown = (q) => !!noteOf(q).known && !noteOf(q).again;
+const dueToday = (q) => { const n = noteOf(q); return !n.seenAt || n.again || (n.known && Date.now() - n.known > DAY3); };
+async function openCards() {
+  try { localStorage.setItem("cardsSeen:" + me.studentNo, "1"); } catch (_) {}
+  renderPracLinks();
+  if (!notes) {
+    $("#fcWrap").innerHTML = '<div class="muted">불러오는 중…</div>';
+    try { const s = await getDocs(collection(db, "students", me.studentNo, "cardNotes")); notes = new Map(s.docs.map((d) => [d.id, d.data()])); }
+    catch (e) { notes = new Map(); console.warn("암기 카드 상태", e); }
+  }
+  fcStart(fcF);
+}
+function fcStart(f) {
+  fcF = f; fcI = 0; fcKnown = 0; fcAgain = 0;
+  const cs = cardList();
+  fcList = f === "all" ? cs : f === "done" ? cs.filter(isKnown) : cs.filter(dueToday);
+  $("#fcFilter").innerHTML = [["today", "오늘 볼 카드", cs.filter(dueToday).length], ["all", "전체", cs.length], ["done", "외운 카드", cs.filter(isKnown).length]]
+    .map(([k, t, n]) => `<button type="button" data-fcf="${k}" class="${fcF === k ? "on" : ""}">${t} ${n}</button>`).join("");
+  $$("#fcFilter [data-fcf]").forEach((b) => b.onclick = () => fcStart(b.dataset.fcf));
+  fcDraw();
+}
+async function saveNote(q, patch) {
+  const n = { ...noteOf(q), ...patch, updatedAt: Date.now() };
+  notes.set(q.id, n);
+  try { await setDoc(doc(db, "students", me.studentNo, "cardNotes", q.id), { ...patch, updatedAt: n.updatedAt }, { merge: true }); }
+  catch (e) { showError(e, "카드 저장"); }
+}
+function fcDraw() {
+  const wrap = $("#fcWrap");
+  if (!cardList().length) { wrap.innerHTML = '<div class="card empty">아직 암기 카드가 없어요. 선생님이 예상질문을 준비해 공개하면 여기에 카드로 생겨요.</div>'; return; }
+  if (fcI >= fcList.length) {
+    wrap.innerHTML = `<div class="fc-end"><b>${fcList.length ? (fcF === "today" ? "오늘 카드 끝!" : "카드 끝!") : fcF === "done" ? "아직 외운 카드가 없어요" : "오늘 볼 카드가 없어요"}</b>
+      ${fcList.length ? `<div>외웠어요 ${fcKnown} · 다시 볼래요 ${fcAgain}</div><div class="fc-note">다시 볼 카드는 '오늘 볼 카드'에 또 나와요. 외운 카드는 3일 뒤에 다시 나와요.</div>` : ""}
+      <button type="button" class="btn-primary" id="fcRe">처음부터 다시</button><button type="button" id="fcSpeak">말로 연습하기 → 내 생기부 면접</button></div>`;
+    $("#fcRe").onclick = () => fcStart(fcF === "today" && !fcList.length ? "all" : fcF);
+    $("#fcSpeak").onclick = () => { location.href = "interview.html?mode=personal"; };
+    return;
+  }
+  const q = fcList[fcI], c = q.card, n = noteOf(q);
+  wrap.innerHTML = `<div class="fc-top"><span>${fcI + 1} / ${fcList.length}</span><span class="fc-bar"><i style="width:${fcI / fcList.length * 100}%"></i></span></div>
+    <div class="fc" id="fc"><div class="fc-in">
+      <div class="fc-face fc-front"><div class="pq-tags"><span class="pq-tag teacher">선생님이 준비</span><span class="gtag">${esc(grpOf(q))}${c.t ? " · " + esc(c.t) : ""}</span></div>
+        <div class="fc-q">${esc(q.text)}</div><div class="muted">소리 내어 먼저 답해 본 뒤 뒤집어 보세요.</div><div class="fc-hint">눌러서 뒷면 보기 ↻</div></div>
+      <div class="fc-face fc-back"><div class="fc-lab">핵심 키워드 — 이 흐름을 내 말로</div><div class="fc-kw">${ar(c.kw).map(esc).join("<i>→</i>")}</div>
+        ${ar(c.con).length ? `<div class="fc-lab">핵심 개념 — 한 줄로</div><div class="fc-con">${c.con.map((x) => `<div><b>${esc(x.t)}</b>${esc(x.d)}</div>`).join("")}</div>` : ""}
+        ${c.b || c.sec ? `<div class="fc-lab">내 학생부</div><div class="fc-src">${esc(c.sec || "")} "…<u>${esc(c.b || "")}</u>…"</div>` : ""}
+        ${ar(c.chk).length ? `<div class="fc-chk"><div class="fc-lab">학생부에 없어요 — 내가 직접 정리해 둘 것</div>${c.chk.slice(0, 10).map((k, j) => `<label>${esc(k)}<input class="fc-mine" data-j="${j}" maxlength="200" placeholder="한 줄로 적어 두기" value="${esc(ar(n.mine)[j] || "")}"></label>`).join("")}</div>` : ""}
+        ${ar(c.fu).length ? `<div class="fc-lab">꼬리질문 대비</div><div class="fc-fu">${c.fu.map((f) => `<div>${esc(f.q)}${f.pt ? `<br><span class="pt">→ ${esc(f.pt)}</span>` : ""}</div>`).join("")}</div>` : ""}
+        <div class="fc-hint">눌러서 앞면 ↻</div></div></div></div>
+    <div class="fc-btns"><button type="button" id="fcAgain">다시 볼래요</button><button type="button" id="fcOk">외웠어요 ✓</button></div>
+    <div class="fc-note">모범답안은 없어요. 키워드를 보며 내 경험을 내 말로 말해 보세요.</div>`;
+  const fc = $("#fc");
+  fc.onclick = (e) => { if (e.target.closest("input")) return; fc.classList.toggle("flip"); };
+  $$(".fc-mine", fc).forEach((inp) => inp.addEventListener("change", () => {
+    const mine = ar(c.chk).slice(0, 10).map((_, j) => ($(`.fc-mine[data-j="${j}"]`, fc)?.value || "").trim());
+    saveNote(q, { mine });
+  }));
+  $("#fcAgain").onclick = () => { fcAgain++; saveNote(q, { again: true, known: 0, seenAt: Date.now() }); fcI++; fcDraw(); };
+  $("#fcOk").onclick = () => { fcKnown++; saveNote(q, { again: false, known: Date.now(), seenAt: Date.now() }); fcI++; fcDraw(); };
 }
 $$("[data-back]").forEach((b) => { b.innerHTML = `${icon("back", 18)} 연습`; b.onclick = () => showPracSub(""); });
 renderPracLinks();

@@ -2404,4 +2404,4 @@ body.nd .bm-chips button.on, body.nd .bm-chips button.on:hover { background: var
   body.nd .bk-line input { grid-column: 1 / -1; }
 }
 /* 끌기가 안 되는 기기(휴대폰·태블릿)는 ⋮⋮ 를 숨긴다 — 수정 창의 '유형 바꾸기'를 쓴다 */
-@media (hover: none) { body.nd .bk-grip, body.nd .bk-gh { display: none; } }
+@media (hover: none) { body.nd .bk-grip, body.nd .bk-gh, body.nd .bk-dragonly { display: none; } body.nd .bk-how { display: none; } }

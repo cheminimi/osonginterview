@@ -151,7 +151,7 @@ function bindPills() {
 }
 async function moveType(q, to) {
   const from = q.type, had = "mmiKind" in q;
-  const back = { type: from, prepSec: q.prepSec, answerSec: q.answerSec, ...(had ? { mmiKind: q.mmiKind } : {}) };
+  const back = { type: from, prepSec: q.prepSec ?? TYPES[from].prep, answerSec: q.answerSec ?? TYPES[from].answer, ...(had ? { mmiKind: q.mmiKind } : {}) };
   const next = { type: to, prepSec: TYPES[to].prep, answerSec: TYPES[to].answer, ...(to === "mmi" ? { mmiKind: "상황" } : {}) };
   const patch = async (vals, hasKind) => {
     await updateDoc(doc(db, "questions", q.id), { ...vals, ...(hasKind ? {} : { mmiKind: deleteField() }) });
@@ -352,7 +352,8 @@ function edit(q = null) {
   const univs = [...new Set([...schoolsOf(), ...(S.interviews || []).map((x) => univName(x.univ)).filter(Boolean)])].sort((a, b) => a.localeCompare(b, "ko"));
   const adms = [...new Set([...S.bank.filter((x) => x.type === "passage").map((x) => String(x.admission || "").trim()), ...(S.interviews || []).map((x) => String(x.admission || "").trim())].filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
   const title = (t) => `${BT[t] || t} ${q ? "수정" : "추가"}`;
-  const hint = q ? `유형을 바꾸려면 목록에서 ⋮⋮ 를 끌어 위 유형 단추에 놓아요${isP0 ? " (제시문은 못 바꿈)" : ""}` : "제시문 질문을 넣는 칸이에요";
+  const hint = !q ? "제시문 질문을 넣는 칸이에요" : isP0 ? "제시문은 유형을 바꿀 수 없어요"
+    : `유형을 바꾸려면 오른쪽 '유형 바꾸기'에서 골라요<span class="bk-dragonly"> (목록의 ⋮⋮ 를 위 유형 단추에 끌어 놓아도 돼요)</span>`;
   const head = `<div class="row bk-mh"><span id="bmBadge">${typeBadge(v.type)}</span><span class="bk-sm">${hint}</span><div class="spacer"></div>
     ${isP0 ? "" : `<select id="bmType" aria-label="유형 바꾸기"><option value="">유형 바꾸기</option>${["document", "personality", "mmi"].map((k) => `<option value="${k}">${BT[k]}</option>`).join("")}</select>`}</div>`;
   const passageFields = `

@@ -794,7 +794,7 @@ function todayCardHtml() {
         act = `<button type="button" class="tc-b pass" data-ann="${esc(u.id)}" data-r="pass">합격</button><button type="button" class="tc-b" data-ann="${esc(u.id)}" data-r="fail">불합격</button>`; }
     } else if (k === "iv") {
       if (!reviewOpen(u)) { main = `오늘 ${nm(u)} 면접일이에요`; s2 = "잘하고 와요! 저녁 6시부터 후기를 쓸 수 있어요"; }
-      else if (reviewOf(u)) { main = `${nm(u)} 후기를 남겼어요`; s2 = "고마워요! 고칠 게 있으면 언제든 고칠 수 있어요"; act = `<button type="button" class="tc-b" data-rv="${esc(u.id)}">후기 보기</button>`; }
+      else if (reviewOf(u)) { main = `${nm(u)} 후기를 남겼어요`; s2 = "고마워요! 고칠 게 있으면 언제든 고칠 수 있어요"; act = `<button type="button" class="tc-b" data-rv="${esc(u.id)}">후기 수정</button>`; }
       else { main = `오늘 ${nm(u)} 면접, 어땠나요?`; s2 = "기억날 때 적어 두면 좋아요 · 5분"; act = `<button type="button" class="tc-b go" data-rv="${esc(u.id)}">후기 쓰기</button>`; }
     } else if (k === "tann") { main = `내일 ${nm(u)} 1차 발표`; s2 = "발표 뒤 면접 준비도 힘내요."; }
     else { main = `내일 ${nm(u)} 면접`; s2 = "수험표·신분증·장소를 확인해 두세요"; }
@@ -932,12 +932,12 @@ function fbCardHtml() {
       <button type="button" data-fbp="-1" aria-label="이전 피드백">${icon("back", 16)}</button><button type="button" data-fbp="1" aria-label="다음 피드백">${icon("chevron", 16)}</button></div>`;
 }
 
-// 지원 대학 오른쪽 끝 (D-day / 후기 쓰기 / 후기 작성함)
+// 지원 대학 오른쪽 끝 (D-day / 후기 쓰기 / 후기 수정)
 function uniEnd(u, withDate) {
   if (announceFailed(u)) return `<em class="uem out">1차 불합격</em>`;
   const past = reviewOpen(u);
   const d = dday(u.date);
-  if (reviewOf(u)) return `<button type="button" class="uem ok" data-rv="${esc(u.id)}" title="후기 다시 보기">후기 작성함</button>`;
+  if (reviewOf(u)) return `<button type="button" class="uem ok" data-rv="${esc(u.id)}" title="쓴 후기를 고쳐요">후기 수정</button>`;
   if (past) return `<button type="button" class="uem rv" data-rv="${esc(u.id)}">후기 쓰기</button>`;
   if (d == null) return "";
   const dl = d === 0 ? "D-DAY" : "D-" + d;

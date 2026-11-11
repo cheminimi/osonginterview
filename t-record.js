@@ -224,7 +224,8 @@ const SECTION_RE = [
   [head("봉사활동실적"), "volunteer"],
   [head("교과학습발달상황"), "subject"],
   [head("독서활동상황"), "drop", "독서활동상황"],
-  [head("행동특성및종합의견"), "behavior"]
+  [head("행동특성및종합의견"), "behavior"],
+  [head("정정대장"), "drop", "정정대장"]   // '개인별 대입전형자료 조회' 끝의 정정대장 표 (2026-11-10: 행특 3학년으로 잡히던 것)
 ];
 // 인적사항 쪽 (2026-10-30 사용자 결정: 인적사항은 1쪽에만 있음):
 //   1쪽만 검사 — 주민등록번호 꼴이 있거나 '성명'·'성별' 칸 이름(조각 글 전체, 띄어쓰기만 허용)이 함께 있으면 1쪽 버림 (머리말·꼬리말 줄은 뺌)
@@ -237,7 +238,10 @@ function piiWhy(p, isHF = () => false) {
   p.lines.forEach((l, i) => { if (!isHF(p, i)) (l.segs || []).forEach((sg) => { const t = sg.s.replace(/\s+/g, ""); if (t === "성명" || t === "성별") labels.add(t); }); });
   return labels.size === 2 ? "성명·성별 칸" : "";
 }
-const TABLE_HEAD = /^(학년|영역|시간|특기\s*사항|학년\s*영역|영역\s*시간|구분|과\s*목|수업\s*일수|결석\s*일수|지각|조퇴|결과|비고|학기|단위수|원점수|석차등급|성취도)(\s|$)/;
+const TABLE_HEAD = /^(학년|영역|시간|특기\s*사항|학년\s*영역|영역\s*시간|구분|과\s*목|수업\s*일수|결석\s*일수|지각|조퇴|결과|비고|학기|단위수|원점수|석차등급|성취도)(\s|$)/;   // 출결 표 머리 (첫 낱말만 봄)
+// 창체·행특 표 머리 줄: 줄의 낱말이 모두 머리 낱말일 때만 (2026-11-10: '결과 과학 기술 …' 처럼 머리 낱말로 시작하는 글 줄이 버려지던 것)
+const HEAD_WORD = /^(학년|영역|시간|특기사항|특기|사항|구분|과목|과|목|수업일수|수업|일수|결석일수|결석|지각|조퇴|결과|비고|학기|단위수|원점수|석차등급|성취도|질병|미인정|기타)$/;
+const isTableHead = (t) => t.length < 40 && t.trim().split(/\s+/).every((w) => HEAD_WORD.test(w));
 const NOISE = /^[-–]?\s*\d+\s*[-–]?$|^\d+\s*\/\s*\d+$|출력|발급|페이지|쪽\s*\d/;
 const AREA_RE = /^(자율\s*[·ㆍ]?\s*자치\s*활동|자율\s*활동|동아리\s*활동|봉사\s*활동|진로\s*활동)$/;
 const areaIdx = (n) => /^자율/.test(n) ? 0 : /^동아리/.test(n) ? 1 : /^봉사/.test(n) ? 2 : 3;
@@ -448,7 +452,8 @@ export function splitRecord(pages, { withGrades = false, keepP1 = false } = {}) 
         reg.volunteer.push({ ...L, head: volHead });
         return;
       }
-      if (cur === "creative" || cur === "behavior" || cur === "attend") { if (!(TABLE_HEAD.test(t0) && t0.length < 40)) reg[cur].push(L); return; }
+      if (cur === "attend") { if (!(TABLE_HEAD.test(t0) && t0.length < 40)) reg[cur].push(L); return; }
+      if (cur === "creative" || cur === "behavior") { if (!isTableHead(t0)) reg[cur].push(L); return; }
       // 교과: [n학년] · 성적 표 · <진로 선택 과목> 같은 묶음 제목 · '과목 / 세부능력 및 특기사항' 표
       let t = t0;
       const g = t.match(/^\[\s*([1-3])\s*학년\s*\]/);

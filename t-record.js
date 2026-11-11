@@ -460,7 +460,7 @@ export function splitRecord(pages, { withGrades = false, keepP1 = false } = {}) 
       if (g) { grade = g[1]; sub = "grades"; curT = { year: Number(grade), kind: "general", lines: [] }; gt.push(curT); return; }
       if (/^[<〈]/.test(t)) { sub = "grades"; curT = { year: Number(grade) || 0, kind: /진로/.test(t) ? "career" : /체육|예술/.test(t) ? "arts" : "other", lines: [] }; gt.push(curT); return; }
       if (/^학\s*기(\s|$)/.test(t)) { sub = "grades"; curT?.lines.push(L); return; }
-      if (/세부\s*능력\s*및\s*특기\s*사항/.test(t) && t.length < 40) { sub = "seteuk"; lastSubY = null; return; }
+      if (/세부능력및특기사항/.test(t.replace(/\s+/g, "")) && t.length < 40) { sub = "seteuk"; lastSubY = null; return; }   // 글자마다 띄어 찍힌 머리(세 부 능 력 …, 대입전형자료 조회 양식)도 (2026-11-11)
       if (sub === "grades") { curT?.lines.push(L); return; }
       if (sub !== "seteuk") return;
       const m = t.match(/^((?:\(\d학기\))?\s*[가-힣A-Za-z0-9ⅠⅡⅢⅣ·ㆍ\s()]{1,24}?)\s*[:：]\s*(.*)$/);

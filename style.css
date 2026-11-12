@@ -1494,9 +1494,8 @@ body.nd .pq-note { font-size: .78rem; color: var(--ink-3); text-align: right; ma
 }
 
 /* ===== 일정 탭 위 '면접 일정 | 부스 예약' 슬라이드 알약 (booth-booking.js mountSchedSwitch) ===== */
-.sc-seg { position: relative; display: inline-grid; grid-template-columns: 1fr 1fr; background: #fff; border: 1px solid var(--line); border-radius: 99px; padding: 4px; min-width: 240px; touch-action: pan-y; user-select: none; }
-.sc-seg > i { position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px); border-radius: 99px; background: var(--black, var(--accent-fill)); transition: transform .25s ease; }
-.sc-seg.r > i { transform: translateX(100%); }
+.sc-seg { position: relative; display: inline-grid; grid-template-columns: repeat(var(--n, 2), 1fr); background: #fff; border: 1px solid var(--line); border-radius: 99px; padding: 4px; min-width: calc(120px * var(--n, 2)); touch-action: pan-y; user-select: none; }
+.sc-seg > i { position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc((100% - 8px) / var(--n, 2)); border-radius: 99px; background: var(--black, var(--accent-fill)); transition: transform .25s ease; transform: translateX(calc(var(--k, 0) * 100%)); }
 .sc-seg button { position: relative; z-index: 1; border: 0; background: none; font: inherit; font-weight: 600; padding: 8px 16px; border-radius: 99px; color: var(--ink-2); white-space: nowrap; cursor: pointer; min-height: 0; }
 .sc-seg button.on { color: #fff; }
 .sc-seg[hidden] { display: none; }
@@ -1506,6 +1505,8 @@ body.nd .apphead #scSub { flex: none; margin: 0; }
   body.nd .apphead:has(#scSub:not([hidden])) { flex-wrap: wrap; }
   body.nd .apphead #scSub:not([hidden]) { order: 5; width: 100%; }
   .sc-top .sc-seg { width: 100%; }
+  .sc-seg { min-width: 0; }   /* 휴대폰: 줄 폭에 맞춤 (3칸이어도 넘치지 않게) */
+  .sc-seg button { padding: 8px 6px; }
 }
 
 /* ===== 부스 예약 (booth-booking.js) — 표: 테두리 · 줄 무늬 · 자리마다 위쪽 색 띠 · 교시 띠 · 지금 시각 선 ===== */
@@ -2405,3 +2406,61 @@ body.nd .bm-chips button.on, body.nd .bm-chips button.on:hover { background: var
 }
 /* 끌기가 안 되는 기기(휴대폰·태블릿)는 ⋮⋮ 를 숨긴다 — 수정 창의 '유형 바꾸기'를 쓴다 */
 @media (hover: none) { body.nd .bk-grip, body.nd .bk-gh, body.nd .bk-dragonly { display: none; } body.nd .bk-how { display: none; } }
+
+/* ===== 일정 탭 · 면접 일정 (실제 대학 면접, t-ical.js, 2026-11-12) — 월·주 달력, 칸 높이 같게, 넘치면 눌러 펼침 ===== */
+body.nd .ic-c0 { --ic-b: #dbe7fb; --ic-f: #2b4f9e; } body.nd .ic-c1 { --ic-b: #dcefe3; --ic-f: #24704a; }
+body.nd .ic-c2 { --ic-b: #efe3f6; --ic-f: #6d3c8c; } body.nd .ic-c3 { --ic-b: #fbeedb; --ic-f: #94621b; }
+body.nd .ic-c4 { --ic-b: #f6e1e1; --ic-f: #9c3a3a; } body.nd .ic-c5 { --ic-b: #e2f2f2; --ic-f: #23706e; }
+body.nd .ic-sum { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 2px; }
+body.nd .ic-sum span { background: #f4f5f9; border-radius: 99px; padding: 4px 12px; font-size: .82rem; color: var(--ink-2); }
+body.nd .ic-sum b { color: var(--ink); }
+body.nd .ic-cal { position: relative; margin-top: 10px; border: 1px solid var(--line); border-radius: 14px; }
+body.nd .ic-hd, body.nd .ic-row { display: grid; grid-template-columns: repeat(var(--c, 7), minmax(0, 1fr)); }
+body.nd .ic-hd > div { padding: 8px 0; text-align: center; font-weight: 700; font-size: .82rem; color: var(--ink-2); background: #f7f8fb; border-bottom: 1px solid var(--line); }
+body.nd .ic-hd > div:first-child { border-top-left-radius: 14px; } body.nd .ic-hd > div:last-child { border-top-right-radius: 14px; }
+body.nd .ic-cell { position: relative; overflow: hidden; background: #fff; border-right: 1px solid #eef0f5; border-bottom: 1px solid #eef0f5; padding: 6px 6px 4px; min-width: 0; }
+body.nd .ic-m .ic-cell { height: 112px; } body.nd .ic-w .ic-cell { height: 286px; }
+body.nd .ic-row:last-child .ic-cell { border-bottom: 0; }
+body.nd .ic-cell.out { background: #fafbfd; } body.nd .ic-cell.out .ic-dn b { color: #c3c7d1; }
+body.nd .ic-cell.past > * { opacity: .5; }
+body.nd .ic-cell.today { background: #f3f7ff; } body.nd .ic-cell.today .ic-dn b { background: var(--accent, #2f5bd3); color: #fff; border-radius: 99px; padding: 0 7px; }
+body.nd .ic-cell.has { cursor: pointer; } body.nd .ic-cell.has:hover, body.nd .ic-cell.has:focus-visible { box-shadow: inset 0 0 0 2px #c9d6f5; outline: 0; }
+body.nd .ic-dn { display: flex; align-items: center; gap: 6px; font-size: .8rem; }
+body.nd .ic-dn .ic-wd { display: none; color: var(--ink-3); }
+body.nd .ic-n { margin-left: auto; font-size: .72rem; color: var(--ink-3); font-weight: 600; }
+body.nd .ic-chip { display: flex; gap: 5px; align-items: baseline; margin-top: 4px; padding: 3px 7px; border-radius: 8px; border-left: 3px solid var(--ic-f); background: var(--ic-b); color: var(--ic-f); font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+body.nd .ic-chip span { opacity: .85; overflow: hidden; text-overflow: ellipsis; }
+body.nd .ic-w .ic-chip { display: block; white-space: normal; padding: 5px 8px; }
+body.nd .ic-w .ic-chip span { display: block; font-size: .74rem; margin-top: 1px; }
+body.nd .ic-more { display: block; margin-top: 4px; padding: 0 4px; color: var(--accent, #2f5bd3); font-weight: 800; font-size: .76rem; }
+body.nd .ic-dots { display: none; gap: 3px; margin-top: 5px; flex-wrap: wrap; }
+body.nd .ic-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--ic-f); }
+body.nd .ic-pop { position: absolute; z-index: 20; max-height: 430px; overflow: auto; background: #fff; border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 12px 34px rgba(20, 22, 28, .22); padding: 14px 16px; }
+body.nd .ic-ph { display: flex; align-items: center; gap: 8px; }
+body.nd .ic-ph b { font-size: 1rem; } body.nd .ic-ph small { color: var(--ink-3); font-weight: 600; }
+body.nd .ic-x { margin-left: auto; width: 28px; height: 28px; min-height: 0; padding: 0; border: 0; border-radius: 50%; background: #eef0f6; }
+body.nd .ic-grp { margin-top: 12px; padding-left: 10px; border-left: 3px solid var(--ic-f); }
+body.nd .ic-gt { font-weight: 800; font-size: .88rem; color: var(--ic-f); } body.nd .ic-gt small { font-weight: 600; color: var(--ink-3); margin-left: 6px; }
+body.nd .ic-stu { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 0; min-height: 0; border: 0; border-bottom: 1px dashed var(--line); border-radius: 0; background: none; font: inherit; font-size: .85rem; color: var(--ink); text-align: left; cursor: pointer; }
+body.nd .ic-stu:last-child { border-bottom: 0; } body.nd .ic-stu:hover .nm { text-decoration: underline; }
+body.nd .ic-stu .nm { font-weight: 700; } body.nd .ic-stu .no { color: var(--ink-3); font-size: .78rem; }
+body.nd .ic-stu .dp { margin-left: auto; text-align: right; color: var(--ink-2); font-size: .78rem; } body.nd .ic-stu .dp small { display: block; color: var(--ink-3); }
+body.nd .ic-mine { font-size: .68rem; border-radius: 6px; padding: 1px 6px; background: var(--blue-bg, #e4ecfb); color: var(--accent, #2f5bd3); white-space: nowrap; }
+body.nd .ic-empty { padding: 14px 0 4px; text-align: center; }
+body.nd .ic-list { display: none; }
+@media (max-width: 720px) {
+  body.nd .ic-m .ic-cell { height: 64px; padding: 4px 3px; }
+  body.nd .ic-m .ic-chips { display: none; }
+  body.nd .ic-m .ic-dots { display: flex; }
+  body.nd .ic-m .ic-n { margin: 0; position: absolute; left: 3px; bottom: 3px; font-size: .68rem; color: var(--ink-2); font-weight: 700; }
+  body.nd .ic-m .ic-cell { cursor: pointer; }
+  body.nd .ic-m .ic-cell.sel { box-shadow: inset 0 0 0 2px var(--ink); }
+  body.nd .ic-m ~ .ic-list { display: block; margin-top: 12px; }
+  /* 주: 하루씩 세로로 (칸 높이는 글에 맞춤) */
+  body.nd .ic-w .ic-hd { display: none; }
+  body.nd .ic-w .ic-row { grid-template-columns: minmax(0, 1fr); }
+  body.nd .ic-w .ic-cell { height: auto; min-height: 52px; border-right: 0; }
+  body.nd .ic-w .ic-dn .ic-wd { display: inline; }
+  body.nd .ic-w .ic-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0 6px; }
+  body.nd .ic-pop { left: 0 !important; width: 100% !important; }
+}

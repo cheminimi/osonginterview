@@ -520,15 +520,17 @@ export function mountBoothBooking(root, opts) {
   };
 }
 
-// ================= 일정 탭 위 '면접 일정 | 부스 예약' 슬라이드 알약 =================
-/** el 안에 알약을 그리고 onChange(view) 를 부른다. 눌러도, 좌우로 밀어도 바뀐다 */
-export function mountSchedSwitch(el, { value = "interview", onChange }) {
-  let cur = value;
+// ================= 일정 탭 위 '모의 면접 | 부스 예약 (| 면접 일정)' 슬라이드 알약 =================
+/** el 안에 알약을 그리고 onChange(view) 를 부른다. 눌러도, 좌우로 밀어도 바뀐다
+ *  items: [[값, 이름]] — 학생은 2칸, 선생님은 '면접 일정'(실제 대학 면접, 2026-11-12)까지 3칸 */
+export function mountSchedSwitch(el, { value = "interview", onChange, items = [["interview", "모의 면접"], ["booth", "부스 예약"]] }) {
+  let cur = items.some(([v]) => v === value) ? value : items[0][0];
   el.classList.add("sc-seg");
-  el.innerHTML = `<i aria-hidden="true"></i><button type="button" data-v="interview">면접 일정</button><button type="button" data-v="booth">부스 예약</button>`;
+  el.style.setProperty("--n", items.length);
+  el.innerHTML = `<i aria-hidden="true"></i>${items.map(([v, t]) => `<button type="button" data-v="${v}">${t}</button>`).join("")}`;
   const set = (v, fire = true) => {
     cur = v;
-    el.classList.toggle("r", v === "booth");
+    el.style.setProperty("--k", Math.max(0, items.findIndex(([x]) => x === v)));
     $$("button", el).forEach((b) => { b.classList.toggle("on", b.dataset.v === v); b.setAttribute("aria-pressed", String(b.dataset.v === v)); });
     if (fire) onChange?.(v);
   };
@@ -538,7 +540,8 @@ export function mountSchedSwitch(el, { value = "interview", onChange }) {
   el.addEventListener("pointerup", (e) => {
     if (x0 == null) return;
     const dx = e.clientX - x0; x0 = null;
-    if (Math.abs(dx) > 30) set(dx > 0 ? "booth" : "interview");
+    const k = items.findIndex(([x]) => x === cur), nk = Math.max(0, Math.min(items.length - 1, k + (dx > 0 ? 1 : -1)));
+    if (Math.abs(dx) > 30 && nk !== k) set(items[nk][0]);
   });
   set(cur, false);
   return { set, get: () => cur };

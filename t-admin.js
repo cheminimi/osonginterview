@@ -12,6 +12,7 @@ import { getSyncConfig, clearSyncCache, testConnection, requestSync } from "./sy
 import { loadScheduleConfig, DEFAULT_BLOCKS, DEFAULT_ROOMS, normalizeRoom, roomLimitText } from "./schedule.js";
 import { load as loadReviews, yearOf, qaOf, qaText } from "./t-reviews.js";
 import { boothConfigOf } from "./booth-booking.js";
+import { renderGuidanceAdmin } from "./t-guidance.js";
 
 let root;
 export function init(el) {
@@ -27,6 +28,7 @@ export function init(el) {
       <button data-ad="rvx">⑦ 면접 후기 내보내기</button>
       <button data-ad="booth">⑧ 면접 부스 PC</button>
       <button data-ad="rec">⑨ 학생부</button>
+      <button data-ad="gd">⑩ 지도 일지</button>
     </div>
     <div data-adpanel="sync"></div>
     <div data-adpanel="staff" hidden></div>
@@ -36,11 +38,12 @@ export function init(el) {
     <div data-adpanel="push" hidden></div>
     <div data-adpanel="rvx" hidden></div>
     <div data-adpanel="booth" hidden></div>
-    <div data-adpanel="rec" hidden></div>`;
+    <div data-adpanel="rec" hidden></div>
+    <div data-adpanel="gd" hidden></div>`;
   $$("[data-ad]", root).forEach((b) => b.onclick = () => {
     $$("[data-ad]", root).forEach((x) => x.classList.toggle("active", x === b));
     $$("[data-adpanel]", root).forEach((p) => p.hidden = p.dataset.adpanel !== b.dataset.ad);
-    ({ sync: renderSync, sched: renderSched, backup: renderBackup, push: renderPush, rvx: renderReviewExport, booth: renderBoothPcs, rec: () => renderRecordAdmin($("[data-adpanel=rec]", root)) })[b.dataset.ad]?.();   // 설정 문서는 탭을 열 때만 읽기
+    ({ sync: renderSync, sched: renderSched, backup: renderBackup, push: renderPush, rvx: renderReviewExport, booth: renderBoothPcs, rec: () => renderRecordAdmin($("[data-adpanel=rec]", root)), gd: () => renderGuidanceAdmin($("[data-adpanel=gd]", root)) })[b.dataset.ad]?.();   // 설정 문서는 탭을 열 때만 읽기
   });
   register("admin", render);
 }
@@ -537,7 +540,8 @@ async function renderSched() {
 // ================= ⑤ 백업 · 사용량 =================
 const BACKUP_COLS = ["students", "staff", "accounts", "logins", "interviews", "studentNotes", "questions",
   "sessions", "meetings", "bookings", "bookingLogs", "days", "availability", "meta",
-  "reviews", "boothBookings", "boothSlots", "meetingNotes"];   // (2026-10-30) 대학 면접 후기·부스 예약 — 나중에 생겨 빠져 있었음
+  "reviews", "boothBookings", "boothSlots", "meetingNotes",
+  "guidanceUnavail", "guidanceSubmit", "guidanceNotes", "guidancePlan"];   // (2026-11-12) 지도 일지 (배정 실행 기록 guidanceRuns 는 크고 다시 만들 수 있어 뺌)   // (2026-10-30) 대학 면접 후기·부스 예약 — 나중에 생겨 빠져 있었음
 // ================= ⑧ 면접 부스 PC (관리자만) =================
 // config/booth.devices[키의 SHA-256] = { name, res?, registeredAt, registeredBy } — 부스 화면(booth.html)이 등록할 때 씀.
 // 자리(res)를 정하면 부스가 그 자리 예약에 맞춰 학생에게 안내한다. 해제하면 그 PC 는 다음 로그인 때 잠금 화면.
@@ -736,7 +740,7 @@ async function renderReviewExport() {
 
 // ================= AI 사용 비용 (2026-11-03, 관리자만) =================
 // booth-ai Apps Script 가 Claude 응답의 토큰 수로 기능별·월별로 계산해 쌓은 추정 비용 (부스 꼬리질문 · 부스 피드백 · AI 맞춤 질문)
-const AI_KIND = [["booth-follow", "부스 꼬리질문"], ["booth-report", "부스 피드백"], ["aiq", "AI 맞춤 질문"]];
+const AI_KIND = [["booth-follow", "부스 꼬리질문"], ["booth-report", "부스 피드백"], ["aiq", "AI 맞춤 질문"], ["gjournal", "지도 일지"]];
 const modelName = (m) => ({ "claude-haiku-4-5": "Claude Haiku 4.5", "claude-sonnet-5-5": "Claude Sonnet 5.5", "claude-opus-5-5": "Claude Opus 5.5", "claude-opus-5": "Claude Opus 5", "claude-opus-4-8": "Claude Opus 4.8" })[m] || m;
 async function renderAiCost(box, data = null, month = "") {
   if (!box) return;
@@ -751,7 +755,7 @@ async function renderAiCost(box, data = null, month = "") {
   const rows = AI_KIND.map(([k, lab]) => {
     const x = d.kinds?.[k];
     const ms = Object.entries(x?.models || {}).sort((a, b) => b[1] - a[1]);
-    const model = ms.length ? modelName(ms[0][0]) + (ms.length > 1 ? ` 외 ${ms.length - 1}` : "") : { "booth-follow": "Claude Haiku 4.5", "booth-report": "Claude Sonnet 5.5", aiq: "Claude Opus 5.5" }[k];
+    const model = ms.length ? modelName(ms[0][0]) + (ms.length > 1 ? ` 외 ${ms.length - 1}` : "") : { "booth-follow": "Claude Haiku 4.5", "booth-report": "Claude Sonnet 5.5", aiq: "Claude Opus 5.5", gjournal: "Claude Opus 5.5" }[k];
     const calls = x ? `${x.calls.toLocaleString("ko-KR")}회${k === "aiq" && d.aiq?.students ? ` · 학생 ${d.aiq.students}명` : ""}` : "—";
     return { k, usd: x?.usd || 0, html: `<tr class="${k === "aiq" ? "q" : ""}"><td><b>${lab}</b></td><td>${esc(model)}</td><td class="n">${calls}</td><td class="n">${x ? `${M((x.in || 0) + (x.cacheRead || 0) + (x.cacheWrite || 0))} / ${M(x.out)}` : "—"}</td><td class="n">${won(x?.usd || 0)}</td></tr>` };
   });

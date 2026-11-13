@@ -1288,6 +1288,9 @@ body.nd #bSelBar .btn-sm:not(.btn-primary) { background: none; border-color: tra
 body.nd .tabs.sub { box-shadow: none; position: static; }
 body.nd .card .tabs.sub { background: var(--bg); flex-wrap: wrap; }
 @media (max-width: 720px) { body.nd .tabs.sub { padding: 4px; margin-bottom: 10px; } body.nd .tabs.sub button { min-height: 34px; } }
+/* (2026-11-12) 앱 관리 탭이 10개(⑩ 지도 일지)라 휴대폰에서 넘침 → 탭 줄 안에서 옆으로 밀어 봄 */
+body.nd #adTabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+body.nd #adTabs button { flex: none; white-space: nowrap; }
 body.nd input[type="checkbox"], body.nd input[type="radio"] { accent-color: var(--olive); }
 @media (max-width: 720px) { body.nd #bSelBar { border-radius: 22px; } }
 #homeBody .nrows { display: flex; flex-direction: column; gap: 4px; }

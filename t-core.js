@@ -146,7 +146,8 @@ const SUB = {
   meetings: { parent: "students", title: "대면 기록 전체", back: "students", backLabel: "학생" },
   reviews: { parent: "students", title: "대학 면접 후기", back: "students", backLabel: "학생" },
   review: { parent: "home", title: "연습 리뷰", back: "home", backLabel: "오늘" },
-  admin: { parent: null, title: "앱 관리", back: "home", backLabel: "오늘" }
+  admin: { parent: null, title: "앱 관리", back: "home", backLabel: "오늘" },
+  guidance: { parent: null, title: "지도 일지", back: "home", backLabel: "오늘" }   // (2026-11-12) t-guidance.js
 };
 export function mountTabs() {
   const bar = $("#tabs");

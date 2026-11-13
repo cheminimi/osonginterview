@@ -189,6 +189,7 @@
     <div id="scSub" hidden></div>
     <div class="row" id="acct"></div></div>
   <div id="pwaTip"></div>
+  <div id="gdTip"></div>
   <div class="sub-head" id="subBar" hidden></div>
   <section data-panel="home"></section>
   <section data-panel="schedule" hidden></section>
@@ -200,6 +201,7 @@
   <section data-panel="bank" hidden></section>
   <section data-panel="review" hidden></section>
   <section data-panel="admin" hidden></section>
+  <section data-panel="guidance" hidden></section>
 </main>
 
 <div class="modal-bg" id="modal" hidden><div class="modal">
@@ -222,6 +224,7 @@ import * as bank from "./t-bank.js";
 import * as pqreview from "./t-pqreview.js";
 import * as review from "./t-review.js";
 import * as admin from "./t-admin.js";
+import * as guidance from "./t-guidance.js";
 
 registerSW();
 S.ctx = await requireRole("staff");
@@ -238,6 +241,7 @@ function mountMenu() {
       { icon: "note", label: "대면 기록 전체", desc: "지금까지 쓴 모의면접 기록", id: "goMeetings", onClick: () => switchTab("meetings") },
       { icon: "pen", label: "대학 면접 후기", desc: "학생이 다녀와서 쓴 실제 면접 후기", id: "goReviews", onClick: () => { switchTab("reviews"); reviews.load(); } },
       { icon: "check", label: "연습 리뷰", desc: "학생이 제출한 말하기 연습", id: "goReviewMenu", onClick: () => switchTab("review") },
+      { icon: "calendar", label: "지도 일지", desc: "불가시간 입력 · 내 지도 일지 내려받기", id: "goGuidance", onClick: () => switchTab("guidance") },
       S.ctx.isAdmin ? { icon: "gear", label: "앱 관리", desc: "시트 연동 · 계정 · 일정 설정 · 백업", id: "goAdmin", onClick: () => switchTab("admin") } : null,
       S.ctx.account?.role === "admin" && !S.ctx.account?.key ? null : { icon: "chat", label: pushOn() ? "휴대폰 알림 끄기" : "휴대폰 알림 켜기",
         desc: pushOn() ? "일정 신청 알림을 휴대폰으로 받고 있어요" : "학생이 일정을 신청하면 휴대폰으로 알려드려요",
@@ -274,6 +278,7 @@ bank.init(panel("bank"));
 pqreview.init(panel("pqreview"));
 review.init(panel("review"));
 if (S.ctx.isAdmin) admin.init(panel("admin"));
+guidance.init(panel("guidance"));
 
 let last = null;
 try { last = sessionStorage.getItem("teacherTab"); } catch (_) {}

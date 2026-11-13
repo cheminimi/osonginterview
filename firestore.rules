@@ -254,6 +254,35 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // ===== 지도 일지 (2026-11-12) — 실제 면접 일정(bookings·meetings·availability)과 따로 =====
+    // 설정은 위 config/{docId} (config/guidance: 교사 읽기 · 관리자 쓰기)
+    // 불가시간: 선생님 한 명에 문서 하나 (문서 ID = staffId). days = { 'YYYY-MM-DD': ['16:30', …] } 지도할 수 없는 30분 칸
+    // 선생님은 자기 문서만 읽고·쓰고·지움 (staffId 는 문서 ID 와 같아야 함). 관리자는 전체. 칸 값 검사는 앱이 함 (지도기간 약 90일)
+    function gdUnavailOk(sid, d) {
+      return d.keys().hasAll(['staffId', 'staffName', 'days'])
+        && d.keys().hasOnly(['staffId', 'staffName', 'days', 'updatedAtMs', 'byUid'])
+        && d.staffId == sid && d.staffName is string && d.staffName.size() <= 40
+        && d.days is map && d.days.size() <= 120;
+    }
+    match /guidanceUnavail/{sid} {
+      allow read: if isAdmin() || isStaffSelf(sid);
+      allow write: if (isAdmin() || isStaffSelf(sid)) && (request.resource == null || gdUnavailOk(sid, request.resource.data));
+    }
+    // 입력 완료 표시 (문서 ID = staffId)
+    match /guidanceSubmit/{sid} {
+      allow read: if isAdmin() || isStaffSelf(sid);
+      allow write: if isAdmin() || (isStaffSelf(sid)
+        && request.resource.data.keys().hasOnly(['done', 'atMs', 'name', 'count']) && request.resource.data.done is bool);
+    }
+    // 공개된 지도 일정·지도 일지 내용 (문서 ID = staffId, 선생님 한 명에 한 문서). 본인·관리자만 읽기, 쓰기는 관리자
+    match /guidancePlan/{sid} {
+      allow read: if isAdmin() || isStaffSelf(sid);
+      allow write: if isAdmin();
+    }
+    // 배정 실행 기록 · 학생별 '면접 내용 및 피드백' 글 — 관리자만
+    match /guidanceRuns/{id} { allow read, write: if isAdmin(); }
+    match /guidanceNotes/{no} { allow read, write: if isAdmin(); }
+
     // 휴대폰 알림을 받을 기기 목록. 본인 것만 넣고 뺄 수 있고, 보내는 쪽(교사·동기화)만 전체를 읽는다
     match /pushTokens/{token} {
       allow read: if isStaff();

@@ -315,7 +315,7 @@ var AIQ_MAX = { common: 15, uni: 5 };
 var CASES_URL = 'https://interview-cases-xi.vercel.app/api/cases';
 var CASES_PICK = 15, CASES_Q_MAX = 40, PAST_SHOW = 5, CASES_CACHE_SEC = 21600;
 // 1M 토큰당 달러 [입력, 출력, 캐시 읽기] (캐시 쓰기 = 입력 × 1.25). 배포 전에 Anthropic 가격 페이지로 다시 확인. 모르는 모델은 Opus 5.5 값으로
-var PRICE = { 'claude-opus-5-5': [4, 20, 0.2], 'claude-sonnet-5-5': [2, 10, 0.2], 'claude-haiku-4-5': [1, 5, 0.1] };
+var PRICE = { 'claude-opus-5-5': [4, 20, 0.2], 'claude-sonnet-5-5': [2, 10, 0.1], 'claude-haiku-4-5': [1, 5, 0.1] };
 
 var AIQ_SYSTEM = [
   '너는 고등학교 3학년의 대입 학생부 기반 면접 질문을 만드는 코치다. 선생님이 검토해서 학생에게 줄 예상질문 초안과 암기 카드 내용을 만든다.',
@@ -883,6 +883,7 @@ function aiqSelfTest() {
 // - 쓰기는 하지 않는다 (웹앱이 guidanceNotes/{학번} 에 저장). 사용량은 기능 'gjournal' 로 쌓인다
 // =====================================================================================================
 var GJ_MAX_STUDENTS = 5;
+var GJ_MODEL = 'claude-sonnet-5-5';   // (2026-11-13) 지도 일지 글은 Sonnet 5.5 (Opus 의 절반 값, 사용자 결정) — AI 맞춤 질문(AIQ_MODEL)은 Opus 그대로
 var GJ_EFFORT = 'low';
 var GJ_ROUNDS = { '1차': 'r1', '2차': 'r2', '3차': 'r3' };
 var GJ_SYSTEM = [
@@ -946,7 +947,7 @@ function gjReq_(rows, unis, rounds, s) {
   if (rows.length) content.push({ type: 'text', text: recBlock_(rows) });
   else content.push({ type: 'text', text: '<record>\n(학생부 없음)\n</record>' });
   content.push({ type: 'text', text: task });
-  var body = { model: AIQ_MODEL, max_tokens: 8000, fallbacks: 'default',
+  var body = { model: GJ_MODEL, max_tokens: 8000, fallbacks: 'default',
     system: [{ type: 'text', text: GJ_SYSTEM }],
     messages: [{ role: 'user', content: content }],
     output_config: { effort: GJ_EFFORT, format: { type: 'json_schema', schema: { type: 'object', properties: props, required: req, additionalProperties: false } } } };

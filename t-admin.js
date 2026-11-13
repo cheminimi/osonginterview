@@ -755,7 +755,7 @@ async function renderAiCost(box, data = null, month = "") {
   const rows = AI_KIND.map(([k, lab]) => {
     const x = d.kinds?.[k];
     const ms = Object.entries(x?.models || {}).sort((a, b) => b[1] - a[1]);
-    const model = ms.length ? modelName(ms[0][0]) + (ms.length > 1 ? ` 외 ${ms.length - 1}` : "") : { "booth-follow": "Claude Haiku 4.5", "booth-report": "Claude Sonnet 5.5", aiq: "Claude Opus 5.5", gjournal: "Claude Opus 5.5" }[k];
+    const model = ms.length ? modelName(ms[0][0]) + (ms.length > 1 ? ` 외 ${ms.length - 1}` : "") : { "booth-follow": "Claude Haiku 4.5", "booth-report": "Claude Sonnet 5.5", aiq: "Claude Opus 5.5", gjournal: "Claude Sonnet 5.5" }[k];
     const calls = x ? `${x.calls.toLocaleString("ko-KR")}회${k === "aiq" && d.aiq?.students ? ` · 학생 ${d.aiq.students}명` : ""}` : "—";
     return { k, usd: x?.usd || 0, html: `<tr class="${k === "aiq" ? "q" : ""}"><td><b>${lab}</b></td><td>${esc(model)}</td><td class="n">${calls}</td><td class="n">${x ? `${M((x.in || 0) + (x.cacheRead || 0) + (x.cacheWrite || 0))} / ${M(x.out)}` : "—"}</td><td class="n">${won(x?.usd || 0)}</td></tr>` };
   });

@@ -477,7 +477,7 @@ function runHtml() {
       <td><button type="button" class="btn-sm" data-gdhw="${esc(n)}">hwpx</button></td></tr>`; }).join("")}</tbody></table></div>
     <div class="gd-row" style="margin-top:8px"><button type="button" id="gdCsv">전체 일정 CSV</button><button type="button" id="gdAll">선생님 전원 지도 일지 (zip)</button></div>
     <h4>5. 면접 내용 및 피드백 (AI 작성)</h4>
-    <p class="muted">학생마다 지원 대학·전형과 학생부(있으면)를 보고 1·2·3차 글을 따로 만들어요. Claude Opus 5.5 · 학생 한 명에 약 100~150원, 92명이면 약 1만~1만 5천 원 (추정 · 관리 ⑤ AI 사용 비용에 '지도 일지'로 쌓여요). 이름·학번은 보내지 않아요.</p>
+    <p class="muted">학생마다 지원 대학·전형과 학생부(있으면)를 보고 1·2·3차 글을 따로 만들어요. Claude Sonnet 5.5 · 학생 한 명에 약 100~200원, 92명이면 약 1만~2만 원 (추정 · 관리 ⑤ AI 사용 비용에 '지도 일지'로 쌓여요). 이름·학번은 보내지 않아요.</p>
     <div class="gd-row"><b>${haveNotes} / ${needNotes.length}명 작성됨</b><button type="button" class="btn-primary" id="gdAi" ${haveNotes === needNotes.length ? "disabled" : ""}>${haveNotes ? "남은 학생 AI 작성" : "AI 내용 작성"}</button><button type="button" id="gdNotes">학생별 글 보기·고치기</button></div>
     <div class="gd-prog" id="gdProg" hidden><b></b></div><div id="gdAiMsg" class="muted"></div>
     <h4>6. 공개</h4>

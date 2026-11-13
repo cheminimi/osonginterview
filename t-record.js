@@ -936,7 +936,7 @@ export async function loadPending(no) {
   return (await getDocs(collection(db, "records", no, "pending"))).docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 // 옮기기: personalQuestions 에 더하고 pending 지우고, 그 질문의 하이라이트(qid)를 새 문서로 바꿈. 더한 개수를 돌려줌
-export async function publishPending(no, list) {
+export async function publishPending(no, list, out = null) {
   if (!list?.length) return 0;
   const col = collection(db, "students", no, "personalQuestions");
   const cur = (await getDocs(col)).docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -948,6 +948,7 @@ export async function publishPending(no, list) {
     const row = { text: p.text, basis: p.basis || "", followUps: p.followUps || [], category: `${p.stage}차 선생님 질문`, type: "document", by: "teacher", addedBy: p.by || "", source: p.aiId ? "ai" : "record", stage: Number(p.stage) || 0,
       ...(p.card ? { card: p.card } : {}), ...(p.aiId ? { aiId: p.aiId } : {}) };   // (2026-11-03) 암기 카드 내용·AI 초안 표시도 함께 옮김
     rows.push(row);
+    out?.push({ id: ref.id, ...row });   // (2026-11-13) 공개한 질문 — 카드가 없으면 카드 만들기로 넘김
     b.set(ref, { ...row, createdAt: serverTimestamp() });
     b.delete(doc(db, "records", no, "pending", p.id));
     marks.filter((m) => m.data().qid === p.id).forEach((m) => b.update(m.ref, { qid: ref.id }));
@@ -1063,6 +1064,7 @@ export const recordViewerOpen = () => !!V;
 export function closeRecordViewer() {
   if (!V) return;
   flushDelMark();
+  try { V.fb?.flush(); V.fb?.destroy(); } catch (e) { console.warn(e); }   // ② 피드백 임시 저장을 바로 남김
   clearTimeout(V.idle); clearInterval(V.tick);
   V.off.forEach((f) => f());
   document.getElementById("recView")?.remove();
@@ -1090,12 +1092,15 @@ export async function openRecordViewer(no, { stage = 0, preset = null, mode = "i
   if (prep) {
     try { const [a, m] = await Promise.all([getDocs(collection(db, "records", no, "aiq")), getDoc(doc(db, "records", no, "aimeta", "main"))]); aiq = a.docs.map((d) => ({ id: d.id, ...d.data() })); aimeta = m.exists() ? m.data() : null; }
     catch (e) { console.warn("AI 초안 불러오기", e); }
+  } else {
+    try { const m = await getDoc(doc(db, "records", no, "aimeta", "main")); aimeta = m.exists() ? m.data() : null; } catch (_) { /* 동의 여부만 — 못 읽으면 근거 카드만 */ }
   }
   const hasAi = prep && (aiq.length > 0 || !!aimeta?.unis?.length);
   const myStages = myRoles(st).map((r) => Number(r[0])).filter(Boolean);
   V = { no, st, rec, stage: stage || (prep ? myStages[0] || 1 : guessStage(st, preset)), preset, marks: [], pending: [], pqs: [], notes: null, asked: new Map(),
     aiq, aimeta, hasAi, aiGrp: "common", aiEdit: null,
-    mode, prep, onClose, newIds: [], editQ: null,
+    mode, prep, onClose, newIds: [], editQ: null, consent: !!aimeta?.consentAt,
+    fb: null, fbEl: null, fbDone: null, savedMid: "",   // ② 피드백 (대면 기록 칸을 창 안에) — 2026-11-13
     flt: "mine", otherHl: true, idle: null, tick: null, t0: 0, run: false, used: 0, off: [], sel: null,
     // 보기 상태: 접기(구역·학년·목차)는 열려 있는 동안만, 글자 크기·문장 나누기만 브라우저에 기억
     openS: {}, openY: {}, tocOpen: {}, fs: viewPref("rvFs", 16), sent: viewPref("rvSent", 0) === 1, find: "", wide: false, bulkAt: 0 };
@@ -1111,10 +1116,11 @@ export async function openRecordViewer(no, { stage = 0, preset = null, mode = "i
   }).join("");
   ov.innerHTML = `<div class="rv-wm" style="background-image:url(&quot;data:image/svg+xml;utf8,${encodeURIComponent(wm)}&quot;)"></div>
     <div class="rv-hd"><b>${esc(no)} ${esc(st.name)}</b><span class="rv-gr rv-main"><button type="button" data-main="rec" class="on">학생부</button><button type="button" data-main="gr">성적</button></span>
-      ${prep ? `<span class="rv-preptag" id="rvPrepTag">질문 준비</span>${myStages.length !== 1 ? `<span class="rv-stage">${(myStages.length ? myStages : [1, 2, 3]).map((k) => `<button type="button" data-stage="${k}" class="${V.stage === k ? "on" : ""} c${k}">${k}차</button>`).join("")}</span>` : ""}<span class="muted">면접 전에 질문을 뽑아 두는 화면 · 학생에게 안 보임</span><span class="sp"></span>
+      ${prep ? `<span class="rv-preptag" id="rvPrepTag">질문 준비</span>${myStages.length !== 1 ? `<span class="rv-stage">${(myStages.length ? myStages : [1, 2, 3]).map((k) => `<button type="button" data-stage="${k}" class="${V.stage === k ? "on" : ""} c${k}">${k}차</button>`).join("")}</span>` : ""}<span class="muted">면접 전에 질문을 뽑아 두는 화면 · 만든 질문은 바로 학생에게 공개</span><span class="sp"></span>
       <button type="button" class="btn-sm" id="rvClose">질문 탭으로 돌아가기</button>`
     : `<span class="rv-stage">${[1, 2, 3].map((k) => `<button type="button" data-stage="${k}" class="${V.stage === k ? "on" : ""} c${k}">${k}차</button>`).join("")}</span>
-      <span class="muted">모의면접${preset?.date ? ` · ${esc(fmtDay(preset.date))}` : ""}</span><span class="sp"></span>
+      <span class="muted">모의면접${preset?.date ? ` · ${esc(fmtDay(preset.date))}` : ""}</span>
+      <span class="rv-steps" id="rvSteps"><button type="button" data-step="q" class="on">① 질문하기</button><i>→</i><button type="button" data-step="fb">② 피드백</button></span><span class="sp"></span>
       <span class="rv-tm" id="rvTm">면접 00:00</span><button type="button" class="btn-sm" id="rvTmBtn">면접 시작</button><button type="button" class="btn-sm" id="rvClose">닫기</button>`}
       ${apps ? `<div class="rv-apps" id="rvApps"><span class="apl">지원</span>${apps}</div>` : ""}</div>
     <div class="rv-body">
@@ -1132,9 +1138,9 @@ export async function openRecordViewer(no, { stage = 0, preset = null, mode = "i
         ? `<div class="rv-tabs">${hasAi ? '<button type="button" data-tab="ai">AI 초안 <span id="rvAn"></span></button>' : ""}<button type="button" data-tab="mine">뽑은 질문 <span id="rvQn"></span></button><button type="button" data-tab="other">다른 질문 <span id="rvPn"></span></button></div>
         <div class="rv-sb" id="rvSb"></div>
         <div class="rv-foot"><span class="muted sm" id="rvAsk">뽑은 질문은 ${esc(no)} ${esc(st.name)} 질문 목록에 저장돼요</span><button type="button" class="btn-primary" id="rvDone">다 뽑았어요</button></div>`
-        : `<div class="rv-tabs"><button type="button" class="on" data-tab="q">질문 <span id="rvQn"></span></button><button type="button" data-tab="p">지난 면접 <span id="rvPn"></span></button></div>
+        : `<div id="rvDraftBar"></div><div class="rv-tabs"><button type="button" class="on" data-tab="q">① 질문하기 <span id="rvQn"></span></button><button type="button" data-tab="fb">② 피드백</button><button type="button" data-tab="p">지난 면접 <span id="rvPn"></span></button></div>
         <div class="rv-sb" id="rvSb"></div>
-        <div class="rv-foot"><span class="muted sm" id="rvAsk"></span><button type="button" class="btn-primary" id="rvRec">기록 쓰기 →</button></div>`}</aside>
+        <div class="rv-foot" id="rvFoot"><span class="muted sm" id="rvAsk"></span><button type="button" class="btn-primary" id="rvRec">피드백 쓰기 →</button></div>`}</aside>
     </div>
     <div class="rv-grades" id="rvGrades" hidden></div>
     <div class="rv-pop" id="rvPop" hidden><button type="button" id="rvHl">하이라이트</button><button type="button" id="rvQ">질문 만들기</button></div>
@@ -1157,17 +1163,30 @@ export async function openRecordViewer(no, { stage = 0, preset = null, mode = "i
   bump();
   V.off.push(() => document.body.classList.remove("rv-open"));
   $("#rvUnCover", ov).onclick = () => { $("#rvCover", ov).hidden = true; };
-  $("#rvClose", ov).onclick = closeRecordViewer;
+  $("#rvClose", ov).onclick = async () => {
+    // 저장 안 한 ② 피드백이 있으면 한 번 묻기 (임시 저장돼 있다는 안내와 함께)
+    if (!prep && V?.fb) {
+      V.fb.flush();
+      if (V.fb.dirty() && !(await confirmBox({ title: "저장하지 않은 기록이 있어요", what: "② 피드백을 아직 [저장하고 마치기] 하지 않았어요.",
+        note: "쓰던 내용(① 물어봄·답 메모 포함)은 이 브라우저에 임시 저장돼 있어요 — 같은 학생·차수로 다시 열면 [불러오기]로 돌아와요.", yes: "닫기", no: "계속 쓰기" }))) return;
+    }
+    closeRecordViewer();
+  };
   if ($("#rvTmBtn", ov)) $("#rvTmBtn", ov).onclick = () => {
     V.run = !V.run;
     if (V.run) { V.t0 = Date.now() - V.used * 1000; V.tick = setInterval(() => { V.used = Math.floor((Date.now() - V.t0) / 1000); $("#rvTm", ov).textContent = `면접 ${String(Math.floor(V.used / 60)).padStart(2, "0")}:${String(V.used % 60).padStart(2, "0")}`; }, 500); }
     else clearInterval(V.tick);
     $("#rvTmBtn", ov).textContent = V.run ? "멈춤" : "면접 시작";
   };
-  $$("[data-stage]", ov).forEach((b) => b.onclick = () => { V.stage = Number(b.dataset.stage); $$("[data-stage]", ov).forEach((x) => x.classList.toggle("on", x === b)); drawSide(); });
+  $$("[data-stage]", ov).forEach((b) => b.onclick = () => {
+    V.stage = Number(b.dataset.stage); $$("[data-stage]", ov).forEach((x) => x.classList.toggle("on", x === b));
+    if (!prep) { dropFb(); V.savedMid = ""; mountFb(); }   // 차수가 바뀌면 ② 피드백도 그 차수로 (쓰던 것은 임시 저장에 남음)
+    drawSide();
+  });
   $("#rvOther", ov).onchange = (e) => { V.otherHl = e.target.checked; drawDoc(); };
-  $$(".rv-tabs [data-tab]", ov).forEach((b) => b.onclick = () => { $$(".rv-tabs [data-tab]", ov).forEach((x) => x.classList.toggle("on", x === b)); V.tab = b.dataset.tab; drawSide(); });
-  if ($("#rvRec", ov)) $("#rvRec", ov).onclick = toMeetingForm;
+  $$(".rv-tabs [data-tab]", ov).forEach((b) => b.onclick = () => setTab(b.dataset.tab));
+  $$("#rvSteps [data-step]", ov).forEach((b) => b.onclick = () => setTab(b.dataset.step));
+  if ($("#rvRec", ov)) $("#rvRec", ov).onclick = () => setTab("fb");
   if ($("#rvDone", ov)) $("#rvDone", ov).onclick = closeRecordViewer;
   // [학생부 | 성적]: 성적은 학생부를 넣을 때 '성적 표도 넣기'를 고른 경우에만 있음
   const grSt = { on: new Set(["주요과목", "전과목"]), bars: "all", view: "sum", sem: "" };
@@ -1267,6 +1286,7 @@ export async function openRecordViewer(no, { stage = 0, preset = null, mode = "i
     V.pqs = pq.docs.map((d) => ({ id: d.id, ...d.data() }));
   } catch (e) { console.warn("학생부 하이라이트·질문 불러오기", e); toast("하이라이트·질문을 불러오지 못했어요. 학생부는 볼 수 있어요.", "error"); }
   if (!V) return;
+  if (!prep) mountFb();
   drawDoc(); drawSide();
   loadMeetingNotes(no).then((n) => { if (V && V.no === no) { V.notes = n; drawSide(); } }).catch(() => { if (V && V.no === no) { V.notesFail = true; drawSide(); } });
 }
@@ -1400,9 +1420,7 @@ function questionForm() {
     <div class="muted sm">근거</div><div class="rv-basis">${maskSpans(basis)}</div>
     <div class="field"><label>질문</label><textarea id="rvQt" rows="3" placeholder="학생에게 물을 질문"></textarea></div>
     <div class="field"><label>꼬리질문 (선택 · 한 줄에 하나)</label><textarea id="rvQf" rows="2"></textarea></div>
-    <div class="field"><label>공개 시점</label>
-      <label class="inline-check"><input type="radio" name="rvPub" value="after" checked> 면접 뒤 공개 <span class="muted sm">(이 차수 대면 기록을 저장할 때 학생 '내 생기부 면접'에 더해져요)</span></label>
-      <label class="inline-check"><input type="radio" name="rvPub" value="now"> 바로 공개</label></div>
+    <div class="rv-pubnote">저장하면 바로 학생 '내 생기부 면접'에 공개되고, AI가 드래그한 글 속 개념을 한 줄씩 정리해 암기 카드를 만들어요</div>
     <div class="muted sm" id="rvQErr" style="color:var(--danger)"></div>
     <div class="row"><button type="button" class="btn-sm" id="rvQX">취소</button><div class="spacer"></div><button type="button" class="btn-primary btn-sm" id="rvQOk">저장</button></div></div>`;
   const home = V.prep ? "mine" : "q";
@@ -1411,36 +1429,29 @@ function questionForm() {
     const text = $("#rvQt", sb).value.trim(), fu = $("#rvQf", sb).value.split("\n").map((x) => x.trim()).filter(Boolean);
     const bad = !text ? "질문을 적어 주세요." : badQuestionText(text + "\n" + fu.join("\n"), V.no);
     if (bad) { $("#rvQErr", sb).textContent = bad; return; }
-    const pub = $("input[name=rvPub]:checked", sb).value;
+    // (2026-11-13) 질문은 늘 바로 공개 — '면접 뒤 공개'(pending)는 더 만들지 않음. 저장 뒤 암기 카드는 뒤에서 (기다리지 않음)
     const me = myName() || S.ctx.user.email;
     $("#rvQOk", sb).disabled = true;
     try {
       const mref = doc(collection(db, "records", V.no, "marks"));
       const mark = { kind: "q", stage: V.stage, by: me, byUid: S.ctx.user.uid, sec: s.sec, row: s.row, start: s.start, end: s.end, quote: s.quote, at: Date.now() };
-      if (pub === "after") {
-        const pref = doc(collection(db, "records", V.no, "pending"));
-        const p = { text, followUps: fu, basis, sec: s.sec, stage: V.stage, by: me, byUid: S.ctx.user.uid, markId: mref.id, createdAt: serverTimestamp() };
-        const b = writeBatch(db);
-        b.set(pref, p); b.set(mref, { ...mark, qid: pref.id });
-        await b.commit();
-        V.pending.push({ id: pref.id, ...p, createdAt: { seconds: Date.now() / 1000 } }); V.marks.push({ id: mref.id, ...mark, qid: pref.id }); V.newIds.push(pref.id);
-      } else {
-        const col = collection(db, "students", V.no, "personalQuestions");
-        const cur = (await getDocs(col)).docs.map((d) => ({ id: d.id, ...d.data() }));
-        const qref = doc(col);
-        const row = { text, basis, followUps: fu, category: `${V.stage}차 선생님 질문`, type: "document", by: "teacher", addedBy: me, source: "record", stage: V.stage };
-        const stats = pqStats([...cur, row]);
-        const b = writeBatch(db);
-        b.set(qref, { ...row, createdAt: serverTimestamp() }); b.set(mref, { ...mark, qid: qref.id }); b.update(doc(db, "students", V.no), stats);
-        await b.commit();
-        Object.assign(studentByNo(V.no) || {}, stats);
-        V.pqs = [...cur, { id: qref.id, ...row, createdAt: { seconds: Date.now() / 1000 } }]; V.marks.push({ id: mref.id, ...mark, qid: qref.id }); V.newIds.push(qref.id);
-        log(V.no, "publish");
-      }
+      const col = collection(db, "students", V.no, "personalQuestions");
+      const cur = (await getDocs(col)).docs.map((d) => ({ id: d.id, ...d.data() }));
+      const qref = doc(col);
+      const row = { text, basis, followUps: fu, category: `${V.stage}차 선생님 질문`, type: "document", by: "teacher", addedBy: me, source: "record", stage: V.stage };
+      const stats = pqStats([...cur, row]);
+      const b = writeBatch(db);
+      b.set(qref, { ...row, createdAt: serverTimestamp() }); b.set(mref, { ...mark, qid: qref.id }); b.update(doc(db, "students", V.no), stats);
+      await b.commit();
+      Object.assign(studentByNo(V.no) || {}, stats);
+      const nq = { id: qref.id, ...row, createdAt: { seconds: Date.now() / 1000 } };
+      V.pqs = [...cur, nq]; V.marks.push({ id: mref.id, ...mark, qid: qref.id }); V.newIds.push(qref.id);
+      log(V.no, "publish");
       V.sel = null; getSelection().removeAllRanges();
-      toast(pub === "after" ? "질문을 저장했어요 (면접 뒤 공개)" : "질문을 학생에게 공개했어요");
+      toast("질문을 학생에게 공개했어요");
       V.tab = home; V.flt = "mine"; $$(".rv-tabs [data-tab]").forEach((x) => x.classList.toggle("on", x.dataset.tab === home));
       drawDoc(); drawSide();
+      viewerCards([nq]);
     } catch (e) { $("#rvQOk", sb).disabled = false; showError(e, "질문 저장"); }
   };
   $("#rvQt", sb).focus();
@@ -1471,6 +1482,8 @@ function cardTag(c) {
 function drawSide() {
   if (!V) return;
   const sb = document.getElementById("rvSb"); if (!sb) return;
+  // ② 피드백 칸은 한 번 만든 것을 그대로 옮겨 다님 (다른 탭을 그리기 전에 떼어 둠 — 입력·임시 저장은 그대로)
+  if (V.fbEl?.parentNode === sb && (V.tab !== "fb" || V.fbDone)) V.fbEl.remove();
   const all = cards();
   if (V.prep) {
     // 질문 준비: [뽑은 질문 | 다른 질문] · 물어봄·답 메모·↻ 다시 없음 · 내 질문은 [고치기], 공개 전은 [지우기]
@@ -1483,23 +1496,19 @@ function drawSide() {
     sb.innerHTML = list.map((c) => {
       // [고치기]: 질문·꼬리질문 + 학생 암기 카드에 나갈 내용(핵심 키워드·개념·정리할 것·답변 포인트) — 카드가 없는 예전 질문은 빈 칸으로 열림
       if (V.editQ === c.key) return edHtml(edOf(c), { key: c.key, head: `${cardTag(c)}<span class="muted sm">고치는 중 · 질문과 학생 암기 카드에 나갈 내용</span>`,
-        extra: c.pend ? `<div class="field"><label>공개 시점</label>
-          <label class="inline-check"><input type="radio" name="rvEPub" value="after" checked> 면접 뒤 공개</label>
-          <label class="inline-check"><input type="radio" name="rvEPub" value="now"> 바로 공개 <span class="muted sm">(학생 '내 생기부 면접'에 더해져요)</span></label></div>`
-          : '<div class="muted sm">이미 공개된 질문이라 공개 시점은 그대로예요.</div>' });
+        extra: editExtra(c) });
       const mk = V.marks.find((m) => m.qid === (c.pend || c.pq));
       return `<div class="rv-card" data-card="${esc(c.key)}" ${mk ? `data-mk="${esc(mk.id)}"` : ""}>
         <div class="row">${cardTag(c)}<span class="muted sm">${esc(c.by || "")}${c.mine ? " (나)" : ""}${c.ai ? " · AI 초안에서" : ""}${c.card?.t ? ` · 기출 유형 · ${esc(c.card.t)}` : ""}</span><div class="spacer"></div><span class="badge ${c.status === "after" ? "badge-orange" : "badge-green"}">${c.status === "after" ? "면접 뒤 공개" : "공개됨"}</span></div>
         <div class="rv-qt">${esc(c.text)}</div>${c.followUps.length ? `<div class="muted sm">↳ ${c.followUps.map(esc).join(" · ")}</div>` : ""}
         ${c.basis ? `<div class="rv-basis">${maskSpans(c.basis)}</div>` : ""}
+        ${cardBox(c)}
         ${c.mine ? `<div class="row rv-acts"><button type="button" class="btn-sm" data-edq>고치기</button>${c.pend ? '<button type="button" class="btn-sm btn-danger" data-delq>지우기</button>' : ""}</div>` : ""}</div>`;
     }).join("") || `<div class="muted sm">${V.tab === "other" ? "다른 질문이 없어요." : "아직 뽑은 질문이 없어요. 학생부 글을 드래그해 [질문 만들기]."}</div>`;
     $$("[data-card]", sb).forEach((el) => {
       const c = all.find((x) => x.key === el.dataset.card);
       $("[data-edq]", el)?.addEventListener("click", () => { V.editQ = c.key; drawSide(); });
-      $("[data-ecancel]", el)?.addEventListener("click", () => { V.editQ = null; drawSide(); });
-      $("[data-esave]", el)?.addEventListener("click", () => saveEditQ(c, el));
-      if (el.classList.contains("ai-ed")) bindEd(el);
+      bindEditCard(el, c);
       $("[data-delq]", el)?.addEventListener("click", () => delPendingQ(c));
     });
     return;
@@ -1508,9 +1517,11 @@ function drawSide() {
   const ag = V.notes ? againOf() : [];
   $("#rvPn").textContent = ag.length ? `↻${ag.length}` : "";
   const asked = [...V.asked.values()].filter((a) => a.asked).length;
-  $("#rvAsk").textContent = asked ? `물어봄 ${asked}개 → 받은 질문으로 가요` : "";
+  $("#rvAsk").textContent = asked ? `물어봄 ${asked}개 → 피드백의 받은 질문으로 가요` : "";
+  syncSteps();
   if (V.tab === "new") return;
   if (V.tab === "p") return drawPast(sb);
+  if (V.tab === "fb") return drawFb(sb);
   // 모의면접: 처음 거르기 = 내가 준비한 질문 → 다른 선생님·학생 → 모두
   const f = V.flt;
   const list = all.filter((c) => f === "all" || (f === "mine") === c.mine);
@@ -1519,22 +1530,28 @@ function drawSide() {
   sb.innerHTML = `<div class="rv-flt">${[["mine", "내가 준비한 질문"], ["other", "다른 선생님·학생"], ["all", "모두"]].map(([k, t]) => `<button type="button" data-flt="${k}" class="${f === k ? "on" : ""}">${t} ${n[k]}</button>`).join("")}</div>
     ${pendN ? `<div class="muted sm" style="margin:6px 0">${V.stage}차 '면접 뒤 공개' 질문 ${pendN}개 — 이 차수 대면 기록을 저장할 때 학생에게 공개돼요</div>` : ""}
     ${list.map((c) => { const a = V.asked.get(c.key) || {}; const mk = V.marks.find((m) => m.qid === (c.pend || c.pq));
+      if (V.editQ === c.key) return edHtml(edOf(c), { key: c.key, head: `${cardTag(c)}<span class="muted sm">고치는 중 · 질문과 학생 암기 카드에 나갈 내용</span>`, extra: editExtra(c) });
       return `<div class="rv-card${a.asked ? " asked" : ""}" data-card="${esc(c.key)}" ${mk ? `data-mk="${esc(mk.id)}"` : ""}>
         <div class="row">${cardTag(c)}
           <span class="muted sm">${esc(c.by || "")}${c.mine ? " (나)" : ""}</span><div class="spacer"></div><span class="badge ${c.status === "after" ? "badge-orange" : "badge-green"}">${c.status === "after" ? "면접 뒤 공개" : "공개됨"}</span></div>
         ${c.basis ? `<div class="rv-basis">${maskSpans(c.basis)}</div>` : ""}
         <div class="rv-qt">${esc(c.text)}</div>${c.followUps.length ? `<div class="muted sm">↳ ${c.followUps.map(esc).join(" · ")}</div>` : ""}
+        ${cardBox(c)}
         <div class="row rv-acts"><button type="button" class="btn-sm${a.asked ? " on" : ""}" data-asked>${a.asked ? "물어봄 ✓" : "물어봄"}</button>
           <button type="button" class="btn-sm mt-ag${a.again ? " on" : ""}" data-again>↻ 다음 차수에 다시</button>
+          ${c.mine && c.pq ? '<button type="button" class="btn-sm" data-edq>고치기</button>' : ""}
           ${c.pend && c.mine ? '<div class="spacer"></div><button type="button" class="btn-sm btn-danger" data-delq>지우기</button>' : ""}</div>
         ${a.asked ? `<input class="mt-memo" data-memo placeholder="학생 답 메모 (선생님끼리만)" value="${esc(a.memo || "")}">` : ""}</div>`; }).join("") || `<div class="muted sm">${f === "mine" ? "내가 준비한 질문이 없어요. 학생부 글을 드래그해 [질문 만들기]." : "질문이 없어요."}</div>`}`;
   $$("[data-flt]", sb).forEach((b) => b.onclick = () => { V.flt = b.dataset.flt; drawSide(); });
   $$("[data-card]", sb).forEach((el) => {
     const c = all.find((x) => x.key === el.dataset.card);
     const st = () => V.asked.get(c.key) || V.asked.set(c.key, { asked: false, again: false, memo: "", q: c.text, pend: c.pend || "", pq: c.pq || "" }).get(c.key);
-    $("[data-asked]", el).onclick = () => { const a = st(); a.asked = !a.asked; drawSide(); };
-    $("[data-again]", el).onclick = () => { const a = st(); a.again = !a.again; if (a.again) a.asked = true; drawSide(); };
-    $("[data-memo]", el)?.addEventListener("input", (e) => { st().memo = e.target.value; });
+    // 물어봄·↻·답 메모 → ② 받은 질문과 같은 상태 · 임시 저장에도 (V.fb.touch)
+    $("[data-asked]", el)?.addEventListener("click", () => { const a = st(); a.asked = !a.asked; V.fb?.touch(); drawSide(); });
+    $("[data-again]", el)?.addEventListener("click", () => { const a = st(); a.again = !a.again; if (a.again) a.asked = true; V.fb?.touch(); drawSide(); });
+    $("[data-memo]", el)?.addEventListener("input", (e) => { st().memo = e.target.value; V.fb?.touch(); });
+    $("[data-edq]", el)?.addEventListener("click", () => { V.editQ = c.key; drawSide(); });
+    bindEditCard(el, c);
     $("[data-delq]", el)?.addEventListener("click", () => delPendingQ(c));
   });
 }
@@ -1564,9 +1581,12 @@ async function saveEditQ(c, el) {
       await updateDoc(doc(db, "records", V.no, "pending", c.pend), upd);
       const p = V.pending.find((x) => x.id === c.pend); Object.assign(p, upd);
       if (now) {
-        await publishPending(V.no, [p]);
+        const pubd = [];
+        await publishPending(V.no, [p], pubd);
         await reloadQs();
         toast("질문을 학생에게 공개했어요");
+        const need = pubd.map((x) => V.pqs.find((q) => q.id === x.id)).filter((q) => q && !q.card);
+        if (need.length) viewerCards(need);
       } else toast("고쳤어요");
     } else {
       await updateDoc(doc(db, "students", V.no, "personalQuestions", c.pq), upd);
@@ -1624,17 +1644,213 @@ function drawPast(sb) {
   sb.innerHTML = `<div id="rvPast" class="mt-past rv-past"></div>`;
   renderPast($("#rvPast", sb), V.no, V.notes, {
     putLabel: "질문 칸에 넣기",
-    put: (a) => { V.asked.set(`a:${a.mid}:${a.qid}`, { asked: true, again: false, memo: "", q: a.q, from: { mid: a.mid, qid: a.qid } }); toast("질문 칸에 넣었어요 — [기록 쓰기] 때 받은 질문으로 가요"); drawSide(); },
+    put: (a) => { V.asked.set(`a:${a.mid}:${a.qid}`, { asked: true, again: false, memo: "", q: a.q, from: { mid: a.mid, qid: a.qid } }); V.fb?.touch(); toast("질문 칸에 넣었어요 — ② 피드백의 받은 질문으로 가요"); drawSide(); },
     used: new Set([...V.asked.values()].filter((x) => x.from).map((x) => x.from.mid + ":" + x.from.qid))
   });
 }
-// [기록 쓰기 →] — 2단계 대면 기록 창을 이 화면 위에 엶. '물어봄'한 질문(글·메모·다시·id 만)을 받은 질문 칸으로
-async function toMeetingForm() {
-  const rows = [...V.asked.values()].filter((a) => a.asked && a.q).map((a) => ({ q: a.q, memo: a.memo || "", again: !!a.again, ...(a.pend ? { pend: a.pend } : {}), ...(a.pq ? { pq: a.pq } : {}), ...(a.from ? { from: a.from } : {}) }));
-  const p = V.preset;
-  const existing = p?.id && (S.meetings || []).find((m) => m.id === p.id && !m.planned);
-  openMeetingForm(existing ? { id: existing.id, fromRecord: { stage: V.stage, rows } }
-    : { studentNo: V.no, preset: p && p.id ? { ...p, stage: p.stage || V.stage } : null, fromRecord: { stage: V.stage, rows } });
+// ===== 모의면접 창 하나로 (2026-11-13, spec-interview-card 3·4장) =====
+// 오른쪽 [① 질문하기 | ② 피드백 | 지난 면접]. ② = 대면 기록 칸(openMeetingForm embed)을 이 창 안에 — 받은 질문 = ① 물어봄 (V.asked 가 기준)
+// 임시 저장은 대면 기록 창의 것(mdraft:…)을 그대로 쓰고, ① 물어봄·답 메모·↻ 도 같이 넣음
+function setTab(t) {
+  if (!V) return;
+  V.tab = t;
+  if (t === "fb") V.fbFresh = true;   // ② 를 열 때만 ① 물어봄과 맞춰 받은 질문을 다시 그림 (쓰는 중 다른 일로 다시 그려져도 입력칸은 그대로)
+  $$(".rv-tabs [data-tab]").forEach((x) => x.classList.toggle("on", x.dataset.tab === t));
+  drawSide();
+}
+function syncSteps() {
+  const t = V.tab === "fb" ? "fb" : "q";
+  $$("#rvSteps [data-step]").forEach((x) => x.classList.toggle("on", x.dataset.step === t));
+  const ft = document.getElementById("rvFoot"); if (ft) ft.hidden = V.tab === "fb";
+}
+const askedRows = () => [...V.asked.entries()].filter(([, a]) => a.asked && a.q).map(([rk, a]) => ({ rk, q: a.q, memo: a.memo || "", again: !!a.again,
+  ...(a.pend ? { pend: a.pend } : {}), ...(a.pq ? { pq: a.pq } : {}), ...(a.from ? { from: a.from } : {}) }));
+const askedSave = () => [...V.asked.entries()].filter(([, a]) => a.asked || a.memo || a.again).map(([k, a]) => [k, { asked: !!a.asked, again: !!a.again, memo: a.memo || "", q: a.q || "",
+  ...(a.pend ? { pend: a.pend } : {}), ...(a.pq ? { pq: a.pq } : {}), ...(a.from ? { from: a.from } : {}) }]);
+function dropFb() {
+  if (!V) return;
+  try { V.fb?.flush(); V.fb?.destroy(); } catch (e) { console.warn(e); }
+  V.fbEl?.remove(); V.fb = null; V.fbEl = null; V.fbDone = null;
+  const bar = document.getElementById("rvDraftBar"); if (bar) bar.innerHTML = "";
+}
+function mountFb({ id = "" } = {}) {
+  if (!V || V.prep) return;
+  dropFb();
+  const el = document.createElement("div"); el.className = "rv-fb";
+  V.fbEl = el;
+  const p = V.preset, no = V.no;
+  const mid = id || V.savedMid || (p?.id && (S.meetings || []).find((m) => m.id === p.id && !m.planned)?.id) || "";
+  const embed = {
+    el, draftBar: document.getElementById("rvDraftBar"),
+    sync: {
+      rows: () => (V && V.no === no ? askedRows() : []),
+      set: (rk, patch) => { const a = V?.asked.get(rk); if (a) Object.assign(a, patch); }
+    },
+    extra: {
+      get: () => (V && V.no === no ? askedSave() : []),
+      set: (list) => { if (!V || V.no !== no) return; V.asked = new Map(Array.isArray(list) ? list : []); drawSide(); }
+    },
+    onBack: () => setTab("q"),
+    onSaved: (info) => {
+      if (!V || V.no !== no) return;
+      V.savedMid = info.id; V.fbDone = info;
+      try { V.fb?.destroy(); } catch (_) {}
+      V.fbEl?.remove(); V.fb = null; V.fbEl = null;
+      setTab("fb");
+      reloadQs().then(() => { if (V && V.no === no) drawSide(); }).catch(() => {});
+      loadMeetingNotes(no).then((n) => { if (V && V.no === no) { V.notes = n; drawSide(); } }).catch(() => {});
+    }
+  };
+  V.fb = openMeetingForm(mid ? { id: mid, embed } : { studentNo: no, preset: p && p.id ? { ...p, stage: p.stage || V.stage } : null, fromRecord: { stage: V.stage, rows: [] }, embed });
+}
+function drawFb(sb) {
+  if (V.fbDone) {
+    const d = V.fbDone;
+    sb.innerHTML = `<div class="rv-done"><h3>저장했어요 ✓</h3><ul>
+      <li>${d.shared ? `받은 질문 ${d.qN}개 · 피드백을 학생에게 공개했어요` : "피드백은 학생에게 공개하지 않았어요 (선생님만 봐요)"}</li>
+      ${d.shared && d.qN ? `<li>받은 질문은 학생 '내 생기부 면접'에 들어갔어요${d.pqAdded ? ` (새로 ${d.pqAdded}개)` : " (이미 있는 질문은 그대로)"}</li>` : ""}
+      ${d.pendMoved ? `<li>공개 전이던 학생부 질문 ${d.pendMoved}개도 공개했어요</li>` : ""}
+      <li>↻ 다음 차수에 다시 ${d.againN}개</li>
+      ${d.filledSlot ? "<li>잡혀 있던 면접 일정의 기록으로 저장했어요</li>" : ""}
+      ${d.fails?.length ? `<li class="bad">${esc(d.fails.join("·"))}를 저장하지 못했어요 — [기록 고치기]로 다시 저장해 주세요</li>` : ""}</ul>
+      <div class="row"><button type="button" class="btn-sm" data-fbedit>기록 고치기</button><button type="button" class="btn-primary btn-sm" data-fbclose>창 닫기</button></div></div>`;
+    $("[data-fbedit]", sb).onclick = () => { V.fbDone = null; mountFb({ id: V.savedMid }); drawSide(); };
+    $("[data-fbclose]", sb).onclick = () => closeRecordViewer();
+    return;
+  }
+  if (!V.fb) { mountFb(); V.fbFresh = true; }
+  if (V.fbEl.parentNode !== sb) { sb.innerHTML = ""; sb.append(V.fbEl); V.fbFresh = true; }
+  if (V.fbFresh) { V.fbFresh = false; V.fb.show(); }
+}
+
+// ===== 선생님 질문 암기 카드 (2026-11-13, spec-interview-card 5장) =====
+// 질문 저장 뒤 booth-ai 'card'(Claude Sonnet 5.5)가 드래그한 글 속 개념 위주로 카드(핵심 키워드 흐름·핵심 개념 한 줄 정의)를 만들어
+// Apps Script 가 선생님 토큰으로 personalQuestions/{id}.card·cardState 를 직접 저장 (창을 닫아도 저장됨). 웹앱은 부르기 전 cardState 'making'
+// AI 로는 질문·꼬리질문·드래그한 글 한 칸·지원 학과 이름만 (학생 이름·학번·학생부 전체 안 보냄). AI 동의가 없으면 AI 를 부르지 않고 근거 카드만
+export const CARD_WON = 13;                 // 질문 1개 약 $0.01 (약 13원) — 일괄 단추에 미리 보여 줌
+const CARD_STALE_MS = 10 * 60 * 1000;       // 'making' 이 10분 넘으면 실패로 봄
+const stageOfQ = (q) => Number(q.stage) || Number(String(q.category || "").match(/^(\d)차/)?.[1]) || 0;
+// 근거 글: 그 질문을 가리키는 하이라이트의 드래그한 글 → 없으면 basis 의 따옴표 안 글 (예전 질문)
+export function quoteOf(q, marks = []) {
+  const bp = basisParts(q?.basis);
+  const m = (marks || []).find((x) => x.qid === q?.id && x.kind === "q" && x.quote);
+  if (m) return { quote: String(m.quote), sec: bp.sec || SEC_SHORT[m.sec] || "" };
+  return /"[^"]+"\s*$/.test(String(q?.basis || "")) && bp.b ? { quote: bp.b, sec: bp.sec } : null;
+}
+// "ai" AI 카드 · "has" 카드 있음(AI 맞춤 초안 등) · "basic" 근거 카드(동의 없음) · "making" · "fail" · "none" 만들 수 있음 · "nobasis" 근거 글이 없어 못 만듦 · "" 선생님 질문 아님
+export function cardState(q, marks = []) {
+  if (!q || q.by !== "teacher") return "";
+  const kw = arr(q.card?.kw).length;
+  if (q.cardState === "making" && Date.now() - (Number(q.cardAt) || 0) < CARD_STALE_MS) return "making";
+  if (q.card && kw) return q.card.ai ? "ai" : "has";
+  if (q.card && (q.cardState === "noconsent" || q.card.b)) return "basic";
+  const qt = quoteOf(q, marks);
+  if (q.cardState === "fail" || q.cardState === "making") return qt ? "fail" : "nobasis";
+  return qt ? "none" : "nobasis";
+}
+// AI 카드를 만들 대상 (동의가 있으면 근거 카드도 AI 카드로 바꿈)
+export const cardTodo = (q, marks, consent) => { const s = cardState(q, marks); return s === "none" || s === "fail" || (!!consent && s === "basic"); };
+export const cardDept = (st) => [...new Set((st?.universities || []).filter((u) => !announceFailed(u)).map((u) => String(u.dept || "").trim()).filter(Boolean))].join(", ");
+export const CARD_ERR = {
+  no_consent: "AI 사용 동의가 없어요.", limited: "오늘 암기 카드 한도를 넘었어요. 내일 다시 해 주세요.", no_access: "이 학생 학생부를 볼 수 있는 선생님(배정 선생님·관리자)만 카드를 만들 수 있어요.",
+  no_record: "학생부가 없어요.", auth: "로그인을 다시 확인해 주세요.", no_key: "AI 키가 아직 설정되지 않았어요 (관리자).", bad_request: "보낼 질문이 없어요.",
+  save: "카드 상태를 저장하지 못했어요."
+};
+export const cardErrText = (e) => CARD_ERR[e] || `암기 카드를 만들지 못했어요${e ? ` (${e})` : ""}. 잠시 뒤 [다시 만들기]를 눌러 주세요.`;
+export async function consentOf(no) { try { const m = await getDoc(doc(db, "records", no, "aimeta", "main")); return !!(m.exists() && m.data().consentAt); } catch (_) { return false; } }
+// qs: personalQuestions 문서들({ id, text, followUps, basis, stage, category, card? }) · consent: 이번에 동의를 받았다고 표시 · onLocal(id, patch): 화면 즉시 반영
+// → { done:[id], fail:[id], basic:[id], skipped, error }
+export async function makeCards(no, qs, { consent = false, marks = null, onLocal = null } = {}) {
+  const out = { done: [], fail: [], basic: [], skipped: 0, error: "" };
+  if (!qs?.length) return out;
+  if (!marks) { try { marks = (await getDocs(collection(db, "records", no, "marks"))).docs.map((d) => ({ id: d.id, ...d.data() })); } catch (_) { marks = []; } }
+  const items = qs.map((q) => { const qt = quoteOf(q, marks); return qt ? { q, qt } : null; }).filter(Boolean);
+  out.skipped = qs.length - items.length;
+  if (!items.length) return out;
+  const g = (q) => `${stageOfQ(q) || "?"}차 선생님 질문`;
+  const fuOf = (q) => arr(q.followUps).map((x) => String(x || "").trim()).filter(Boolean);
+  const ref = (q) => doc(db, "students", no, "personalQuestions", q.id);
+  if (!consent && !(await consentOf(no))) {
+    // 동의 없음: AI 를 부르지 않고 질문 + 근거 + 꼬리질문 카드 (이미 키워드가 있는 카드는 그대로)
+    const b = writeBatch(db);
+    const list = items.filter(({ q }) => !arr(q.card?.kw).length).map(({ q, qt }) => ({ q, card: { kw: [], con: [], chk: [], fu: fuOf(q).map((x) => ({ q: x, pt: "" })), g: g(q), t: "", sec: qt.sec, b: qt.quote } }));
+    if (!list.length) return out;
+    list.forEach(({ q, card }) => b.update(ref(q), { card, cardState: "noconsent" }));
+    try { await b.commit(); list.forEach(({ q, card }) => { out.basic.push(q.id); onLocal?.(q.id, { card, cardState: "noconsent" }); }); }
+    catch (e) { console.warn("근거 카드", e); out.error = "save"; }
+    return out;
+  }
+  const at = Date.now();
+  try { const b = writeBatch(db); items.forEach(({ q }) => b.update(ref(q), { cardState: "making", cardAt: at })); await b.commit(); }
+  catch (e) { console.warn("카드 상태", e); out.error = "save"; return out; }
+  items.forEach(({ q }) => onLocal?.(q.id, { cardState: "making", cardAt: at }));
+  const by = myName() || S.ctx.user.email, dept = cardDept(studentByNo(no));
+  for (let i = 0; i < items.length; i += 20) {
+    const part = items.slice(i, i + 20);
+    const r = await aiCall(S.ctx.user, "card", { no, by, dept, ...(consent ? { consent: true } : {}),
+      items: part.map(({ q, qt }) => ({ qid: q.id, q: q.text, fu: fuOf(q), quote: qt.quote.slice(0, 800), sec: qt.sec, g: g(q) })) }, 180000);
+    if (r?.ok) { out.done.push(...arr(r.done)); out.fail.push(...arr(r.fail).map((f) => f.qid)); continue; }
+    out.error = r?.error || "server";
+    if (out.error === "timeout" || out.error === "network") continue;   // 서버에서는 계속 만들 수 있음 — 10분 지나도 '만드는 중'이면 [다시 만들기]
+    try { const fb = writeBatch(db); part.forEach(({ q }) => fb.update(ref(q), { cardState: "fail", cardAt: Date.now() })); await fb.commit(); } catch (_) {}
+    part.forEach(({ q }) => { out.fail.push(q.id); onLocal?.(q.id, { cardState: "fail" }); });
+  }
+  return out;
+}
+// 학생부 화면에서: 화면에 바로 '만드는 중' → 끝나면 그 질문들만 다시 읽어 '카드 생김'
+function viewerCards(qs, opts = {}) {
+  if (!V || !qs.length) return;
+  const no = V.no;
+  const onLocal = (id, patch) => { if (V?.no !== no) return; const q = V.pqs.find((x) => x.id === id); if (q) Object.assign(q, patch); if (V.editQ !== "q:" + id) drawSide(); };
+  return makeCards(no, qs, { marks: V.marks, onLocal, ...opts }).then(async (r) => {
+    if (r.error && r.error !== "timeout" && r.error !== "network") toast(cardErrText(r.error), "error", 6000);
+    if (opts.consent && V?.no === no) V.consent = true;
+    if (!V || V.no !== no) return r;
+    try {
+      const snaps = await Promise.all(qs.map((q) => getDoc(doc(db, "students", no, "personalQuestions", q.id)).catch(() => null)));
+      if (!V || V.no !== no) return r;
+      snaps.forEach((sn) => { if (!sn?.exists()) return; const i = V.pqs.findIndex((x) => x.id === sn.id); if (i >= 0) V.pqs[i] = { id: sn.id, ...sn.data(), createdAt: V.pqs[i].createdAt }; });
+      drawSide();
+    } catch (_) {}
+    return r;
+  });
+}
+// 질문 카드 아래 카드 상태 칸 (목업 ③) — 선생님 질문만
+function cardBox(c) {
+  if (!c.pq || c.kind !== "teacher") return "";
+  const q = V.pqs.find((x) => x.id === c.pq); if (!q) return "";
+  const s = cardState(q, V.marks), can = c.mine || !!S.ctx.isAdmin;
+  if (s === "making") return '<div class="rv-cst making"><span class="spin" aria-hidden="true"></span><b>암기 카드 만드는 중…</b><span class="muted sm">면접을 계속하셔도 돼요</span></div>';
+  if (s === "ai" || s === "has") return `<div class="rv-cst ok"><b>🃏 암기 카드 생김</b>${s === "ai" ? '<span class="ai-tag">AI 작성</span>' : ""}<div class="spacer"></div>${can ? '<button type="button" class="btn-sm" data-cedit>카드 고치기</button>' : ""}</div>
+    <details class="rv-cpv"><summary>학생 카드 뒷면 미리 보기</summary>${backHtml(q.card)}</details>`;
+  if (s === "basic") return `<div class="rv-cst basic"><b>🃏 AI 동의가 없어 카드는 질문·근거만</b><div class="spacer"></div>${can ? '<button type="button" class="btn-sm" data-cconsent>동의 받았어요 → AI 카드 만들기</button>' : ""}</div>`;
+  if (s === "fail") return `<div class="rv-cst fail"><b>암기 카드를 만들지 못했어요</b><div class="spacer"></div>${can ? '<button type="button" class="btn-sm" data-cmake>다시 만들기</button>' : ""}</div>`;
+  if (s === "none") return `<div class="rv-cst none"><b>암기 카드 없음</b><div class="spacer"></div>${can ? '<button type="button" class="btn-sm" data-cmake>카드 만들기</button>' : ""}</div>`;
+  return "";
+}
+// 고치기 칸 아래: 공개 전 질문은 공개 시점(기본 '바로 공개'), 공개된 선생님 질문은 [카드 다시 만들기]
+function editExtra(c) {
+  if (c.pend) return `<div class="field"><label>공개 시점</label>
+    <label class="inline-check"><input type="radio" name="rvEPub" value="now" checked> 바로 공개 <span class="muted sm">(학생 '내 생기부 면접'에 더해지고 암기 카드가 생겨요)</span></label>
+    <label class="inline-check"><input type="radio" name="rvEPub" value="after"> 면접 뒤 공개 (그대로 두기)</label></div>`;
+  const q = c.pq && V.pqs.find((x) => x.id === c.pq);
+  const re = q && c.kind === "teacher" && quoteOf(q, V.marks) ? '<div class="row" style="margin-top:6px"><button type="button" class="btn-sm" data-cremake>카드 다시 만들기</button><span class="muted sm">AI 가 드래그한 글로 키워드·개념을 다시 써요 (지금 카드 내용은 바뀌어요)</span></div>' : "";
+  return '<div class="muted sm">이미 공개된 질문이라 공개 시점은 그대로예요.</div>' + re;
+}
+function bindEditCard(el, c) {
+  const q = () => c.pq && V.pqs.find((x) => x.id === c.pq);
+  $("[data-ecancel]", el)?.addEventListener("click", () => { V.editQ = null; drawSide(); });
+  $("[data-esave]", el)?.addEventListener("click", () => saveEditQ(c, el));
+  if (el.classList.contains("ai-ed")) bindEd(el);
+  $("[data-cedit]", el)?.addEventListener("click", () => { V.editQ = c.key; drawSide(); });
+  $("[data-cmake]", el)?.addEventListener("click", () => { const x = q(); if (x) viewerCards([x]); });
+  $("[data-cremake]", el)?.addEventListener("click", () => { const x = q(); if (!x) return; V.editQ = null; viewerCards([x], { consent: false }); });
+  $("[data-cconsent]", el)?.addEventListener("click", async () => {
+    if (!(await confirmBox({ title: "AI 사용 동의를 받았나요?", what: `${esc(V.no)} ${esc(V.st.name)} — 학생·보호자에게 AI 사용 동의를 받았을 때만 눌러 주세요.`,
+      note: "질문·꼬리질문·드래그한 학생부 글 한 칸·지원 학과 이름만 AI(Claude Sonnet 5.5)로 보내 암기 카드를 만들어요. 학생 이름·학번은 보내지 않아요. 이 학생의 근거 카드를 모두 AI 카드로 바꿔요.", yes: "동의 받았어요 · 만들기" }))) return;
+    const list = V.pqs.filter((x) => cardTodo(x, V.marks, true));
+    viewerCards(list, { consent: true });
+  });
 }
 
 // ================= AI 맞춤 예상질문 (2026-11-03, spec-ai-questions) =================
@@ -1730,11 +1946,10 @@ function drawAi(sb) {
   }
   sb.innerHTML = `<div class="ai-ban"><b>AI 맞춤 초안 · ${esc(V.no)} ${esc(V.st.name)} <span class="muted sm" style="font-weight:500">선생님만 보임</span></b>
       ${ax.length ? `<details><summary style="cursor:pointer;font-weight:700;font-size:.8rem">면접 핵심 축 ${ax.length}</summary><ol>${ax.map((x) => `<li>${esc(x)}</li>`).join("")}</ol></details>` : ""}
-      <div class="muted sm">근거 문장이 학생부에 있는 것만 남겼어요. 채택하면 내 질문(${V.stage}차)이 되고 아래 공개 시점에 맞춰 학생에게 보여요. 다른 배정 선생님도 같은 초안을 봐요 — 먼저 채택한 사람 것이 돼요.</div>
-      <div class="opts"><span class="muted sm">채택하면</span><label class="inline-check"><input type="radio" name="aipub" value="after"${V.aiPub !== "now" ? " checked" : ""}> 면접 뒤 공개</label><label class="inline-check"><input type="radio" name="aipub" value="now"${V.aiPub === "now" ? " checked" : ""}> 바로 공개</label></div></div>
+      <div class="muted sm">근거 문장이 학생부에 있는 것만 남겼어요. 채택하면 내 질문(${V.stage}차)이 돼요. 다른 배정 선생님도 같은 초안을 봐요 — 먼저 채택한 사람 것이 돼요.</div>
+      <div class="rv-pubnote">[채택]하면 바로 학생에게 공개되고 암기 카드가 생겨요</div></div>
     <div class="gchips"><button type="button" data-gc="common" class="${g === "common" ? "on" : ""}">공통 <span>${n("common")}</span></button>${unis.map(chip).join("")}</div>
     <div data-g="${esc(g)}">${body}</div>`;
-  $$("input[name=aipub]", sb).forEach((r) => r.onchange = () => { V.aiPub = r.value; });
   $$("[data-gc]", sb).forEach((b) => b.onclick = () => { V.aiGrp = b.dataset.gc; V.aiEdit = null; drawSide(); });
   $$(".ai-card[data-ai]", sb).forEach((el) => {
     const a = V.aiq.find((x) => x.id === el.dataset.ai); if (!a) return;
@@ -1779,7 +1994,7 @@ async function dropAi(a) {
 }
 // 채택: 트랜잭션으로 아직 'new' 인지 확인하고(먼저 채택한 사람 것) 질문·하이라이트·카드를 한 번에
 async function adoptAi(a, btn) {
-  const pub = V.aiPub === "now" ? "now" : "after", no = V.no, me = myName() || S.ctx.user.email, stage = V.stage;
+  const pub = "now", no = V.no, me = myName() || S.ctx.user.email, stage = V.stage;   // (2026-11-13) 채택 = 늘 바로 공개
   const bad = badQuestionText([a.q, ...arr(a.fu).map((f) => f.q)].join("\n"), no);
   if (bad) return toast(bad, "error", 6000);
   const card = { kw: arr(a.kw), con: arr(a.con), chk: arr(a.chk), fu: arr(a.fu), g: grpLabel(a.grp), t: a.type || "", sec: a.sec || "", b: a.b || "" };
@@ -1885,7 +2100,11 @@ export function aiSummaryHtml(meta, st) {
 
 // ================= E. 관리 화면 '학생부' =================
 export async function renderRecordAdmin(p) {
-  p.innerHTML = `<div class="card"><h3>학생부</h3>
+  p.innerHTML = `<div class="card ra-pend" id="raPend"><h3>공개 전 질문 한 번에 공개 <span class="muted sm" style="font-weight:500">관리자만 · 한 번만 쓰는 정리 단추</span></h3>
+      <p class="muted sm" style="margin-top:0">'면접 뒤 공개'로 만들어 두고 아직 공개되지 않은 질문이에요. 이제 질문은 만들면 바로 공개되므로, 남은 것을 한꺼번에 공개해요.</p>
+      <div id="raPendBody" class="muted">세는 중…</div></div>
+    <div class="card ra-card" id="raCard"><h3>🃏 카드 없는 선생님 질문 (전체)</h3><div id="raCardBody" class="muted">세는 중…</div></div>
+    <div class="card"><h3>학생부</h3>
     <p class="muted" style="margin-top:0">배정 선생님(1·2·3차)과 관리자만 보는 가림본 학생부예요. <b>학생부는 백업하지 않아요.</b> 입시가 끝나면 한꺼번에 지워 주세요.<br>
     · 볼 수 있는지는 교사 계정 이름과 학생 배정 칸(1차 담임·2차 교과·3차 위원)의 이름이 같은지로 정해요. 선생님 이름을 바꾸면 배정 칸도 맞춰 주세요.<br>
     · 열람 기록은 남아요 (학생부 내용은 없음).</p>
@@ -1902,6 +2121,7 @@ export async function renderRecordAdmin(p) {
     $("#raSum", p).innerHTML = `<dt>넣은 학생</dt><dd><b>${rows.length}명</b></dd><dt>마지막으로 넣은 날</dt><dd>${last?.at ? `${new Date(last.at).toLocaleString("ko-KR")} · ${esc(last.by)}` : "-"}</dd>`;
   } catch (e) { $("#raSum", p).innerHTML = `<dt>넣은 학생</dt><dd class="muted">불러오지 못했어요</dd>`; console.warn(e); }
   $("#raDelAll", p).onclick = async () => { if (await deleteRecords(nos, { all: true })) renderRecordAdmin(p); };
+  adminPend(p, nos).then(() => adminCards(p, nos));
   $("#raLogs", p).onclick = async () => {
     const box = $("#raLogBox", p);
     box.innerHTML = '<span class="muted">불러오는 중…</span>';
@@ -1921,4 +2141,79 @@ export async function renderRecordAdmin(p) {
       $("#raStu", box).onchange = draw; $("#raWho", box).onchange = draw; draw();
     } catch (e) { box.innerHTML = '<span class="muted">열람 기록을 불러오지 못했어요.</span>'; console.warn(e); }
   };
+}
+
+// ---- 관리자 ⑨ (2026-11-13, spec-interview-card 2장·5장): 남은 '면접 뒤 공개' 질문 한 번에 공개 · 카드 없는 선생님 질문 전체 카드 만들기
+async function adminPend(p, nos) {
+  const box = $("#raPendBody", p); if (!box) return;
+  const rows = [];
+  for (const no of nos) { try { const l = await loadPending(no); if (l.length) rows.push({ no, list: l }); } catch (e) { console.warn("공개 전 질문", no, e); } }
+  if (!box.isConnected) return;
+  const total = rows.reduce((a, r) => a + r.list.length, 0);
+  if (!total) { box.className = "muted"; box.textContent = "남은 공개 전 질문이 없어요"; return; }
+  box.className = "";
+  box.innerHTML = `<div class="table-wrap"><table class="ra-t"><thead><tr><th>학생</th><th>차수</th><th class="n">질문</th></tr></thead><tbody>
+    ${rows.map((r) => `<tr><td>${esc(r.no)} ${esc(studentByNo(r.no)?.name || "")}</td><td>${[...new Set(r.list.map((x) => Number(x.stage) || 0))].sort().map((k) => `${k || "?"}차`).join(" · ")}</td><td class="n">${r.list.length}</td></tr>`).join("")}
+    <tr class="sum"><td>합계 · 학생 ${rows.length}명</td><td></td><td class="n">${total}</td></tr></tbody></table></div>
+    <div class="row" style="margin-top:8px"><button type="button" class="btn-primary btn-sm" id="raPub">${total}개 모두 지금 공개</button><span class="muted sm">학생 '내 생기부 면접'으로 옮기고, 암기 카드가 없으면 카드도 만들어요</span></div>
+    <div id="raPubRun"></div>`;
+  $("#raPub", box).onclick = async () => {
+    if (!(await confirmBox({ title: `공개 전 질문 ${total}개를 지금 공개할까요?`, what: `학생 ${rows.length}명 · 질문 ${total}개를 학생 '내 생기부 면접'으로 옮겨요.`,
+      note: "되돌릴 수 없어요. 공개한 질문 중 암기 카드가 없는 것은 이어서 카드를 만들어요 (AI 동의가 없는 학생은 질문·근거 카드만).", yes: "모두 공개" }))) return;
+    $("#raPub", box).disabled = true;
+    const run = $("#raPubRun", box);
+    const bar = (k, all, t) => { if (run.isConnected) run.innerHTML = `<div class="ra-prog"><i style="width:${all ? Math.round(k / all * 100) : 100}%"></i></div><div class="muted sm">${esc(t)}</div>`; };
+    const made = []; let n = 0, failN = 0, c = 0;
+    for (let i = 0; i < rows.length; i++) {
+      bar(i, rows.length, `공개하는 중… ${i + 1} / ${rows.length}명`);
+      const out = [];
+      try { n += await publishPending(rows[i].no, rows[i].list, out); made.push({ no: rows[i].no, qs: out.filter((q) => !arr(q.card?.kw).length) }); }
+      catch (e) { console.warn("공개", rows[i].no, e); failN++; }
+    }
+    const need = made.filter((m) => m.qs.length);
+    for (let i = 0; i < need.length; i++) {
+      bar(i, need.length, `암기 카드 만드는 중… ${i + 1} / ${need.length}명`);
+      const r = await makeCards(need[i].no, need[i].qs);
+      c += r.done.length + r.basic.length;
+    }
+    toast(`질문 ${n}개를 공개했어요${c ? ` · 암기 카드 ${c}장` : ""}${failN ? ` · ${failN}명은 공개하지 못했어요 (다시 눌러 주세요)` : ""}`, failN ? "error" : undefined, 8000);
+    window.dispatchEvent(new CustomEvent("records-changed", { detail: {} }));
+    renderRecordAdmin(p);
+  };
+}
+async function adminCards(p, nos) {
+  const box = $("#raCardBody", p); if (!box) return;
+  const per = [];
+  for (const no of nos) {
+    try {
+      const [pq, mk, cs] = await Promise.all([getDocs(collection(db, "students", no, "personalQuestions")), getDocs(collection(db, "records", no, "marks")), consentOf(no)]);
+      const qs = pq.docs.map((d) => ({ id: d.id, ...d.data() })), marks = mk.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const todo = qs.filter((q) => cardTodo(q, marks, cs));
+      if (todo.length) per.push({ no, todo, marks, consent: cs });
+    } catch (e) { console.warn("카드 세기", no, e); }
+  }
+  if (!box.isConnected) return;
+  const ai = per.filter((x) => x.consent), noC = per.filter((x) => !x.consent);
+  const nAi = ai.reduce((a, x) => a + x.todo.length, 0);
+  if (!per.length) { box.className = "muted"; box.textContent = "카드가 없는 선생님 질문이 없어요"; return; }
+  box.className = "";
+  box.innerHTML = `<div class="ra-chips"><span>학생 <b>${ai.length}</b>명</span><span>질문 <b>${nAi}</b>개</span>${noC.length ? `<span>AI 동의 없음 <b>${noC.length}</b>명 (건너뜀)</span>` : ""}</div>
+    <div class="row" style="margin-top:8px"><button type="button" class="btn-sm" id="raMake" ${nAi ? "" : "disabled"}>${nAi}개 카드 만들기</button><span class="muted sm">약 $${(nAi * 0.01).toFixed(2)} (약 ${(nAi * CARD_WON).toLocaleString("ko-KR")}원) · Sonnet 5.5</span></div>
+    <div class="muted sm" style="margin-top:4px">근거 글(드래그한 학생부 글)이 있는 선생님 질문만 만들어요. 동의 없는 학생은 질문 탭에서 [동의 받았어요 → AI 카드 만들기]로 만들어요.</div>
+    <div id="raCardRun"></div>`;
+  $("#raMake", box)?.addEventListener("click", async () => {
+    if (!(await confirmBox({ title: `암기 카드 ${nAi}장을 만들까요?`, what: `학생 ${ai.length}명 · 질문 ${nAi}개 · 약 ${(nAi * CARD_WON).toLocaleString("ko-KR")}원 (Claude Sonnet 5.5)`,
+      note: "질문·꼬리질문·드래그한 학생부 글 한 칸·지원 학과 이름만 AI 로 보내요. 학생 이름·학번은 보내지 않아요.", yes: "만들기" }))) return;
+    $("#raMake", box).disabled = true;
+    const run = $("#raCardRun", box);
+    let done = 0, fail = 0, err = "";
+    for (let i = 0; i < ai.length; i++) {
+      if (run.isConnected) run.innerHTML = `<div class="ra-prog"><i style="width:${Math.round(i / ai.length * 100)}%"></i></div><div class="muted sm">만드는 중… ${i + 1} / ${ai.length}명 · 카드 ${done}장</div>`;
+      const r = await makeCards(ai[i].no, ai[i].todo, { marks: ai[i].marks });
+      done += r.done.length; fail += r.fail.length; if (r.error) err = r.error;
+      if (r.error === "limited") break;
+    }
+    toast(`암기 카드 ${done}장을 만들었어요${fail ? ` · ${fail}장은 못 만들었어요` : ""}${err && err !== "timeout" && err !== "network" ? ` — ${cardErrText(err)}` : ""}`, fail ? "error" : undefined, 8000);
+    adminCards(p, nos);
+  });
 }

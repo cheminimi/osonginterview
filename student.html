@@ -381,7 +381,8 @@ function showPracSub(name) {
 // 상태·'정리할 것' 메모는 students/{학번}/cardNotes/{질문 id} (나만 씀). new 꼬리표는 이 기기에서 한 번 열면 사라짐
 const CARDS_IC = `<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="3.5" width="13" height="16" rx="2.5"></rect><path d="M4.5 7v11.5A2.5 2.5 0 0 0 7 21h9"></path><path d="M10 9h6M10 12.5h4"></path></svg>`;
 const ar = (x) => (Array.isArray(x) ? x : []);
-const cardList = () => personal.filter((q) => !isStudentPq(q) && q.card && ar(q.card.kw).length)
+// (2026-11-13) 키워드가 없어도 근거(b)가 있으면 카드로 — AI 동의가 없는 학생의 선생님 질문 카드(질문·근거·꼬리질문)
+const cardList = () => personal.filter((q) => !isStudentPq(q) && q.card && (ar(q.card.kw).length || q.card.b))
   .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
 const grpOf = (q) => q.card?.g || "선생님 질문";
 function cardGroups(cs) { const n = {}; cs.forEach((q) => { n[grpOf(q)] = (n[grpOf(q)] || 0) + 1; }); return Object.entries(n).map(([k, v]) => `${k} ${v}`).join(" · "); }
@@ -432,7 +433,7 @@ function fcDraw() {
     <div class="fc" id="fc"><div class="fc-in">
       <div class="fc-face fc-front"><div class="pq-tags"><span class="pq-tag teacher">선생님이 준비</span><span class="gtag">${esc(grpOf(q))}${c.t ? " · " + esc(c.t) : ""}</span></div>
         <div class="fc-q">${esc(q.text)}</div><div class="muted">소리 내어 먼저 답해 본 뒤 뒤집어 보세요.</div><div class="fc-hint">눌러서 뒷면 보기 ↻</div></div>
-      <div class="fc-face fc-back"><div class="fc-lab">핵심 키워드 — 이 흐름을 내 말로</div><div class="fc-kw">${ar(c.kw).map(esc).join("<i>→</i>")}</div>
+      <div class="fc-face fc-back">${ar(c.kw).length ? `<div class="fc-lab">핵심 키워드 — 이 흐름을 내 말로</div><div class="fc-kw">${ar(c.kw).map(esc).join("<i>→</i>")}</div>` : ""}
         ${ar(c.con).length ? `<div class="fc-lab">핵심 개념 — 한 줄로</div><div class="fc-con">${c.con.map((x) => `<div><b>${esc(x.t)}</b>${esc(x.d)}</div>`).join("")}</div>` : ""}
         ${c.b || c.sec ? `<div class="fc-lab">내 학생부</div><div class="fc-src">${esc(c.sec || "")} "…<u>${esc(c.b || "")}</u>…"</div>` : ""}
         ${ar(c.chk).length ? `<div class="fc-chk"><div class="fc-lab">학생부에 없어요 — 내가 직접 정리해 둘 것</div>${c.chk.slice(0, 10).map((k, j) => `<label>${esc(k)}<input class="fc-mine" data-j="${j}" maxlength="200" placeholder="한 줄로 적어 두기" value="${esc(ar(n.mine)[j] || "")}"></label>`).join("")}</div>` : ""}

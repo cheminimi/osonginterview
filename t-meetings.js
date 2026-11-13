@@ -341,7 +341,11 @@ const draftDel = (k) => { try { localStorage.removeItem(k); } catch {} };
 
 // preset: 일정 탭 '대면 기록 쓰기' → { id: 'bk_예약ID', stage, date, teachers, bookingId }
 // fromRecord: 학생부 화면 [기록 쓰기 →] → { stage, rows: [{ q, memo, again, pend?, pq?, from? }] } ('물어봄'한 질문 — 글·메모·id 만, 학생부 글은 넘기지 않음)
-export function openMeetingForm({ id = null, studentNo = "", preset = null, fromRecord = null }) {
+// embed (2026-11-13, spec-interview-card): 창(모달) 대신 학생부 모의면접 창 ② 피드백 칸 안에 그림 —
+//   { el, draftBar, sync: { rows(): ① 물어봄 줄[{ rk, q, memo, again, pend?, pq?, from? }], set(rk, patch) }, extra: { get(), set(d) }(① 상태를 임시 저장에 같이), onBack(), onSaved(info) }
+//   학생·차수 고르기·잡아 둔 일정 연결·지난 면접 칸·'내 생기부 면접에도 넣기'(늘 켬)는 숨김. 저장 모양(meetings·meetingNotes)은 창과 같음
+//   돌려주는 것: { show(), touch(), flush(), dirty(), destroy() }
+export function openMeetingForm({ id = null, studentNo = "", preset = null, fromRecord = null, embed = null }) {
   const m = id ? S.meetings.find((x) => x.id === id) : null;
   const st0 = studentByNo(m?.studentNo || studentNo);
   const stage0 = m?.stage || preset?.stage || fromRecord?.stage || (st0 ? guessStage(st0) : 1);
@@ -350,11 +354,12 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
   // '내 생기부 면접에도 넣기' 기본값 (사용자 결정 2026-10-30): 새 기록·'일정 확정 · 기록 전'(planned) 자리를 처음 채울 때는 켜짐,
   // 이미 있는 기록(planned 아님)을 다시 열면 내용과 상관없이 꺼짐
   const written = !!m && !m.planned;
-  const body = openModal(m ? "대면 모의면접 기록 수정" : "대면 모의면접 기록", `<div class="mt-wrap"><form id="mf" class="mt-main">
-    <div id="mDraftBar"></div>
+  const E = !!embed;
+  const html = `<div class="mt-wrap${E ? " mt-embed" : ""}"><form id="mf" class="mt-main">
+    ${E ? `<div class="muted sm mt-draftnote" title="이 컴퓨터 브라우저에만 남아요. [저장하고 마치기]를 누르면 지워져요.">✓ 쓰는 동안 저절로 임시 저장돼요 — ① 질문하기의 물어봄·답 메모도 함께</div>` : '<div id="mDraftBar"></div>'}
     <div class="grid grid-2" style="gap:0 14px">
-      <div class="field"><label>학생 *</label><select name="studentNo" required ${m ? "disabled" : ""}>${studentOptions(st0?.studentNo || "")}</select></div>
-      <div class="field"><label>차수</label><select name="stage">${opt(STAGES.map((s) => [s.key, s.label]), stage0)}</select></div>
+      <div class="field"${E ? " hidden" : ""}><label>학생 *</label><select name="studentNo" required ${m || E ? "disabled" : ""}>${studentOptions(st0?.studentNo || "")}</select></div>
+      <div class="field"${E ? " hidden" : ""}><label>차수</label><select name="stage">${opt(STAGES.map((s) => [s.key, s.label]), stage0)}</select></div>
       <div class="field"><label>실시일 *</label><input type="date" name="date" value="${esc(m?.date || preset?.date || isoDay())}" required></div>
       <div class="field"><label>면접 유형</label><select name="type">${opt(MEETING_TYPES, m?.type || defaultType(st0))}</select></div>
     </div>
@@ -363,11 +368,14 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
       <span class="muted" style="display:block;margin-top:4px;font-size:.82rem">연결하면 그 일정의 기록이 되고 일정이 '완료'로 표시됩니다.</span></div>
     <div class="field"><label>담당교사</label>
       <div class="check-grid" id="tList">${staffNames.map((n) => `<label><input type="checkbox" value="${esc(n)}" ${teachers0.includes(n) ? "checked" : ""}> ${esc(n)}</label>`).join("") || '<span class="muted">교사 명단이 없습니다</span>'}</div>
+      ${E ? `<div class="muted sm" style="margin-top:4px">학생 ${esc(st0?.studentNo || "")} ${esc(st0?.name || "")} · ${stage0}차 모의면접은 이 창에서 정해져 있어요</div>` : ""}
     </div>
     <div class="mt-sec">
       <div class="mt-hd"><b>받은 질문</b><span class="mt-open">학생 공개</span><span class="muted sm">답 메모 · ↻ 표시는 <span class="mt-lock">선생님만</span></span>
-        <div class="spacer"></div><button type="button" class="btn-sm" id="mAddQ">+ 질문</button><button type="button" class="btn-sm" id="mPickQ">예상질문에서 고르기</button></div>
+        ${E ? "" : '<div class="spacer"></div><button type="button" class="btn-sm" id="mAddQ">+ 질문</button><button type="button" class="btn-sm" id="mPickQ">예상질문에서 고르기</button>'}</div>
+      ${E ? '<div class="muted sm" style="margin:-4px 0 6px">① 질문하기에서 <b>물어봄</b>한 질문이 자동으로 들어와요</div>' : ""}
       <div id="mQList"></div>
+      ${E ? '<div class="row" style="gap:6px;margin-top:8px"><button type="button" class="btn-sm" id="mAddQ">+ 질문</button><button type="button" class="btn-sm" id="mPickQ">예상질문에서 고르기</button></div>' : ""}
     </div>
     <div class="mt-sec">
       <div class="mt-hd"><b>피드백</b><span class="mt-open">학생 공개</span></div>
@@ -383,16 +391,21 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
       <textarea id="mNote" placeholder="면접 태도, 다음 선생님께 전할 말" disabled></textarea>
       <div class="muted sm" id="mNoteSt">선생님 메모를 불러오는 중…</div>
     </div>
-    <label class="inline-check"><input type="checkbox" name="shared" ${!m || m.shared || m.planned || !hasContent(m) ? "checked" : ""}> 학생 화면에 피드백 공개 <span class="muted sm">(받은 질문 · 피드백 4칸)</span></label>
+    <label class="inline-check"><input type="checkbox" name="shared" ${!m || m.shared || m.planned || !hasContent(m) ? "checked" : ""}> ${E ? "학생에게 피드백 공개" : "학생 화면에 피드백 공개"} <span class="muted sm">(받은 질문 · 피드백 4칸)</span></label>
     <label class="inline-check" id="mPendBox" hidden><input type="checkbox" id="mPend" checked> 이 차수 학생부 질문 <b id="mPendN">0</b>개도 학생에게 공개
       <span class="muted sm" style="display:block">학생부 화면에서 '면접 뒤 공개'로 만든 <span id="mPendSt">${stage0}</span>차 질문이 학생 '내 생기부 면접'으로 옮겨져요. (공개할 때만)</span></label>
-    <label class="inline-check" style="margin-bottom:14px"><input type="checkbox" id="mToPq" ${written ? "" : "checked"}> 받은 질문을 학생 '내 생기부 면접'에도 넣기
+    <label class="inline-check" style="margin-bottom:14px"${E ? " hidden" : ""}><input type="checkbox" id="mToPq" ${written && !E ? "" : "checked"}> 받은 질문을 학생 '내 생기부 면접'에도 넣기
       <span class="muted sm" style="display:block">"<span id="mPqLab">${stage0}</span>차 모의면접에서 받은 질문"으로 더해져요. 이미 있는 질문은 다시 넣지 않고, 예전 질문은 그대로예요. (공개할 때만)</span></label>
-    <div class="row">
+    ${E ? `<div class="row mt-embfoot"><button type="button" class="btn-sm" id="mBack">← 질문하기</button><span class="muted sm" id="mDraftSt"></span><div class="spacer"></div><button class="btn-primary" id="mSave">저장하고 마치기</button></div>`
+    : `<div class="row">
       <button class="btn-primary" id="mSave">저장</button><span class="muted sm" id="mDraftSt"></span>
       ${m ? `${syncBadge(m)}<div class="spacer"></div><button type="button" class="btn-sm btn-danger" id="mDel">삭제</button>` : ""}
-    </div></form>
-    <aside class="mt-past" id="mPast"><h4>지난 면접 <span class="mt-lock">선생님만</span></h4><div class="muted sm">불러오는 중…</div></aside></div>`, true);
+    </div>`}</form>
+    <aside class="mt-past" id="mPast"${E ? " hidden" : ""}><h4>지난 면접 <span class="mt-lock">선생님만</span></h4><div class="muted sm">불러오는 중…</div></aside></div>`;
+  const body = E ? embed.el : openModal(m ? "대면 모의면접 기록 수정" : "대면 모의면접 기록", html, true);
+  if (E) { body.innerHTML = html; embed.dead = false; }
+  const alive = () => E ? !embed.dead : body.isConnected;   // 창 안(embed)은 ① 탭을 보는 동안 칸이 화면에서 빠져 있어도 살아 있음
+  const draftBarEl = () => E ? embed.draftBar : $("#mDraftBar", body);
 
   const selNo = $("select[name=studentNo]", body), selStage = $("select[name=stage]", body);
   const noNow = () => m?.studentNo || selNo.value;
@@ -408,7 +421,7 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
   const linkBox = $("#mLinkBox", body), linkSel = $("#mLink", body);
   const dateInput = $('input[name="date"]', body);
   function refreshLinks() {
-    if (m || preset?.id) { linkBox.hidden = true; return; }
+    if (m || preset?.id || E) { linkBox.hidden = true; return; }
     const no = selNo.value, stage = Number(selStage.value), date = dateInput.value;
     const cand = plannedSlotsOf(no);
     if (!cand.length) { linkBox.hidden = true; linkSel.innerHTML = ""; return; }
@@ -434,7 +447,21 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
       else rows.push({ id: newQid(), q: x.q, memo: x.memo || "", again: !!x.again, ...(x.from ? { from: x.from } : {}), ...(x.pend ? { pend: x.pend } : {}), ...(x.pq ? { pq: x.pq } : {}) });
     });
   };
-  mergeFromRecord();
+  // 창 안(embed): ① 물어봄 줄이 기준 — 물어봄을 끄면 빠지고, 켜면 들어옴. ②에서 [+ 질문]으로 더한 줄(rk 없음)은 ②에만
+  const syncRec = () => {
+    if (!E) return;
+    const list = embed.sync.rows() || [];
+    const keys = new Set(list.map((x) => x.rk));
+    rows = rows.filter((r) => !r.rk || keys.has(r.rk));
+    list.forEach((x) => {
+      let hit = rows.find((r) => r.rk === x.rk) || rows.find((r) => !r.rk && qKey(r.q) === qKey(x.q));
+      if (!hit) { hit = { id: newQid(), q: "", memo: "", again: false }; rows.push(hit); }
+      Object.assign(hit, { rk: x.rk, q: x.q, memo: x.memo || "", again: !!x.again });
+      ["pend", "pq", "from"].forEach((k) => { if (x[k]) hit[k] = x[k]; });
+    });
+    if (rows.length > 1) rows = rows.filter((r) => r.q.trim() || r.memo.trim() || r.rk);
+  };
+  if (E) { if (rows.length === 1 && !rows[0].q.trim() && !rows[0].memo.trim()) rows = []; syncRec(); } else mergeFromRecord();
   let notes = null;            // 이 학생의 meetingNotes (기록 ID → 문서). 못 읽으면 null
   let noteDoc = null;          // 지금 기록의 meetingNotes
   let notesOk = !m;            // 지금 기록의 메모를 읽었는가 (새 기록은 읽을 것이 없음)
@@ -458,10 +485,11 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
       : '<div class="muted sm">받은 질문이 없어요. [+ 질문]을 눌러 적어 주세요.</div>';
     $$(".mt-q", qList).forEach((el) => {
       const r = rows.find((x) => x.id === el.dataset.qid);
-      $("[data-q]", el).oninput = (e) => { r.q = e.target.value; onEdit(); };
-      $("[data-memo]", el).oninput = (e) => { r.memo = e.target.value; onEdit(); };
-      $("[data-ag]", el).onclick = () => { r.again = !r.again; drawRows(); onEdit(); if (r.again) toast("다음 차수 선생님의 '지난 면접' 맨 위에 보여요 (학생에게는 안 보여요)"); };
-      $("[data-del]", el).onclick = () => { rows = rows.filter((x) => x !== r); drawRows(); drawPast(); onEdit(); };
+      const up = (patch) => { if (E && r.rk) embed.sync.set(r.rk, patch); };   // ②에서 고친 글·메모·↻ 는 ① 카드에도
+      $("[data-q]", el).oninput = (e) => { r.q = e.target.value; up({ q: r.q }); onEdit(); };
+      $("[data-memo]", el).oninput = (e) => { r.memo = e.target.value; up({ memo: r.memo }); onEdit(); };
+      $("[data-ag]", el).onclick = () => { r.again = !r.again; up({ again: r.again }); drawRows(); onEdit(); if (r.again) toast("다음 차수 선생님의 '지난 면접' 맨 위에 보여요 (학생에게는 안 보여요)"); };
+      $("[data-del]", el).onclick = () => { rows = rows.filter((x) => x !== r); if (E && r.rk) embed.sync.set(r.rk, { asked: false }); drawRows(); drawPast(); onEdit(); };
     });
   }
   const addRows = (list) => { if (rows.length === 1 && !rows[0].q.trim() && !rows[0].memo.trim()) rows = []; rows.push(...list); drawRows(); drawPast(); onEdit(); };
@@ -501,10 +529,10 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
     past.innerHTML = '<h4>지난 면접 <span class="mt-lock">선생님만</span></h4><div class="muted sm">불러오는 중…</div>';
     try {
       const map = await loadMeetingNotes(no);
-      if (pastFor !== no || !body.isConnected) return;
+      if (pastFor !== no || !alive()) return;
       notes = map;
     } catch (e) {
-      if (pastFor !== no || !body.isConnected) return;
+      if (pastFor !== no || !alive()) return;
       console.warn("지난 면접 불러오기", e);
       notes = null;
       past.innerHTML = '<h4>지난 면접 <span class="mt-lock">선생님만</span></h4><div class="muted sm">지난 면접을 불러오지 못했어요. <button type="button" class="btn-sm" id="mPastRetry">다시</button></div>';
@@ -515,10 +543,10 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
     if (m && !notesOk) {
       noteDoc = notes[m.id] || null;
       notesOk = true;
-      if (!draftApplied) { rows = rowsOf(m, noteDoc); mergeFromRecord(); $("#mNote", body).value = noteDoc?.note || ""; }
+      if (!draftApplied) { rows = rowsOf(m, noteDoc); if (E) syncRec(); else mergeFromRecord(); $("#mNote", body).value = noteDoc?.note || ""; }
       base = snapshot();
       drawRows();
-      $("#mDraftBar", body).innerHTML = "";
+      if (draftBarEl()) draftBarEl().innerHTML = "";
       checkDraft();
     }
     noteReady();
@@ -541,12 +569,13 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
   const keyNow = () => "mdraft:" + (m ? m.id : preset?.bookingId || preset?.id || `new:${selNo.value || ""}:${selStage.value}`);
   const key0 = keyNow();
   const snapshot = () => {
+    syncRec();
     const f = readForm(body);
     return { studentNo: noNow(), stage: selStage.value, date: dateInput.value, type: f.type,
       teachers: $$("#tList input:checked", body).map((c) => c.value),
-      rows: rows.map(({ id, q, memo, again, from, pend, pq }) => ({ id, q, memo, again, ...(from ? { from } : {}), ...(pend ? { pend } : {}), ...(pq ? { pq } : {}) })),
+      rows: rows.map(({ id, q, memo, again, from, pend, pq, rk }) => ({ id, q, memo, again, ...(from ? { from } : {}), ...(pend ? { pend } : {}), ...(pq ? { pq } : {}), ...(rk ? { rk } : {}) })),
       answerSummary: f.answerSummary || "", good: f.good || "", improve: f.improve || "", nextGoal: f.nextGoal || "",
-      note: $("#mNote", body).value, shared: !!f.shared, toPq: $("#mToPq", body).checked };
+      note: $("#mNote", body).value, shared: !!f.shared, toPq: $("#mToPq", body).checked, ...(E ? { rec: embed.extra.get() } : {}) };
   };
   let base = snapshot();
   let draftApplied = false, draftChecked = false, draftTimer = null, finished = false;
@@ -554,11 +583,15 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
   function onEdit() {
     clearTimeout(draftTimer);
     draftTimer = setTimeout(() => {
-      if (finished || !formEl.isConnected) return;
-      const s = snapshot();
-      if (same(s, base)) { draftDel(keyNow()); $("#mDraftSt", body).textContent = ""; return; }
-      $("#mDraftSt", body).textContent = draftPut(keyNow(), { ...s, at: Date.now() }) ? "임시 저장됨 · 방금" : "";
+      saveDraftNow();
     }, 1200);
+  }
+  function saveDraftNow() {
+    draftTimer = null;
+    if (finished || !alive()) return;
+    const s = snapshot();
+    if (same(s, base)) { draftDel(keyNow()); $("#mDraftSt", body).textContent = ""; return; }
+    $("#mDraftSt", body).textContent = draftPut(keyNow(), { ...s, at: Date.now() }) ? "임시 저장됨 · 방금" : "";
   }
   function applyDraft(d) {
     if (!m && d.studentNo && selNo.value !== d.studentNo) { selNo.value = d.studentNo; refreshLinks(); }
@@ -566,19 +599,21 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
     if (d.date) dateInput.value = d.date;
     if (d.type) $("select[name=type]", body).value = d.type;
     $$("#tList input", body).forEach((c) => c.checked = (d.teachers || []).includes(c.value));
-    rows = (d.rows || []).map((r) => ({ id: r.id || newQid(), q: r.q || "", memo: r.memo || "", again: !!r.again, ...(r.from ? { from: r.from } : {}), ...(r.pend ? { pend: r.pend } : {}), ...(r.pq ? { pq: r.pq } : {}) }));
+    if (E && d.rec) embed.extra.set(d.rec);   // ① 물어봄·답 메모·↻ 도 돌려놓음
+    rows = (d.rows || []).map((r) => ({ id: r.id || newQid(), q: r.q || "", memo: r.memo || "", again: !!r.again, ...(r.from ? { from: r.from } : {}), ...(r.pend ? { pend: r.pend } : {}), ...(r.pq ? { pq: r.pq } : {}), ...(r.rk ? { rk: r.rk } : {}) }));
+    syncRec();
     ["answerSummary", "good", "improve"].forEach((k) => { $(`textarea[name=${k}]`, body).value = d[k] || ""; });
     $("input[name=nextGoal]", body).value = d.nextGoal || "";
     $("#mNote", body).value = d.note || "";
     $("input[name=shared]", body).checked = !!d.shared;
-    $("#mToPq", body).checked = !!d.toPq;
+    $("#mToPq", body).checked = E || !!d.toPq;
     $("#mPqLab", body).textContent = selStage.value;
     draftApplied = true;
     drawRows(); drawPast();
   }
   function checkDraft() {
     const d = draftGet(key0);
-    const bar = $("#mDraftBar", body);
+    const bar = draftBarEl();
     if (!d || !bar) return;
     const { at, ...rest } = d;
     if (same(rest, base)) { draftDel(key0); return; }
@@ -589,6 +624,7 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
     $("#mDraftDrop", bar).onclick = () => { draftDel(key0); bar.innerHTML = ""; };
   }
   const formEl = $("#mf", body);
+  $("#mBack", body)?.addEventListener("click", () => embed?.onBack?.());
   $("#mf", body).addEventListener("input", (e) => { if (!e.target.closest("#mQList")) onEdit(); });
   $("#mf", body).addEventListener("change", (e) => { if (e.target.closest("#tList") || e.target.name === "shared" || e.target.id === "mToPq" || e.target.name === "type") onEdit(); });
 
@@ -603,7 +639,7 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
   async function loadPend() {
     const no = noNow(); pendFor = no; pend = null; drawPend();
     if (!no || !canSeeRec(studentByNo(no))) return;
-    try { const list = await loadPending(no); if (pendFor === no && body.isConnected) { pend = list; drawPend(); } } catch (_) { /* 볼 수 없으면 숨김 */ }
+    try { const list = await loadPending(no); if (pendFor === no && alive()) { pend = list; drawPend(); } } catch (_) { /* 볼 수 없으면 숨김 */ }
   }
   loadPend();
 
@@ -704,8 +740,14 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
     const bid = bookingIdOf(m) || bookingIdOf({ id: savedId, bookingId: slot?.bookingId || data.bookingId });
     const doneOk = bid ? await markBookingDone(bid) : true;
 
-    closeModal();
-    if (fails.length) {
+    if (E) {
+      // 창 안: 닫지 않고 '저장했어요' 칸으로 (학생부 화면이 그림)
+      if (fails.length) toast(`기록은 저장했어요. 다만 ${fails.join("·")}를 저장하지 못했어요 — [기록 고치기]로 다시 저장해 주세요.`, "error", 10000);
+      else if (!doneOk) toast("기록은 저장했습니다. 다만 일정을 '완료'로 표시하지 못했어요. 일정 탭에서 그 일정을 열어 [면접 완료]를 눌러 주세요.", "error", 9000);
+      embed.onSaved?.({ id: savedId, shared: data.shared, qN: qRows.length, pqAdded, pendMoved, againN: qRows.filter((r) => r.again).length, fails, doneOk, filledSlot });
+    } else closeModal();
+    if (E) { /* 알림은 아래에서 같이 */ }
+    else if (fails.length) {
       toast(`기록은 저장했어요. 다만 ${fails.join("·")}를 저장하지 못했어요 — 창을 다시 열어 저장해 주세요.`, "error", 10000);
     } else if (!doneOk) {
       // 기록은 저장됐지만 일정 완료 표시만 실패 → 무엇을 해야 하는지 알려 준다
@@ -744,4 +786,11 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
       await requestSync(["meetings"]);
     } catch (err) { showError(err, "기록 삭제"); }
   });
+  return {
+    show() { syncRec(); drawRows(); },                        // ② 탭을 열 때마다 ① 물어봄과 맞춤
+    touch() { onEdit(); },                                    // ① 에서 물어봄·메모를 바꾸면 임시 저장
+    flush() { if (draftTimer) { clearTimeout(draftTimer); saveDraftNow(); } },   // 창을 닫거나 차수를 바꾸기 전에 기다리던 임시 저장을 바로 (손대지 않았으면 그대로 — 남아 있는 임시 저장을 지우지 않게)
+    dirty() { return !finished && !same(snapshot(), base); },
+    destroy() { clearTimeout(draftTimer); if (E) embed.dead = true; }
+  };
 }

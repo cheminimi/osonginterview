@@ -4,7 +4,7 @@ import {
 } from "./common.js";
 import { S, register, rerender, readForm, lines, opt, studentByNo, myName } from "./t-core.js";
 import { loadList, listOf, pqCardHtml, bindPqActions } from "./t-pqreview.js";
-import { canSeeRec, canUploadRec, recordExists, openRecordViewer, openRecordUpload, loadPending, runAiq } from "./t-record.js";
+import { canSeeRec, canUploadRec, recordExists, openRecordViewer, openRecordUpload, loadPending, runAiq, cardState, cardTodo, makeCards, consentOf, cardErrText, CARD_WON } from "./t-record.js";
 
 // 질문 가져오기 = [생기부에서 뽑기 | AI 맞춤 질문 | 직접 입력] (2026-11-03). 예전 claude.ai 복사·붙여넣기 화면은 뺌 —
 // students/{학번}.recordSummary(예전 생기부 붙여넣기 칸) 데이터는 지우지 않고 그대로 둠
@@ -96,6 +96,25 @@ async function renderRecPanel(no) {
   const minePend = pend.filter((p) => p.byUid === me);
   const minePub = existing.filter((q) => q.by !== "student" && q.source === "record" && !!myNm && q.addedBy === myNm);
   const mine = [...minePend.map((p) => ({ ...p, _w: 1 })), ...minePub];
+  // 🃏 암기 카드 (2026-11-13): 선생님 질문 카드 있음/없음 — 새 질문은 저장할 때 저절로, 이 단추는 예전에 만든 질문용
+  let marks = [], consent = false;
+  if (has) {
+    [marks, consent] = await Promise.all([getDocs(collection(db, "records", no, "marks")).then((s) => s.docs.map((d) => ({ id: d.id, ...d.data() }))).catch(() => []), consentOf(no)]);
+    if ($("#qStudent", root).value !== no) return;
+  }
+  const tq = existing.filter((q) => q.by === "teacher");
+  const cHave = tq.filter((q) => ["ai", "has"].includes(cardState(q, marks))).length;
+  const cMaking = tq.filter((q) => cardState(q, marks) === "making").length;
+  const cTodo = tq.filter((q) => cardTodo(q, marks, true));
+  const cNone = tq.filter((q) => cardTodo(q, marks, consent)).length;
+  const cardHtml = !has ? "" : `<div class="qcard" id="qCard"><div class="row"><b>🃏 암기 카드</b><span class="muted sm">선생님 질문으로 학생 암기 카드를 만들어요 (AI · Sonnet)</span></div>
+      <div class="qcard-n"><span>선생님 질문 <b>${tq.length}</b></span><span>카드 있음 <b>${cHave}</b></span><span>카드 없음 <b>${consent ? cNone : cTodo.length}</b></span>${cMaking ? `<span>만드는 중 <b>${cMaking}</b></span>` : ""}</div>
+      <div class="muted sm">이제 질문을 저장하면 카드가 저절로 생겨요. 이 단추는 <b>예전에 만든 질문</b>용이에요. 근거 글(드래그한 학생부 글)이 있는 질문만 만들어요.</div>
+      ${consent ? (cNone ? `<div class="row" style="margin-top:6px"><button type="button" class="btn-primary btn-sm" id="qCardMake">카드 없는 질문 ${cNone}개 → 카드 만들기</button><span class="muted sm">약 ${(cNone * CARD_WON).toLocaleString("ko-KR")}원</span></div>` : "")
+        : cTodo.length ? `<div class="muted sm" style="margin-top:6px">AI 동의가 없어 카드는 질문·근거만 보여요.</div>
+          <label class="inline-check"><input type="checkbox" id="qCardOk"> <span>학생·보호자에게 <b>AI 사용 동의</b>를 받았어요 <span class="muted sm">(질문·꼬리질문·드래그한 글 한 칸·지원 학과 이름을 AI 로 보내요)</span></span></label>
+          <div class="row"><button type="button" class="btn-primary btn-sm" id="qCardConsent" disabled>동의 받았어요 → AI 카드 만들기 (${cTodo.length}개)</button><span class="muted sm">약 ${(cTodo.length * CARD_WON).toLocaleString("ko-KR")}원</span></div>` : ""}
+      <div id="qCardRun"></div></div>`;
   box.innerHTML = !see ? `<div class="qrec"><div class="row"><b>학생부</b><span class="muted">배정 선생님만 볼 수 있어요</span></div>
       <button type="button" class="btn-primary qrec-big" disabled>생기부 열고 질문 뽑기</button></div>`
     : !has ? `<div class="qrec"><div class="row"><b>학생부</b><span class="muted">아직 학생부가 없어요</span></div>
@@ -104,19 +123,33 @@ async function renderRecPanel(no) {
     : `<div class="qrec"><div class="row"><b>학생부</b><span class="badge badge-green">넣음 · ${info?.ver || 1}번째 판</span><span class="muted sm">${info?.at ? new Date(info.at).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" }) : ""} ${esc(info?.by || "")}</span></div>
       <button type="button" class="btn-primary qrec-big" id="qRecOpen">생기부 열고 질문 뽑기</button>
       <div class="muted sm">학생부 화면이 <b>'질문 준비'</b>로 열려요. 글을 드래그해 [질문 만들기] → 이 학생 질문 목록에 들어가요. 근거 문장은 자동으로 붙어요.</div>
-      <div class="row qrec-sum"><span class="muted sm">내가 이 학생에게 뽑은 질문</span><span class="badge" id="qRecN">${mine.length}</span><span class="badge badge-orange">면접 뒤 공개 ${minePend.length}</span><span class="badge badge-green">공개 ${minePub.length}</span></div>
-      <div class="qrec-mini" id="qRecMini">${mine.slice(0, 6).map((q) => `<div class="m"><b>${esc(q.text)}</b>${q.basis ? `<span class="muted sm">${esc(q.basis)}</span>` : ""}</div>`).join("")}${mine.length > 6 ? `<div class="muted sm">… ${mine.length - 6}개 더</div>` : ""}</div></div>`;
-  $("#qRecOpen", box)?.addEventListener("click", () => openRecordViewer(no, { mode: "prep", tab: "mine", onClose: () => { if ($("#qStudent", root).value === no) loadExisting(no).then(() => renderRecPanel(no)); } }));
+      <div class="row qrec-sum"><span class="muted sm">내가 이 학생에게 뽑은 질문</span><span class="badge" id="qRecN">${mine.length}</span>${minePend.length ? `<span class="badge badge-orange">면접 뒤 공개 ${minePend.length}</span>` : ""}<span class="badge badge-green">공개 ${minePub.length}</span></div>
+      <div class="qrec-mini" id="qRecMini">${mine.slice(0, 6).map((q) => `<div class="m"><b>${esc(q.text)}</b>${q.basis ? `<span class="muted sm">${esc(q.basis)}</span>` : ""}</div>`).join("")}${mine.length > 6 ? `<div class="muted sm">… ${mine.length - 6}개 더</div>` : ""}</div>
+      ${cardHtml}</div>`;
+  const reload = () => { if ($("#qStudent", root).value === no) loadExisting(no).then(() => renderRecPanel(no)); };
+  $("#qRecOpen", box)?.addEventListener("click", () => openRecordViewer(no, { mode: "prep", tab: "mine", onClose: reload }));
   $("#qRecUp", box)?.addEventListener("click", () => openRecordUpload(no));
+  // 카드 만들기 (예전 질문) — 끝나면 목록을 다시 읽음
+  const runCards = async (list, opts) => {
+    const run = $("#qCardRun", box); if (run) run.innerHTML = `<div class="muted sm"><span class="spin" aria-hidden="true"></span> 암기 카드 ${list.length}장을 만드는 중… (창을 옮겨도 계속돼요)</div>`;
+    $$("#qCardMake, #qCardConsent", box).forEach((b) => b.disabled = true);
+    const r = await makeCards(no, list, { marks, ...opts });
+    if (r.error && r.error !== "timeout" && r.error !== "network") toast(cardErrText(r.error), "error", 6000);
+    else toast(`암기 카드 ${r.done.length}장을 만들었어요${r.fail.length ? ` · ${r.fail.length}장은 못 만들었어요` : ""}`);
+    reload();
+  };
+  $("#qCardMake", box)?.addEventListener("click", () => runCards(tq.filter((q) => cardTodo(q, marks, true)), {}));
+  $("#qCardOk", box)?.addEventListener("change", (e) => { $("#qCardConsent", box).disabled = !e.target.checked; });
+  $("#qCardConsent", box)?.addEventListener("click", () => runCards(cTodo, { consent: true }));
   renderAiPanel(no, { see, has });
-  // 오른쪽: 공개 전 묶음 + '공개된 질문' 제목
+  // 오른쪽: 공개 전 묶음(남은 것이 있을 때만) + '공개된 질문' 제목
   const pb = $("#qPendBox", root);
-  pb.innerHTML = see ? `<div class="q-sect"><span class="q-sect-t w">공개 전 · 면접 뒤 공개</span><span class="muted sm">${pend.length} · 선생님만 보임</span></div>
-    ${pend.length ? pend.map((p) => `<div class="q-item pq-tcard" data-pend="${esc(p.id)}"><div class="pq-tline"><span class="pq-tag teacher">${Number(p.stage) || "?"}차 · ${esc(p.by || "")}${p.byUid === me ? " (나)" : ""}</span><span class="pq-tag wait2">${Number(p.stage) || "?"}차 면접 뒤 공개</span></div>
+  pb.innerHTML = see && pend.length ? `<div class="q-sect"><span class="q-sect-t w">공개 전 · 면접 뒤 공개</span><span class="muted sm">${pend.length} · 선생님만 보임</span></div>
+    ${pend.map((p) => `<div class="q-item pq-tcard" data-pend="${esc(p.id)}"><div class="pq-tline"><span class="pq-tag teacher">${Number(p.stage) || "?"}차 · ${esc(p.by || "")}${p.byUid === me ? " (나)" : ""}</span><span class="pq-tag wait2">${Number(p.stage) || "?"}차 면접 뒤 공개</span></div>
       <div class="pq-row"><div class="pq-main"><div class="q-text">${esc(p.text)}</div>${p.basis ? `<div class="q-meta"><span class="pq-bl">근거</span> · ${esc(p.basis)}</div>` : ""}
       ${(p.followUps || []).length ? `<ul class="follow">${p.followUps.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}</div>
-      ${p.byUid === me ? '<div class="pq-btns2"><button type="button" class="btn-sm pq-del" data-pdel>지우기</button></div>' : ""}</div></div>`).join("") : '<div class="muted sm" style="padding:6px 0">없어요</div>'}` : "";
-  $("#qPubHead", root).hidden = !see;
+      ${p.byUid === me ? '<div class="pq-btns2"><button type="button" class="btn-sm pq-del" data-pdel>지우기</button></div>' : ""}</div></div>`).join("")}` : "";
+  $("#qPubHead", root).hidden = !(see && pend.length);
   $$("[data-pdel]", pb).forEach((b) => b.onclick = async () => {
     const id = b.closest("[data-pend]").dataset.pend, p = pend.find((x) => x.id === id);
     if (!(await confirmBox({ title: "이 질문을 지울까요?", what: esc(p.text), note: "공개 전 질문만 지울 수 있어요. 하이라이트도 같이 지워져요.", yes: "지우기" }))) return;

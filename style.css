@@ -2471,3 +2471,52 @@ body.nd .ic-list { display: none; }
 /* ===== 지도 일지 할 일 점 (t-guidance.js setMenuDot, 2026-11-13) — 이름 버튼(휴대폰 위 #acctBtn · 컴퓨터 왼쪽 #railMe)에만 ===== */
 body.nd #acctBtn.gd-dot, body.nd #railMe.gd-dot .avatar { position: relative; overflow: visible; }
 body.nd #acctBtn.gd-dot::after, body.nd #railMe.gd-dot .avatar::after { content: ""; position: absolute; top: -1px; right: -1px; width: 11px; height: 11px; border-radius: 50%; background: var(--danger); border: 2px solid #fff; }
+
+/* ===== 모의면접 창 하나로 · 질문 바로 공개 · 교사 질문 암기 카드 (2026-11-13, spec-interview-card) ===== */
+/* 머리 단계 표시 ① 질문하기 → ② 피드백 */
+body.nd .rv-steps { display: inline-flex; align-items: center; gap: 4px; background: #2b2e35; border-radius: 99px; padding: 2px; }
+body.nd .rv-steps button { border: 0; background: transparent; color: #c9ced8; font: inherit; font-size: .82rem; font-weight: 700; padding: 3px 12px; border-radius: 99px; cursor: pointer; }
+body.nd .rv-steps button.on { background: #dbe97f; color: #121316; }
+body.nd .rv-steps i { font-style: normal; color: #7d8494; font-size: .8rem; }
+/* 질문 만들기·AI 초안: 바로 공개 안내 한 줄 */
+body.nd .rv-pubnote { background: #f3f7d9; border: 1px solid #dde7a4; color: #3f4a0c; border-radius: 10px; padding: 7px 10px; font-size: .82rem; line-height: 1.5; margin: 4px 0; }
+/* 질문 카드 아래 암기 카드 상태 */
+body.nd .rv-cst { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-radius: 10px; padding: 7px 10px; font-size: .84rem; margin-top: 6px; }
+body.nd .rv-cst b { font-weight: 700; }
+body.nd .rv-cst.ok { background: #f3f7d9; }
+body.nd .rv-cst.making { background: #f2edff; color: #4b3a8a; }
+body.nd .rv-cst.basic, body.nd .rv-cst.none { background: #f4f5f9; color: var(--ink-2); }
+body.nd .rv-cst.fail { background: #fff1f0; color: #9c3a3a; }
+body.nd .rv-cst .spacer { flex: 1; }
+body.nd .spin { display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 2px solid #b9a6ee; border-top-color: transparent; animation: aiSpin .8s linear infinite; vertical-align: -2px; }
+body.nd .rv-cpv { margin-top: 4px; }
+body.nd .rv-cpv summary { cursor: pointer; font-size: .8rem; font-weight: 700; color: var(--ink-2); padding: 2px 0; }
+body.nd .rv-cpv .pv { background: #fff; border: 1px solid #e1e6ee; border-radius: 10px; padding: 8px 10px; margin-top: 4px; }
+/* ② 피드백: 대면 기록 칸을 창 안에 (한 줄로 쌓음 · 아래 줄 고정) */
+body.nd .rv-fb .mt-wrap.mt-embed { display: block; }
+body.nd .rv-fb .mt-embed .mt-past { display: none; }
+body.nd .rv-fb .mt-embed .mt-sec { background: #fff; border-color: transparent; }
+body.nd .rv-fb .mt-embed .grid-2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+body.nd .rv-fb .mt-draftnote { background: #e8f5ee; color: #1e5c43; border-radius: 10px; padding: 6px 10px; margin-bottom: 10px; cursor: help; }
+body.nd .rv-fb .mt-embfoot { position: sticky; bottom: -10px; background: #edf1f7; padding: 10px 0; margin-top: 6px; gap: 8px; align-items: center; z-index: 1; }
+body.nd #rvDraftBar:not(:empty) { padding: 8px 10px 0; }
+body.nd #rvDraftBar .mt-draftbar { margin: 0; }
+body.nd .rv-done { background: #fff; border-radius: 14px; padding: 16px 18px; display: grid; gap: 8px; }
+body.nd .rv-done h3 { margin: 0; font-size: 1.15rem; text-align: center; }
+body.nd .rv-done ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: .9rem; }
+body.nd .rv-done li.bad { color: var(--danger); }
+body.nd .rv-done .row { justify-content: center; gap: 8px; margin-top: 4px; }
+/* 질문 탭 🃏 암기 카드 칸 */
+body.nd .qcard { border: 1px solid #e3d7ff; background: #fbf9ff; border-radius: 14px; padding: 10px 12px; display: grid; gap: 6px; }
+body.nd .qcard-n { display: flex; gap: 6px; flex-wrap: wrap; }
+body.nd .qcard-n span, body.nd .ra-chips span { background: #f1f2f6; border-radius: 99px; padding: 2px 10px; font-size: .8rem; color: var(--ink-2); }
+body.nd .qcard-n b, body.nd .ra-chips b { color: var(--ink); }
+/* 관리자 ⑨ */
+body.nd .ra-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+body.nd .ra-t tr.sum td { font-weight: 700; }
+body.nd .ra-t td.n, body.nd .ra-t th.n { text-align: right; }
+body.nd .ra-prog { height: 8px; border-radius: 99px; background: #eef0f5; overflow: hidden; margin: 10px 0 4px; }
+body.nd .ra-prog i { display: block; height: 100%; background: #7d5bd6; transition: width .3s; }
+/* ② 칸은 좁아서 받은 질문 줄을 휴대폰처럼 (질문 글 넓게 · ↻·✕ 는 아래 줄) */
+body.nd .rv-fb .mt-q { grid-template-columns: 18px minmax(0, 1fr); }
+body.nd .rv-fb .mt-tools { grid-column: 2; flex-direction: row; justify-content: flex-end; }

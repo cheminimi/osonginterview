@@ -58,8 +58,6 @@ body.nd .gd-ok{color:#15803d;font-weight:700}
 body.nd .gd table td.n,body.nd .gd table th.n{text-align:right}
 body.nd .gd-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 body.nd .gd-past{opacity:.55}
-body.nd .gd-tip{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px;padding:10px 14px;border-radius:12px;background:#eef6ff;color:#1e3a8a}
-body.nd .gd-tip span{flex:1 1 200px;min-width:0}
 body.nd .gd textarea{width:100%;box-sizing:border-box;min-height:70px}
 body.nd .gd-prog{height:8px;border-radius:99px;background:var(--soft,#eee);overflow:hidden;margin:8px 0}
 body.nd .gd-prog b{display:block;height:100%;background:#2563eb;width:0}
@@ -81,20 +79,40 @@ export function init(el) {
   register("guidance", () => { if (!root.hidden) drawMine(); });
   homeTip();
 }
-// 오늘 화면 위 안내 한 줄 (선생님 계정만, 앱을 열 때 2건 읽기)
+// (2026-11-13) 지도 일지 알림은 이름 메뉴에서만 — 탭 위 안내 줄은 없앰 (일정 등 다른 탭과 헷갈림)
+// · 이름 메뉴 '지도 일지' 설명 글이 상황에 맞게 바뀜 (menuDesc, teacher.html 메뉴 항목이 메뉴를 열 때 읽음)
+// · 할 일이 있을 때만 이름 버튼에 점: 불가시간 입력 기간인데 [입력 완료] 전 / 지도 일지 공개 뒤 아직 이 기기에서 안 열어 봄
+// 선생님 계정만, 앱을 열 때 2건 읽기 (예전 안내 줄과 같음)
+export const MENU_DESC0 = "불가시간 입력 · 내 지도 일지 내려받기";
+let tipState = "";   // "" | "input" | "inputDone" | "published"
+export function menuDesc() {
+  return tipState === "published" ? "지도 일지가 나왔어요 · 내 지도 일정 확인·내려받기"
+    : tipState === "input" ? "불가시간을 넣고 [입력 완료]를 눌러 주세요"
+    : tipState === "inputDone" ? "입력 완료 · 시간 배정을 기다리는 중이에요"
+    : MENU_DESC0;
+}
+const seenKey = (runId) => `gdSeen:${runId}`;
+function seenPublished() { try { return !!G.cfg?.publishedRunId && localStorage.getItem(seenKey(G.cfg.publishedRunId)) === "1"; } catch (_) { return false; } }
+export function setMenuDot() {   // teacher.html mountMenu 가 이름 버튼을 다시 그린 뒤에도 부름
+  const on = tipState === "input" || (tipState === "published" && !seenPublished());
+  ["acctBtn", "railMe"].forEach((id) => document.getElementById(id)?.classList.toggle("gd-dot", on));
+}
 async function homeTip() {
-  const key = S.ctx.account?.key, box = document.getElementById("gdTip");
-  if (!key || !box || S.ctx.account?.role === "student") return;
+  const key = S.ctx.account?.key;
+  if (!key || S.ctx.account?.role === "student") return;
   try {
     const [cfg, sub] = await Promise.all([loadCfg(), getDoc(doc(db, "guidanceSubmit", key))]);
     G.cfg = cfg;
     const done = sub.exists() && sub.data().done;
-    let html = "";
-    if (cfg.publishedRunId) html = `<span>지도 일지가 나왔어요. 내 지도 일정을 확인하고 지도 일지를 내려받으세요.</span><button type="button" class="btn-sm btn-primary" data-gd-go>지도 일지 보기</button>`;
-    else if (cfg.collecting && !done) html = `<span>지도 일지 배정을 위해 <b>불가시간</b>을 넣고 [입력 완료]를 눌러 주세요.</span><button type="button" class="btn-sm btn-primary" data-gd-go>입력하기</button>`;
-    box.innerHTML = html ? `<div class="gd-tip">${html}</div>` : "";
-    $("[data-gd-go]", box)?.addEventListener("click", () => switchTab("guidance"));
+    tipState = cfg.publishedRunId ? "published" : cfg.collecting ? (done ? "inputDone" : "input") : "";
+    setMenuDot();
   } catch (_) { /* 규칙 배포 전이면 조용히 */ }
+}
+// 지도 일지 화면을 열면 '공개됨' 점은 끔 (이 기기에 기억)
+function markSeen() {
+  if (!G.cfg?.publishedRunId) return;
+  try { localStorage.setItem(seenKey(G.cfg.publishedRunId), "1"); } catch (_) { /* 저장 못 해도 다음에 다시 점이 뜰 뿐 */ }
+  setMenuDot();
 }
 
 function whoAmI() {
@@ -123,6 +141,7 @@ async function loadMine() {
   } catch (e) { showError(e, "지도 일지 불러오기"); }
   finally { G.loading = false; }
   drawMine();
+  if (S.ctx.account?.key) markSeen();
 }
 
 function drawMine() {

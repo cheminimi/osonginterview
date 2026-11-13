@@ -2467,3 +2467,7 @@ body.nd .ic-list { display: none; }
   body.nd .ic-w .ic-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0 6px; }
   body.nd .ic-pop { left: 0 !important; width: 100% !important; }
 }
+
+/* ===== 지도 일지 할 일 점 (t-guidance.js setMenuDot, 2026-11-13) — 이름 버튼(휴대폰 위 #acctBtn · 컴퓨터 왼쪽 #railMe)에만 ===== */
+body.nd #acctBtn.gd-dot, body.nd #railMe.gd-dot .avatar { position: relative; overflow: visible; }
+body.nd #acctBtn.gd-dot::after, body.nd #railMe.gd-dot .avatar::after { content: ""; position: absolute; top: -1px; right: -1px; width: 11px; height: 11px; border-radius: 50%; background: var(--danger); border: 2px solid #fff; }

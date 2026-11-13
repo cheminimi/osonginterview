@@ -189,7 +189,6 @@
     <div id="scSub" hidden></div>
     <div class="row" id="acct"></div></div>
   <div id="pwaTip"></div>
-  <div id="gdTip"></div>
   <div class="sub-head" id="subBar" hidden></div>
   <section data-panel="home"></section>
   <section data-panel="schedule" hidden></section>
@@ -241,7 +240,7 @@ function mountMenu() {
       { icon: "note", label: "대면 기록 전체", desc: "지금까지 쓴 모의면접 기록", id: "goMeetings", onClick: () => switchTab("meetings") },
       { icon: "pen", label: "대학 면접 후기", desc: "학생이 다녀와서 쓴 실제 면접 후기", id: "goReviews", onClick: () => { switchTab("reviews"); reviews.load(); } },
       { icon: "check", label: "연습 리뷰", desc: "학생이 제출한 말하기 연습", id: "goReviewMenu", onClick: () => switchTab("review") },
-      { icon: "calendar", label: "지도 일지", desc: "불가시간 입력 · 내 지도 일지 내려받기", id: "goGuidance", onClick: () => switchTab("guidance") },
+      { icon: "calendar", label: "지도 일지", get desc() { return guidance.menuDesc(); }, id: "goGuidance", onClick: () => switchTab("guidance") },   // (2026-11-13) 설명 글은 지도 일지 상황에 따라 (메뉴를 열 때 읽음)
       S.ctx.isAdmin ? { icon: "gear", label: "앱 관리", desc: "시트 연동 · 계정 · 일정 설정 · 백업", id: "goAdmin", onClick: () => switchTab("admin") } : null,
       S.ctx.account?.role === "admin" && !S.ctx.account?.key ? null : { icon: "chat", label: pushOn() ? "휴대폰 알림 끄기" : "휴대폰 알림 켜기",
         desc: pushOn() ? "일정 신청 알림을 휴대폰으로 받고 있어요" : "학생이 일정을 신청하면 휴대폰으로 알려드려요",
@@ -249,6 +248,7 @@ function mountMenu() {
       isStandalone() ? null : { icon: "phone", label: "홈 화면에 앱으로 추가", onClick: () => { switchTab("home"); showInstallTipAgain($("#pwaTip")); } }
     ]
   });
+  guidance.setMenuDot();   // (2026-11-13) 이름 버튼을 다시 그려도 지도 일지 점 유지
 }
 async function togglePush() {
   if (pushOn()) { await disablePush(); mountMenu(); return; }

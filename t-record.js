@@ -15,6 +15,10 @@ import { openMeetingForm, loadMeetingNotes, againList, renderPast } from "./t-me
 const PDFJS = "lib/pdfjs-3.11.174/";
 const IDLE_MS = 5 * 60 * 1000;
 const SEC_TITLE = { attend: "출결 상황", creative: "창의적 체험활동", subject: "교과학습발달상황 · 세부능력 및 특기사항", volunteer: "봉사활동실적 (학교 계획)", behavior: "행동특성 및 종합의견", grades: "성적" };
+// 세특 과목 줄 '이름: 내용' ((n학기) 붙을 수 있음) · 과목 이름 견줄 때는 띄어쓰기·(n학기) 뺌
+const SUBJ_LINE = /^((?:\(\d학기\))?\s*[가-힣A-Za-z0-9ⅠⅡⅢⅣ·ㆍ\s()]{1,24}?)\s*[:：]\s*(.*)$/;
+const normSubj = (x) => String(x || "").replace(/\(\s*\d\s*학기\s*\)/g, "").replace(/\s+/g, "");
+const PERSONAL_NM = "개인별 세부능력 및 특기사항";   // (2026-11-16) 과목 이름 없는 세특 문단의 칸 이름
 const SEC_SHORT = { attend: "출결", creative: "창의적 체험활동", subject: "교과 세특", volunteer: "봉사활동", behavior: "행동특성 및 종합의견", grades: "성적" };
 const stageLabel = (k) => STAGES.find((s) => s.key === Number(k))?.label || `${k}차`;
 
@@ -420,8 +424,17 @@ export function splitRecord(pages, { withGrades = false, keepP1 = false } = {}) 
   const subj = { rows: [] };
   const gt = [];   // 성적 표 (학년·종류별 줄 모음) — 성적 넣기를 골랐을 때만 읽음
   let curT = null;
-  let cur = null, sub = null, grade = "", lastSubY = null, lastSubPage = 0;
+  let cur = null, sub = null, grade = "", lastSubY = null, lastSubPage = 0, subjX = null, lastT = "";
   const gaps = [];
+  // 같은 학년 성적 표 과목 이름 (세특 머리 줄을 놓쳤을 때 세특 줄 알아보기용, 필요할 때만 읽음)
+  const gradeNamesOf = (g) => {
+    const set = new Set();
+    try { parseGradeTables(gt.filter((x) => x.year === (Number(g) || 0)), median(gaps) * 0.55).forEach((r) => { if (r.sub) set.add(normSubj(r.sub)); }); } catch (e) { /* 못 읽으면 글자 수로만 봄 */ }
+    return set;
+  };
+  // 쪽마다 글이 끝나는 높이(맨 아래 줄 y)·시작하는 높이(맨 위 줄 y)의 보통 값 — 개인별 세특 앞 빈 줄이 쪽 끝·쪽 처음에 걸렸는지 볼 때 씀
+  const pgEnds = pages.map((p) => p.lines.filter((l, i) => !isHF(p, i)).map((l) => l.y)).filter((ys) => ys.length);
+  const pgBot = median(pgEnds.map((ys) => Math.min(...ys))), pgTop = median(pgEnds.map((ys) => Math.max(...ys)));
   for (const p of pages) {
     const pw = p === pages[0] ? piiWhy(p, isHF) : "";
     if (pw && keepP1) info.p1 = "kept";
@@ -430,7 +443,12 @@ export function splitRecord(pages, { withGrades = false, keepP1 = false } = {}) 
     p.lines.forEach((l, i) => { if (i && p.lines[i - 1].y - l.y < 30) gaps.push(p.lines[i - 1].y - l.y); });
     const maxR = Math.max(...p.lines.map((l) => l.right || 0));
     p.lines.forEach((l, i) => {
-      if (isHF(p, i)) { info.headerLines++; return; }
+      if (isHF(p, i)) {
+        // (2026-11-16) 쪽 맨 위에 다시 찍힌 세특 표 머리('과 목 | 세 부 능 력 및 특 기 사 항'): 성적 표가 앞 쪽 끝에서 끝나고 세특이 이 쪽에서 시작하면
+        // 이 줄이 세특 시작의 유일한 표시라 지우지 않음. 이미 세특을 읽는 중이면 지금처럼 머리말로 지움 (쪽 넘김 빈 줄 판단을 그대로 두려고)
+        const skHead = cur === "subject" && sub !== "seteuk" && /세부능력및특기사항/.test(l.text.replace(/\s+/g, "")) && l.text.length < 40;
+        if (!skHead) { info.headerLines++; return; }
+      }
       const t0 = l.text;
       const hit = t0.length <= 30 && SECTION_RE.find(([re]) => re.test(t0));
       if (hit) {
@@ -461,16 +479,42 @@ export function splitRecord(pages, { withGrades = false, keepP1 = false } = {}) 
       if (/^[<〈]/.test(t)) { sub = "grades"; curT = { year: Number(grade) || 0, kind: /진로/.test(t) ? "career" : /체육|예술/.test(t) ? "arts" : "other", lines: [] }; gt.push(curT); return; }
       if (/^학\s*기(\s|$)/.test(t)) { sub = "grades"; curT?.lines.push(L); return; }
       if (/세부능력및특기사항/.test(t.replace(/\s+/g, "")) && t.length < 40) { sub = "seteuk"; lastSubY = null; return; }   // 글자마다 띄어 찍힌 머리(세 부 능 력 …, 대입전형자료 조회 양식)도 (2026-11-11)
-      if (sub === "grades") { curT?.lines.push(L); return; }
+      if (sub === "grades") {
+        // (2026-11-16) 세특 머리 줄을 놓쳐도 '이름: 내용' 세특 줄이면 세특으로 — 이름이 같은 학년 성적 표 과목이거나 내용이 한글 15자 이상인 글
+        //   (성적 표 줄은 숫자·성취도·수강자 수라 콜론 뒤 긴 한글 글이 없음). 그 줄은 아래 세특 흐름으로 그대로 넘김
+        const m0 = t.match(SUBJ_LINE);
+        if (m0 && ((m0[2].match(/[가-힣]/g) || []).length >= 15 || gradeNamesOf(grade).has(normSubj(m0[1])))) { sub = "seteuk"; lastSubY = null; }
+        else {
+          // 성적 표에 들어가는 긴 한글 글 줄은 빠진 글 검사에 넣음 (그래도 놓친 세특 글이 있으면 넣기 화면 '빠진 글' 경고에 잡히게)
+          const hg = (t.match(/[가-힣]/g) || []).length;
+          if (hg >= 25 && hg >= t.replace(/\s+/g, "").length * 0.6) track({ t }, p.n);
+          curT?.lines.push(L); return;
+        }
+      }
       if (sub !== "seteuk") return;
-      const m = t.match(/^((?:\(\d학기\))?\s*[가-힣A-Za-z0-9ⅠⅡⅢⅣ·ㆍ\s()]{1,24}?)\s*[:：]\s*(.*)$/);
+      const m = t.match(SUBJ_LINE);
       const lg = median(gaps);
       // '이름: 내용' 줄은 일단 과목 후보 — 진짜 과목인지는 다 읽은 뒤 성적 표 과목 이름으로 정함 (아니면 앞 과목에 원문 그대로)
-      if (m) { subj.rows.push({ label: `${grade ? grade + "학년 " : ""}${m[1].trim()}`, g: Number(grade) || 0, nm: m[1].trim(), raw: t, lines: [track({ t: m[2], r: l.right, cw: lineCw(l.x, l.right, t) }, p.n)], maxR }); lastSubY = l.y; lastSubPage = p.n; return; }
+      if (m) { subj.rows.push({ label: `${grade ? grade + "학년 " : ""}${m[1].trim()}`, g: Number(grade) || 0, nm: m[1].trim(), raw: t, lines: [track({ t: m[2], r: l.right, cw: lineCw(l.x, l.right, t) }, p.n)], maxR }); lastSubY = l.y; lastSubPage = p.n; subjX = l.x; lastT = t; return; }
+      // 빈 세특 표의 '해당 사항 없음' 줄은 글이 아님 — 앞 칸에 붙이지 않음 (쪽 맨 위 세특 머리를 살린 뒤 실제 PDF 2명에서 나옴)
+      if (/^해당\s*사항\s*없음\.?$/.test(t.trim())) return;
+      // (2026-11-16) 개인별 세부능력 및 특기사항: 과목 이름 없이, 앞 문단이 마침표로 끝난 뒤 빈 줄 하나(줄 간격 두 배) 띄고 과목 글 자리에서 시작하는 문단
+      // (같은 과목의 2학기 문단은 빈 줄 없이 이어짐 — 실제 PDF 9명에서 확인, 학년마다 하나·400~570자 안팎). 따로 칸으로 둠
+      // 빈 줄이 쪽 넘김에 걸리면 간격이 안 보임 → 앞 쪽 글이 보통보다 한 줄 위에서 끝났거나(빈 줄이 앞 쪽 맨 아래) 이 쪽 글이 한 줄 아래에서 시작하면(이 쪽 맨 위) 빈 줄로 봄
+      //   (실제 PDF 3명: 앞 쪽 끝 y 100 · 보통 쪽 끝 77~87 — 그 밖의 쪽 넘김은 모두 맨 아래까지 참)
+      const gapN = lastSubY != null && lastSubPage === p.n ? lastSubY - l.y : 0;
+      const pageBlank = lastSubY != null && lastSubPage === p.n - 1 && (lastSubY - pgBot > lg * 0.7 || pgTop - l.y > lg * 0.7);
+      const blank = (gapN > lg * 1.8 && gapN < lg * 2.6) || pageBlank;
+      const hasPers = subj.rows.some((r) => r.personal && r.g === (Number(grade) || 0));
+      if (blank && subj.rows.length && /[.。]$/.test(lastT.trim()) && subjX != null && Math.abs(l.x - subjX) < 6 && !hasPers) {
+        subj.rows.push({ label: `${grade ? grade + "학년 " : ""}${PERSONAL_NM}`, g: Number(grade) || 0, nm: PERSONAL_NM, raw: t, personal: true, lines: [track({ t, r: l.right, cw: lineCw(l.x, l.right, t) }, p.n)], maxR });
+        lastSubY = l.y; lastSubPage = p.n; lastT = t; return;
+      }
       // 표 밖 글(묶음 제목·빈 줄 다음 글)은 버림: 같은 쪽에서 줄 간격이 크게 벌어지면 표가 끝난 것
-      if (lastSubY != null && lastSubPage === p.n && lastSubY - l.y > lg * 1.8) { sub = "skip"; track({ t }, p.n); return; }
+      //   단, 빈 줄 하나 띄고 과목 글 자리에서 이어지는 문단(이 학년 개인별 칸이 이미 있거나 앞 문단이 마침표로 안 끝남)은 버리지 않고 앞 칸에 이어 붙임 (글 빠짐 막기)
+      if (lastSubY != null && lastSubPage === p.n && lastSubY - l.y > lg * 1.8 && !(blank && subjX != null && Math.abs(l.x - subjX) < 6)) { sub = "skip"; track({ t }, p.n); return; }
       const r = subj.rows.at(-1); if (!r) { track({ t }, p.n); return; }
-      r.lines.push(track({ t, r: l.right, cw: lineCw(l.x, l.right, t) }, p.n)); lastSubY = l.y; lastSubPage = p.n;
+      r.lines.push(track({ t, r: l.right, cw: lineCw(l.x, l.right, t) }, p.n)); lastSubY = l.y; lastSubPage = p.n; lastT = t;
     });
   }
   const lg = median(gaps), tol = lg * 0.55;
@@ -614,14 +658,14 @@ export function splitRecord(pages, { withGrades = false, keepP1 = false } = {}) 
   // 같은 학년 성적 표 과목 이름 목록이 있으면 '목록에 없음 + 표시'일 때만 이어 붙임 (목록에 없다는 것만으로는 안 붙임 — 성적 표 이름을 잘못 읽어도 과목이 조용히 사라지지 않게).
   // 이어 붙일 때는 콜론 포함 줄 원문 그대로
   if (subj.rows.length > 1) {
-    const normN = (x) => String(x || "").replace(/\(\s*\d\s*학기\s*\)/g, "").replace(/\s+/g, "");
+    const normN = normSubj;
     let names = new Map();
     try { parseGradeTables(gt, tol).forEach((r) => { if (r.sub) (names.get(r.y) || names.set(r.y, new Set()).get(r.y)).add(normN(r.sub)); }); } catch (e) { names = new Map(); }
     const kept = [subj.rows[0]];
     subj.rows.slice(1).forEach((r) => {
       const prev = kept.at(-1), list = names.get(r.g);
       const prevEnd = String(prev.lines.at(-1)?.t || "").trim();
-      const join = (list?.size ? !list.has(normN(r.nm)) : true)
+      const join = !r.personal && (list?.size ? !list.has(normN(r.nm)) : true)   // 개인별 세특 칸은 늘 따로
         && (/\d\s*[:：]\s*\d/.test(r.raw) || /^(을|를|이|가|은|는|의|에|와|과|로|도|및)(\s|$)/.test(r.nm) || !/[.。]$/.test(prevEnd));
       if (!join) { kept.push(r); return; }
       r.lines[0].t = r.raw;   // 원문 그대로 (글자 빠짐 없게)

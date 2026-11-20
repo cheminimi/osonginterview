@@ -1175,6 +1175,7 @@ export async function openRecordViewer(no, { stage = 0, preset = null, mode = "i
         <div class="rv-lg"><b>하이라이트</b><br><i class="c1"></i>1차 담임<br><i class="c2"></i>2차 교과<br><i class="c3"></i>3차 위원
           <label class="inline-check"><input type="checkbox" id="rvOther" checked> 다른 선생님 하이라이트</label><br><b>가림</b> <span class="rv-mask">○○</span> 이름·학교${hasAi ? '<br><span class="ai-lg"></span>AI 초안 근거' : ""}</div></nav>
       <article class="rv-doc" id="rvDoc"><div class="rv-bar" id="rvBar">
+          <button type="button" class="rv-tog" id="rvTocT" aria-controls="rvToc">◂ 목차 접기</button>
           <span class="rv-grp"><button type="button" data-fs="-1" aria-label="글자 작게">가−</button><button type="button" data-fs="0" id="rvFsN" title="16으로">${V.fs}</button><button type="button" data-fs="1" aria-label="글자 크게">가+</button></span>
           <span class="rv-grp"><button type="button" data-all="1">모두 펼치기</button><button type="button" data-all="0">모두 접기</button></span>
           <span class="rv-grp"><button type="button" data-sent="0" class="${V.sent ? "" : "on"}">문단</button><button type="button" data-sent="1" class="${V.sent ? "on" : ""}">문장마다 줄</button></span>
@@ -1287,6 +1288,7 @@ export async function openRecordViewer(no, { stage = 0, preset = null, mode = "i
     if (!o && cur) goTo(cur, false);
   });
   $("#rvFind", ov).addEventListener("input", (e) => { V.find = e.target.value.trim(); drawDoc(); });
+  tocToggle(ov);
   $("#rvWide", ov).onclick = () => { V.wide = !V.wide; $(".rv-body", ov).classList.toggle("wide", V.wide); $("#rvWide", ov).textContent = V.wide ? "질문 칸 펼치기 ◂" : "질문 칸 접기 ▸"; };
   // 접기·펼치기: 다시 그리지 않고 그 자리만. 접을 때 제목이 화면 위로 사라졌으면 제목으로 맞춤 (toggle 은 거품이 없어 capture 로)
   $("#rvIn", ov).addEventListener("toggle", (e) => {
@@ -1344,6 +1346,13 @@ const VIEW_ORDER = ["attend", "creative", "subject", "volunteer", "behavior"];
 const VIEW_TITLE = { attend: "출결 상황", creative: "창의적 체험활동", subject: "교과 세부능력 및 특기사항", volunteer: "봉사활동실적 (학교 계획)", behavior: "행동특성 및 종합의견" };
 function viewPref(k, d) { try { const v = Number(localStorage.getItem(k)); return localStorage.getItem(k) == null || !Number.isFinite(v) ? d : v; } catch (_) { return d; } }
 function savePref(k, v) { try { localStorage.setItem(k, String(v)); } catch (_) {} }
+// (2026-11-20) 왼쪽 목차 접기·펼치기 — 기기에 기억 (rvToc: 1 펼침, 0 접힘). 폰(720px 이하)은 원래 목차가 없어 단추도 숨김
+function tocToggle(ov) {
+  const b = ov.querySelector("#rvTocT"), body = ov.querySelector(".rv-body"); if (!b || !body) return;
+  const set = (hide) => { body.classList.toggle("notoc", hide); b.textContent = hide ? "목차 펼치기 ▸" : "◂ 목차 접기"; b.setAttribute("aria-expanded", String(!hide)); };
+  set(viewPref("rvToc", 1) === 0);
+  b.onclick = () => { const hide = !body.classList.contains("notoc"); savePref("rvToc", hide ? 0 : 1); set(hide); };
+}
 const rowYear = (label) => { const m = String(label || "").match(/^([1-3])학년\s*/); return m ? { g: m[1], name: String(label).slice(m[0].length) } : { g: "", name: String(label || "") }; };
 const hopeOf = (text) => { const m = String(text).match(/^희망분야:\s*([^\n]*)\n/); return m ? { hope: m[1].trim(), cut: m[0].length } : { hope: "", cut: 0 }; };
 function viewSections() {
@@ -2338,6 +2347,7 @@ export function openStudentRecord(rec, pqs, { onCard = null } = {}) {
   const ov = document.createElement("div");
   ov.id = "recView"; ov.className = "rec-ov rv rv-stu";
   ov.innerHTML = `<div class="rv-hd"><b>내 학생부</b>${hasGr ? '<span class="rv-gr rv-main"><button type="button" data-main="rec" class="on">학생부</button><button type="button" data-main="gr">성적</button></span>' : ""}
+      <button type="button" class="rv-tog" id="rvTocT" aria-controls="rvToc">◂ 목차 접기</button>
       <span class="muted sm stu-hint">담임 선생님이 공개한 학생부예요 · 읽기만 할 수 있어요</span><span class="sp"></span><button type="button" class="btn-sm" id="rvClose">닫기</button></div>
     <div class="rv-body">
       <nav class="rv-toc" id="rvToc"><div id="rvTocL"></div><div class="rv-lg"><mark class="stu q">밑줄</mark> 선생님이 질문한 곳<br><b>가림</b> <span class="rv-mask">○○</span> 이름·학교</div></nav>
@@ -2351,12 +2361,13 @@ export function openStudentRecord(rec, pqs, { onCard = null } = {}) {
   document.body.classList.add("rv-open");
   const on = (tgt, t, f) => { tgt.addEventListener(t, f); SV.off.push(() => tgt.removeEventListener(t, f)); };
   $("#rvClose", ov).onclick = closeStudentRecord;
+  tocToggle(ov);
   on(document, "keydown", (e) => { if (e.key === "Escape") { if (!$("#stuSheet", ov).hidden) $("#stuSheet", ov).hidden = true; else closeStudentRecord(); } });
   const grSt = { on: new Set(["주요과목", "전과목"]), bars: "all", view: "sum", sem: "" };
   $$("[data-main]", ov).forEach((b) => b.onclick = () => {
     const gr = b.dataset.main === "gr";
     $$("[data-main]", ov).forEach((x) => x.classList.toggle("on", x === b));
-    $(".rv-body", ov).hidden = gr; $("#rvGrades", ov).hidden = !gr; if ($("#stuFab", ov)) $("#stuFab", ov).hidden = gr;
+    $(".rv-body", ov).hidden = gr; $("#rvGrades", ov).hidden = !gr; if ($("#stuFab", ov)) $("#stuFab", ov).hidden = gr; $("#rvTocT", ov).hidden = gr;
     if (gr) renderGrades($("#rvGrades", ov), rec.grades || [], grSt);
   });
   const qCard = (q) => `<div class="stu-q" data-q="${esc(q.id)}"><div class="w">${esc(q.where)}</div><div class="t">${esc(q.text)}</div>${q.card && onCard ? `<button type="button" class="btn-sm" data-card="${esc(q.id)}">암기 카드 보기</button>` : ""}</div>`;

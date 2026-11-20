@@ -2001,6 +2001,13 @@ body.nd .rv-ap.out i { font-style: normal; margin-left: 4px; }
 body.nd .rv .rv-body { grid-template-columns: 190px minmax(0, 1fr) 340px; background: #edf1f7; }
 body.nd .rv .rv-body.wide { grid-template-columns: 190px minmax(0, 1fr) 0; }
 body.nd .rv .rv-body.wide .rv-side { display: none; }
+/* (2026-11-20) 왼쪽 목차 접기 — 넓은 화면에서만 (폰은 원래 목차 없음) */
+@media (min-width: 721px) {
+  body.nd .rv .rv-body.notoc { grid-template-columns: minmax(0, 1fr) 340px; }
+  body.nd .rv .rv-body.notoc.wide { grid-template-columns: minmax(0, 1fr); }
+  body.nd .rv .rv-body.notoc .rv-toc { display: none; }
+}
+body.nd .rv-tog[hidden] { display: none; }
 /* 왼쪽 목차 */
 body.nd .rv .rv-toc { background: transparent; border-right: 0; padding: 14px; gap: 2px; }
 body.nd .rv-tg { margin-bottom: 2px; }

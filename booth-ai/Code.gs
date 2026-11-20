@@ -66,7 +66,7 @@ function doPost(e) {
   try { body = JSON.parse((e && e.postData && e.postData.contents) || '{}'); } catch (err) { return out_({ ok: false, error: 'bad_request' }); }
   var action = String(body.action || '');
   if (STAFF_ACTIONS.indexOf(action) >= 0) {
-    try { return out_(staffAction_(action, body, t0)); }
+    try { var so = staffAction_(action, body, t0); if (so && typeof so === 'object') so.creditOut = Number(prop_(CREDIT_PROP)) || 0; return out_(so); }   // (2026-11-20) 크레딧 부족 표시를 같이 보냄 (관리자 화면 빨간 줄)
     catch (err) { log_(action, t0, null, false, 'exception'); return out_({ ok: false, error: 'server' }); }
   }
   if (['hello', 'followup', 'report'].indexOf(action) < 0) return out_({ ok: false, error: 'bad_request' });
@@ -228,7 +228,8 @@ function callClaude_(model, system, userText, schema, maxTokens, cacheSystem, ki
     method: 'post', contentType: 'application/json',
     headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' }, payload: JSON.stringify(body)
   });
-  if (res.code !== 200 || !res.json) return { ok: false, error: 'http_' + res.code };
+  if (res.code !== 200 || !res.json) { if (isCreditErr_(res.code, res.json)) { creditMark_(true); return { ok: false, error: 'no_credit' }; } return { ok: false, error: 'http_' + res.code }; }
+  creditMark_(false);
   var m = res.json;
   if (kind) usage_(kind, m.model || model, m.usage);
   if (m.stop_reason === 'refusal') return { ok: false, error: 'refusal', usage: m.usage };
@@ -237,6 +238,46 @@ function callClaude_(model, system, userText, schema, maxTokens, cacheSystem, ki
   var data = null;
   try { data = JSON.parse(txt); } catch (e) { return { ok: false, error: 'not_json', usage: m.usage }; }
   return { ok: true, data: data, usage: m.usage, model: m.model || model, thinkingBlocks: (m.content || []).filter(function (c) { return c.type === 'thinking' || c.type === 'redacted_thinking'; }).length };
+}
+
+// ---------------- (2026-11-20) 크레딧 부족 감지 ----------------
+// Claude API 가 '크레딧 부족'(400 invalid_request_error · "credit balance is too low")으로 거절하면 스크립트 속성 AI_CREDIT_OUT 에 시각을 남긴다.
+// 부스(학생 계정) 호출도 같이 잡힌다. 다음에 Claude 호출이 하나라도 성공하면 저절로 지운다.
+// 선생님용 액션 응답마다 creditOut(시각 ms, 없으면 0)을 붙여 보내고, 관리자 화면은 열 때 aistatus 로 물어 맨 위 빨간 줄을 띄운다.
+var CREDIT_PROP = 'AI_CREDIT_OUT';
+function isCreditErr_(code, json) {
+  var msg = String((json && json.error && json.error.message) || '');
+  return (code === 400 || code === 402 || code === 403) && /credit balance|credits? (is|are) too low|purchase credits/i.test(msg);
+}
+function creditMark_(out) {
+  try {
+    var p = PropertiesService.getScriptProperties(), cur = p.getProperty(CREDIT_PROP);
+    if (out && !cur) p.setProperty(CREDIT_PROP, String(Date.now()));
+    if (!out && cur) p.deleteProperty(CREDIT_PROP);
+  } catch (e) {}
+}
+// 관리자: 지금 표시만 보기 · probe=true 면 (표시가 있을 때만) 아주 작은 호출(Haiku, 1토큰)로 충전이 반영됐는지 확인
+function aiStatus_(b) {
+  if (b && b.probe && prop_(CREDIT_PROP)) {
+    var key = prop_('ANTHROPIC_API_KEY');
+    if (!key) return { ok: false, error: 'no_key' };
+    var res = fetch_('https://api.anthropic.com/v1/messages', { method: 'post', contentType: 'application/json',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      payload: JSON.stringify({ model: MODEL_FOLLOW, max_tokens: 1, messages: [{ role: 'user', content: '안녕' }] }) });
+    if (res.code === 200) creditMark_(false);
+    else if (isCreditErr_(res.code, res.json)) creditMark_(true);
+    else return { ok: false, error: 'http_' + res.code };
+  }
+  return { ok: true };
+}
+// 편집기에서 실행: 크레딧 부족 표시 시험 (표시를 켰다가 aistatus probe 로 확인 → 크레딧이 있으면 지워짐)
+function creditSelfTest() {
+  var before = prop_(CREDIT_PROP);
+  console.log('지금 표시: ' + (before || '없음'));
+  creditMark_(true);
+  var r = aiStatus_({ probe: true });
+  if (!r.ok && !before) creditMark_(false);   // 키 없음 등 다른 오류면 원래대로 (표시를 잘못 남기지 않음)
+  console.log('확인 결과: ' + JSON.stringify(r) + ' · 표시: ' + (prop_(CREDIT_PROP) ? '크레딧 부족' : '없음(정상)'));
 }
 
 // ---------------- 도우미 ----------------
@@ -304,7 +345,7 @@ function selfTest() {
 // - 기출(충북교육청 면접후기 사례집)은 저장소·앱 DB 에 복사하지 않고 실행 때 읽는다. 선배 [답변]은 쓰지 않는다
 // - 부스 액션(hello·followup·report)은 그대로 — 사용량(usage_)만 같이 쌓는다
 // =====================================================================================================
-var STAFF_ACTIONS = ['aiq', 'usage', 'usage-set', 'gjournal', 'card'];
+var STAFF_ACTIONS = ['aiq', 'usage', 'usage-set', 'gjournal', 'card', 'aistatus'];
 var AIQ_MODEL = 'claude-opus-5-5';
 var AIQ_MAX_TOKENS = 16000;
 var AIQ_LIMIT_MS = 6 * 60 * 1000;           // Apps Script 한 번 실행 한도
@@ -370,6 +411,7 @@ function staffAction_(action, b, t0) {
   if (!isAdminTok_(who.idToken)) { log_(action, t0, null, false, 'not_admin'); return { ok: false, error: 'not_admin' }; }
   if (action === 'usage') return usageReport_();
   if (action === 'gjournal') return gjournal_(b, who, t0);
+  if (action === 'aistatus') return aiStatus_(b);
   return usageSet_(b);
 }
 // 선생님 토큰: 형식·프로젝트·만료 확인 → accounts/{uid} 가 학생이면 거절 (권한 자체는 Firestore 규칙이 판단)
@@ -417,7 +459,7 @@ function aiq_(b, who, t0) {
     patchMeta_(tok, no, { status: 'error', error: clip_(String(err && err.message || err), 200), doneAt: new Date() });
     aiqStat_('fail', no);
     log_('aiq', t0, null, false, 'exception');
-    return { ok: false, error: 'server' };
+    return { ok: false, error: /no_credit/.test(String(err && err.message || err)) ? 'no_credit' : 'server' };
   }
 }
 
@@ -582,9 +624,11 @@ function claudeAll_(reqs, kind) {
   var res;
   try { res = UrlFetchApp.fetchAll(reqs.map(function (r) { var o = {}; Object.keys(r).forEach(function (k) { if (k !== '_model') o[k] = r[k]; }); return o; })); }
   catch (e) { return reqs.map(function () { return { ok: false, error: 'network' }; }); }
+  if (res.some(function (x) { return x.getResponseCode() === 200; })) creditMark_(false);
   return res.map(function (x, i) {
     var code = x.getResponseCode(), m = null;
     try { m = JSON.parse(x.getContentText()); } catch (e) {}
+    if (code !== 200 && isCreditErr_(code, m)) { creditMark_(true); return { ok: false, error: 'no_credit' }; }
     if (code !== 200 || !m) return { ok: false, error: code === 429 ? 'rate_limit' : 'http_' + code };
     usage_(kind || 'aiq', m.model || reqs[i]._model, m.usage);
     if (m.stop_reason === 'refusal') return { ok: false, error: 'refusal' };

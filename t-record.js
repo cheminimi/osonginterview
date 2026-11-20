@@ -27,12 +27,12 @@ const isTeacher = () => S.ctx?.account?.role === "teacher";
 export const canSeeRec = (st) => !!st && (!!S.ctx?.isAdmin || (isTeacher() && myRoles(st).length > 0));
 export const canUploadRec = (st) => !!st && (!!S.ctx?.isAdmin || (isTeacher() && !!myName() && (st.assign || {}).s1 === myName()));
 // 학생부가 있는지: 단추를 그릴 때 한 번만 읽는다 (실패·거부 = 없음). 글은 버리고 있음/없음만 기억
-const exists = new Map();
+const exists = new Map(), opened = new Map();   // opened: 학생에게 공개 중인지 (2026-11-20)
 export async function recordExists(no, force = false) {
   if (!force && exists.has(no)) return exists.get(no);
-  let ok = false;
-  try { ok = (await getDoc(doc(db, "records", no))).exists(); } catch (_) { ok = false; }
-  exists.set(no, ok);
+  let ok = false, op = false;
+  try { const d = await getDoc(doc(db, "records", no)); ok = d.exists(); op = ok && d.data().studentOpen === true; } catch (_) { ok = false; }
+  exists.set(no, ok); opened.set(no, op);
   return ok;
 }
 async function log(no, action) {
@@ -49,7 +49,8 @@ export async function mountRecButtons(el, st, { stage = 0, preset = null, compac
   if (!see && !up) { el.innerHTML = ""; return; }
   const has = await recordExists(st.studentNo);
   if (!el.isConnected) return;
-  el.innerHTML = (see && has ? `<button type="button" class="btn-sm rec-open" data-recopen>${compact ? "학생부" : "학생부 보기"}</button>` : "")
+  el.innerHTML = (!compact && has && opened.get(st.studentNo) ? '<span class="rec-share-pill" title="학생이 \'질문\' 메뉴의 내 학생부에서 볼 수 있어요">학생 공개 중</span>' : "")
+    + (see && has ? `<button type="button" class="btn-sm rec-open" data-recopen>${compact ? "학생부" : "학생부 보기"}</button>` : "")
     + (up ? `<button type="button" class="btn-sm" data-recup>${has ? "학생부 다시 넣기" : "학생부 넣기"}</button>` : "")
     + (!viewOnly && S.ctx.isAdmin && has ? `<button type="button" class="btn-sm btn-danger" data-recdel>학생부 지우기</button>` : "");
   $("[data-recopen]", el)?.addEventListener("click", (e) => { e.stopPropagation(); before?.(); openRecordViewer(st.studentNo, { stage, preset }); });
@@ -905,7 +906,9 @@ async function saveUpload() {
     try { const o = await getDoc(doc(db, "records", no)); if (o.exists()) { old = o.data(); ver = (Number(old.ver) || 0) + 1; } } catch (_) {}
     const me = myName() || S.ctx.user.email;
     const rec = { studentNo: no, sections, ...(upState.withGrades && upState.grades?.length ? { grades: upState.grades } : {}), pages: { read: upState.info.read, kept: upState.info.kept, dropped: upState.info.dropped }, ver,
-      savedAt: serverTimestamp(), savedBy: me, savedByUid: S.ctx.user.uid, consentAt: serverTimestamp(), consentBy: me };
+      savedAt: serverTimestamp(), savedBy: me, savedByUid: S.ctx.user.uid, consentAt: serverTimestamp(), consentBy: me,
+      // (2026-11-20) 학생에게 공개 중이었으면 다시 넣어도 공개 유지 (사용자 결정)
+      ...(old?.studentOpen === true ? { studentOpen: true, studentOpenAt: old.studentOpenAt || serverTimestamp(), studentOpenBy: old.studentOpenBy || "" } : {}) };
     await setDoc(doc(db, "records", no), rec);
     exists.set(no, true);
     let lost = 0;
@@ -1159,7 +1162,7 @@ export async function openRecordViewer(no, { stage = 0, preset = null, mode = "i
     return `<span class="rv-ap${announceFailed(u) ? " out" : ""}">${u.univ ? `<b>${esc(univName(u.univ))}</b>` : ""}${rest ? " " + esc(rest) : ""}${announceFailed(u) ? "<i>1차 불합격</i>" : ""}</span>`;
   }).join("");
   ov.innerHTML = `<div class="rv-wm" style="background-image:url(&quot;data:image/svg+xml;utf8,${encodeURIComponent(wm)}&quot;)"></div>
-    <div class="rv-hd"><b>${esc(no)} ${esc(st.name)}</b><span class="rv-gr rv-main"><button type="button" data-main="rec" class="on">학생부</button><button type="button" data-main="gr">성적</button></span>
+    <div class="rv-hd"><b>${esc(no)} ${esc(st.name)}</b><span class="rv-gr rv-main"><button type="button" data-main="rec" class="on">학생부</button><button type="button" data-main="gr">성적</button></span><span class="rv-share" id="rvShare"></span>
       ${prep ? `<span class="rv-preptag" id="rvPrepTag">질문 준비</span>${myStages.length !== 1 ? `<span class="rv-stage">${(myStages.length ? myStages : [1, 2, 3]).map((k) => `<button type="button" data-stage="${k}" class="${V.stage === k ? "on" : ""} c${k}">${k}차</button>`).join("")}</span>` : ""}<span class="muted">면접 전에 질문을 뽑아 두는 화면 · 만든 질문은 바로 학생에게 공개</span><span class="sp"></span>
       <button type="button" class="btn-sm" id="rvClose">질문 탭으로 돌아가기</button>`
     : `<span class="rv-stage">${[1, 2, 3].map((k) => `<button type="button" data-stage="${k}" class="${V.stage === k ? "on" : ""} c${k}">${k}차</button>`).join("")}</span>
@@ -1242,7 +1245,7 @@ export async function openRecordViewer(no, { stage = 0, preset = null, mode = "i
   });
   V.tab = prep ? (hasAi && tab !== "mine" ? "ai" : "mine") : "q";
   $$(".rv-tabs [data-tab]", ov).forEach((x) => x.classList.toggle("on", x.dataset.tab === V.tab));
-  drawDoc(); drawSide();
+  drawDoc(); drawSide(); drawShare();
   // AI 초안은 다른 선생님이 채택·버리면 바로 사라지게 (질문 준비 화면이 열려 있는 동안만 구독)
   if (hasAi) {
     const un = onSnapshot(collection(db, "records", no, "aiq"), (snap) => {
@@ -1435,7 +1438,7 @@ function paint(text, ms, { hide = 0, sent = false, find = [], ai = [] } = {}) {
     if (sent && sents.includes(a)) { if (open) h += "</span>"; h += '<span class="s">'; open = true; }
     const seg = text.slice(a, b);
     const top = ms.filter((m) => m.s <= a && m.e >= b).at(-1), ax = ai.find((f) => f.s <= a && f.e >= b);
-    h += top ? `<mark class="${markStageCls(top)}${top.kind === "q" ? " q" : ""}" data-mk="${esc(top.id)}">${maskSpans(seg)}</mark>`
+    h += top ? `<mark class="${top.cls || markStageCls(top)}${top.kind === "q" ? " q" : ""}" data-mk="${esc(top.id)}">${maskSpans(seg)}</mark>`
       : ax ? `<mark class="ai" data-ai="${esc(ax.id)}">${maskSpans(seg)}</mark>`
       : find.some((f) => f.s <= a && f.e >= b) ? `<mark class="rv-find">${maskSpans(seg)}</mark>` : maskSpans(seg);
   }
@@ -1798,7 +1801,7 @@ export const cardDept = (st) => [...new Set((st?.universities || []).filter((u) 
 export const CARD_ERR = {
   no_consent: "AI 사용 동의가 없어요.", limited: "오늘 암기 카드 한도를 넘었어요. 내일 다시 해 주세요.", no_access: "이 학생 학생부를 볼 수 있는 선생님(배정 선생님·관리자)만 카드를 만들 수 있어요.",
   no_record: "학생부가 없어요.", auth: "로그인을 다시 확인해 주세요.", no_key: "AI 키가 아직 설정되지 않았어요 (관리자).", bad_request: "보낼 질문이 없어요.",
-  save: "카드 상태를 저장하지 못했어요."
+  save: "카드 상태를 저장하지 못했어요.", no_credit: "AI 크레딧이 떨어져서 카드를 만들지 못했어요. 관리자에게 알려 주세요 (충전하면 [다시 만들기]로 만들 수 있어요)."
 };
 export const cardErrText = (e) => CARD_ERR[e] || `암기 카드를 만들지 못했어요${e ? ` (${e})` : ""}. 잠시 뒤 [다시 만들기]를 눌러 주세요.`;
 export async function consentOf(no) { try { const m = await getDoc(doc(db, "records", no, "aimeta", "main")); return !!(m.exists() && m.data().consentAt); } catch (_) { return false; } }
@@ -1833,7 +1836,7 @@ export async function makeCards(no, qs, { consent = false, marks = null, onLocal
     const part = items.slice(i, i + 20);
     const r = await aiCall(S.ctx.user, "card", { no, by, dept, ...(consent ? { consent: true } : {}),
       items: part.map(({ q, qt }) => ({ qid: q.id, q: q.text, fu: fuOf(q), quote: qt.quote.slice(0, 800), sec: qt.sec, g: g(q) })) }, 180000);
-    if (r?.ok) { out.done.push(...arr(r.done)); out.fail.push(...arr(r.fail).map((f) => f.qid)); continue; }
+    if (r?.ok) { out.done.push(...arr(r.done)); out.fail.push(...arr(r.fail).map((f) => f.qid)); if (arr(r.fail).some((f) => f?.error === "no_credit")) out.error = "no_credit"; continue; }
     out.error = r?.error || "server";
     if (out.error === "timeout" || out.error === "network") continue;   // 서버에서는 계속 만들 수 있음 — 10분 지나도 '만드는 중'이면 [다시 만들기]
     try { const fb = writeBatch(db); part.forEach(({ q }) => fb.update(ref(q), { cardState: "fail", cardAt: Date.now() })); await fb.commit(); } catch (_) {}
@@ -2095,7 +2098,8 @@ export const AI_ERR = {
   no_consent: "AI 사용 동의가 없어요. 동의를 받았다고 표시한 뒤 다시 눌러 주세요.", running: "이미 만드는 중이에요. 잠시 뒤 다시 확인해 주세요.",
   limited: "오늘 AI 맞춤 질문 한도(학생 수)를 넘었어요. 내일 다시 해 주세요.", no_access: "이 학생 학생부를 볼 수 있는 선생님(배정 선생님·관리자)만 만들 수 있어요.",
   no_record: "학생부가 없어요.", auth: "로그인을 다시 확인해 주세요.", timeout: "응답을 기다리다 끊겼어요. 서버에서는 계속 만들 수 있어요 — 잠시 뒤 질문 탭에서 확인해 주세요.",
-  network: "연결이 끊겼어요. 서버에서는 계속 만들 수 있어요 — 잠시 뒤 질문 탭에서 확인해 주세요."
+  network: "연결이 끊겼어요. 서버에서는 계속 만들 수 있어요 — 잠시 뒤 질문 탭에서 확인해 주세요.",
+  no_credit: "AI 크레딧이 떨어져서 만들지 못했어요. 관리자에게 알려 주세요 (충전하면 다시 만들 수 있어요)."
 };
 export const aiErrText = (r) => AI_ERR[r?.error] || `AI 맞춤 질문을 만들지 못했어요${r?.error ? ` (${r.error})` : ""}. 잠시 뒤 다시 해 주세요.`;
 export async function runAiq(no, { scope = "all", only = null, consent = false, box, big = false, onDone = null } = {}) {
@@ -2260,4 +2264,152 @@ async function adminCards(p, nos) {
     toast(`암기 카드 ${done}장을 만들었어요${fail ? ` · ${fail}장은 못 만들었어요` : ""}${err && err !== "timeout" && err !== "network" ? ` — ${cardErrText(err)}` : ""}`, fail ? "error" : undefined, 8000);
     adminCards(p, nos);
   });
+}
+
+// ================= (2026-11-20) 학생에게 학생부 공개 · 학생 화면 '내 학생부' (읽기 전용) =================
+// - 공개 = records/{학번}.studentOpen true (+studentOpenAt·studentOpenBy). 담임(1차 배정)·관리자만 켜고 끔 (규칙 canUploadRecord)
+// - 학생은 공개된 자기 학생부 문서만 읽음 (규칙). 하위(marks·pending·aiq·aimeta)·recordLogs 는 그대로 못 읽음
+// - 학생 화면 밑줄 = 학생에게 공개된 선생님 질문(personalQuestions)의 근거 글(card.b 또는 basis 따옴표)을 학생부에서 찾은 곳. 차수·선생님 이름·꼬리질문은 안 보여 줌
+// - 학생은 고치기·하이라이트·질문 만들기 없음 (읽기만). 학생부 글은 브라우저 저장소에 넣지 않음
+function drawShare() {
+  const el = document.getElementById("rvShare"); if (!el || !V) return;
+  const on = V.rec.studentOpen === true, can = canUploadRec(V.st);
+  const at = V.rec.studentOpenAt?.seconds ? new Date(V.rec.studentOpenAt.seconds * 1000) : null;
+  el.innerHTML = (on ? `<span class="rv-shp on">학생에게 공개 중${at ? ` · ${at.getMonth() + 1}/${at.getDate()}` : ""}</span>` : can ? '<span class="rv-shp">학생 비공개</span>' : "")
+    + (can ? `<button type="button" class="btn-sm${on ? " rv-shoff" : ""}" id="rvShareBtn">${on ? "공개 끄기" : "학생에게 공개"}</button>` : "");
+  const b = document.getElementById("rvShareBtn"); if (!b) return;
+  b.onclick = async () => {
+    const no = V.no, name = V.st.name || "";
+    const ok = on
+      ? await confirmBox({ title: "학생 공개를 끌까요?", what: `${name} 학생의 '질문' 메뉴에서 내 학생부가 사라져요.`, note: "언제든 다시 공개할 수 있어요.", yes: "공개 끄기", no: "취소" })
+      : await confirmBox({ title: "학생에게 학생부를 공개할까요?", what: `${name} 학생이 '질문' 메뉴의 내 학생부에서 볼 수 있어요 (읽기만).`,
+        note: "보이는 것: 저장된 학생부(가린 글 그대로)·성적·학생에게 공개된 선생님 질문 / 안 보이는 것: 공개 전 질문·AI 초안·하이라이트만 한 곳·대면 기록·선생님 이름·차수. 언제든 [공개 끄기]로 닫을 수 있어요.", yes: "공개하기", no: "취소" });
+    if (!ok || !V || V.no !== no) return;
+    b.disabled = true;
+    const me = myName() || S.ctx.user.email;
+    const f = on ? { studentOpen: false } : { studentOpen: true, studentOpenAt: serverTimestamp(), studentOpenBy: me };
+    try {
+      await updateDoc(doc(db, "records", no), f);
+      log(no, on ? "share:off" : "share:on");
+      opened.set(no, !on);
+      if (V?.no === no) { Object.assign(V.rec, on ? { studentOpen: false } : { studentOpen: true, studentOpenAt: { seconds: Math.floor(Date.now() / 1000) }, studentOpenBy: me }); drawShare(); }
+      toast(on ? "학생 공개를 껐어요." : "학생에게 공개했어요. 학생 '질문' 메뉴에 내 학생부가 생겨요.", "ok");
+    } catch (e) { b.disabled = false; showError(e, "학생 공개"); }
+  };
+}
+// 학생 화면에 칠할 질문: 근거 글을 학생부에서 찾은 선생님 질문만 [{ id, text, sec, ri, s, e, where, card }]
+const stuQuote = (q) => {
+  const b = String(q?.card?.b || "").trim();
+  if (b) return b;
+  const m = String(q?.basis || "").match(/"([^"]+)"\s*$/);
+  return m ? m[1].replace(/…$/, "").trim() : "";
+};
+export function studentRecQs(rec, pqs) {
+  const secs = (rec?.sections || []).filter((s) => s.key !== "grades");
+  const out = [];
+  (pqs || []).filter((q) => q && q.by !== "student").forEach((q) => {
+    const qt = stuQuote(q); if (qt.length < 4) return;
+    for (const s of secs) {
+      const ri = s.rows.findIndex((r) => String(r.text || "").includes(qt));
+      if (ri < 0) continue;
+      const i = s.rows[ri].text.indexOf(qt), y = rowYear(s.rows[ri].label);
+      out.push({ id: q.id, text: String(q.text || ""), sec: s.key, ri, s: i, e: i + qt.length, quote: qt,
+        where: [SEC_SHORT[s.key] || s.title || "", [y.g ? y.g + "학년" : "", y.name].filter(Boolean).join(" ")].filter(Boolean).join(" · "),
+        card: !!(arr(q.card?.kw).length || q.card?.b) });
+      return;
+    }
+  });
+  return out;
+}
+let SV = null;
+export const studentRecordOpen = () => !!SV;
+export function closeStudentRecord() {
+  if (!SV) return;
+  SV.off.forEach((f) => f());
+  document.getElementById("recView")?.remove();
+  document.body.classList.remove("rv-open");
+  SV = null;
+}
+// 학생 화면: rec = 학생부 문서(학생이 읽은 것), pqs = 학생에게 공개된 질문들, onCard(id) = [암기 카드 보기]
+export function openStudentRecord(rec, pqs, { onCard = null } = {}) {
+  closeStudentRecord();
+  const qs = studentRecQs(rec, pqs), hasGr = !!rec.grades?.length;
+  SV = { rec, qs, off: [], openY: {}, fs: viewPref("rvFs", 16) };
+  const ov = document.createElement("div");
+  ov.id = "recView"; ov.className = "rec-ov rv rv-stu";
+  ov.innerHTML = `<div class="rv-hd"><b>내 학생부</b>${hasGr ? '<span class="rv-gr rv-main"><button type="button" data-main="rec" class="on">학생부</button><button type="button" data-main="gr">성적</button></span>' : ""}
+      <span class="muted sm stu-hint">담임 선생님이 공개한 학생부예요 · 읽기만 할 수 있어요</span><span class="sp"></span><button type="button" class="btn-sm" id="rvClose">닫기</button></div>
+    <div class="rv-body">
+      <nav class="rv-toc" id="rvToc"><div id="rvTocL"></div><div class="rv-lg"><mark class="stu q">밑줄</mark> 선생님이 질문한 곳<br><b>가림</b> <span class="rv-mask">○○</span> 이름·학교</div></nav>
+      <article class="rv-doc" id="rvDoc"><div class="rv-in" id="rvIn"></div></article>
+      <aside class="rv-side"><div class="stu-qh"><b>선생님 질문 ${qs.length}개</b><span class="muted sm">누르면 학생부 그 자리로 가요</span></div><div class="rv-sb" id="rvSb"></div></aside>
+    </div>
+    <div class="rv-grades" id="rvGrades" hidden></div>
+    ${qs.length ? `<button type="button" class="stu-fab" id="stuFab">선생님 질문 <b>${qs.length}</b></button>` : ""}
+    <div class="stu-sheet-bg" id="stuSheet" hidden><div class="stu-sheet" role="dialog" aria-modal="true"><div id="stuSheetIn"></div><div class="row" style="justify-content:flex-end;margin-top:12px"><button type="button" class="btn-sm" data-shclose>닫기</button></div></div></div>`;
+  document.body.append(ov);
+  document.body.classList.add("rv-open");
+  const on = (tgt, t, f) => { tgt.addEventListener(t, f); SV.off.push(() => tgt.removeEventListener(t, f)); };
+  $("#rvClose", ov).onclick = closeStudentRecord;
+  on(document, "keydown", (e) => { if (e.key === "Escape") { if (!$("#stuSheet", ov).hidden) $("#stuSheet", ov).hidden = true; else closeStudentRecord(); } });
+  const grSt = { on: new Set(["주요과목", "전과목"]), bars: "all", view: "sum", sem: "" };
+  $$("[data-main]", ov).forEach((b) => b.onclick = () => {
+    const gr = b.dataset.main === "gr";
+    $$("[data-main]", ov).forEach((x) => x.classList.toggle("on", x === b));
+    $(".rv-body", ov).hidden = gr; $("#rvGrades", ov).hidden = !gr; if ($("#stuFab", ov)) $("#stuFab", ov).hidden = gr;
+    if (gr) renderGrades($("#rvGrades", ov), rec.grades || [], grSt);
+  });
+  const qCard = (q) => `<div class="stu-q" data-q="${esc(q.id)}"><div class="w">${esc(q.where)}</div><div class="t">${esc(q.text)}</div>${q.card && onCard ? `<button type="button" class="btn-sm" data-card="${esc(q.id)}">암기 카드 보기</button>` : ""}</div>`;
+  $("#rvSb", ov).innerHTML = qs.length ? qs.map(qCard).join("") : '<p class="muted sm" style="padding:12px">학생부에 표시할 선생님 질문이 아직 없어요.</p>';
+  const sheet = (html) => { $("#stuSheetIn", ov).innerHTML = html; $("#stuSheet", ov).hidden = false; };
+  const go = (id) => {
+    const q = qs.find((x) => x.id === id); if (!q) return;
+    const y = $(`details[data-y="${q.sec}|${rowYear(rec.sections.find((s) => s.key === q.sec)?.rows[q.ri]?.label).g || "etc"}"]`, ov); if (y) y.open = true;
+    const sd = $(`details[data-s="${q.sec}"]`, ov); if (sd) sd.open = true;
+    const mk = $(`mark[data-mk="${CSS.escape(id)}"]`, ov) || $(`#rve-${q.sec}-${q.ri}`, ov);
+    if (!mk) return;
+    const d = $("#rvDoc", ov), top = mk.getBoundingClientRect().top - d.getBoundingClientRect().top + d.scrollTop - 60;
+    d.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+    $$("mark.flash", ov).forEach((x) => x.classList.remove("flash")); mk.classList.add("flash"); setTimeout(() => mk.classList.remove("flash"), 1600);
+    $$(".stu-q", ov).forEach((x) => x.classList.toggle("on", x.dataset.q === id));
+  };
+  on(ov, "click", (e) => {
+    const c = e.target.closest("[data-card]"); if (c) { e.stopPropagation(); onCard?.(c.dataset.card); return; }
+    if (e.target.closest("[data-shclose]") || e.target.id === "stuSheet") { $("#stuSheet", ov).hidden = true; return; }
+    const mk = e.target.closest("mark[data-mk]");
+    if (mk) {   // 밑줄: 그 자리에 걸린 질문 모두 (차수·이름 없이)
+      const q0 = qs.find((x) => x.id === mk.dataset.mk); if (!q0) return;
+      const here = qs.filter((x) => x.sec === q0.sec && x.ri === q0.ri && x.s < q0.e && x.e > q0.s);
+      $$(".stu-q", ov).forEach((x) => x.classList.toggle("on", here.some((h) => h.id === x.dataset.q)));
+      sheet(`<div class="stu-from">${esc(q0.where)}</div>${here.map((q) => `<div class="stu-qt">${esc(q.text)}</div>${q.card && onCard ? `<button type="button" class="btn-sm" data-card="${esc(q.id)}">암기 카드 보기</button>` : ""}`).join("")}<div class="stu-quote">${maskSpans(q0.quote)}</div>`);
+      return;
+    }
+    const li = e.target.closest(".stu-q[data-q]");
+    if (li) { $("#stuSheet", ov).hidden = true; go(li.dataset.q); return; }
+    if (e.target.closest("#stuFab")) { sheet(`<div class="stu-qt" style="margin-top:0">선생님 질문 ${qs.length}개</div><div class="stu-list">${qs.map(qCard).join("")}</div>`); return; }
+    const g = e.target.closest("[data-go]");
+    if (g) { e.preventDefault(); const [k, y] = g.dataset.go.split("|"); const el = $(`#rvy-${k}-${y}`, ov) || $(`#rvs-${k}`, ov); if (el) { el.open = true; const d = $("#rvDoc", ov); d.scrollTo({ top: Math.max(0, el.getBoundingClientRect().top - d.getBoundingClientRect().top + d.scrollTop - 10), behavior: "smooth" }); } }
+  });
+  // 본문 (선생님 화면과 같은 구역·학년 묶음, 고치기 없음)
+  const secs = rec.sections.map((s) => ({ ...s, rows: s.rows.map((r, ri) => ({ ...r, ri, ...rowYear(r.label) })) }))
+    .filter((s) => s.key !== "grades").sort((a, b) => { const k = (x) => { const i = VIEW_ORDER.indexOf(x.key); return i < 0 ? 99 : i; }; return k(a) - k(b); });
+  const ent = (s, r) => {
+    const h = s.key === "creative" ? hopeOf(r.text) : { hope: "", cut: 0 };
+    const ms = qs.filter((q) => q.sec === s.key && q.ri === r.ri && q.s >= h.cut).map((q) => ({ id: q.id, s: q.s, e: q.e, kind: "q", cls: "stu" }));
+    return `<div class="rv-ent" id="rve-${s.key}-${r.ri}">${r.name || h.hope ? `<div class="rv-lab">${r.name ? `<b>${esc(r.name)}</b>` : ""}${h.hope ? `<span class="rv-hope">희망분야 · ${esc(h.hope)}</span>` : ""}</div>` : ""}<div class="rv-txt">${paint(r.text, ms, { hide: h.cut })}</div></div>`;
+  };
+  const inEl = $("#rvIn", ov);
+  inEl.style.setProperty("--fs", `${SV.fs}px`);
+  inEl.innerHTML = secs.map((s) => {
+    const ys = s.key === "attend" ? [] : yearsOf(s);
+    const body = s.key === "attend" ? s.rows.map((r) => ent(s, { ...r, name: r.label })).join("") : ys.map((g) => {
+      const rows = s.rows.filter((r) => r.g === g);
+      return `<details class="rv-fy" data-y="${s.key}|${g || "etc"}" id="rvy-${s.key}-${g || "etc"}" open><summary class="rv-yr"><span class="rv-yrchip">${g ? g + "학년" : "기타"}</span><span class="ar"></span></summary><div class="rv-yin">${rows.map((r) => ent(s, r)).join("")}</div></details>`;
+    }).join("");
+    return `<details class="rv-card-s${s.key === "attend" ? " small" : ""}" data-s="${s.key}" id="rvs-${s.key}" open><summary class="rv-sech"><span class="rv-dot d-${s.key}"></span><h3>${esc(VIEW_TITLE[s.key] || s.title)}</h3><span class="ar"></span></summary><div class="rv-sin">${body}</div></details>`;
+  }).join("");
+  $("#rvTocL", ov).innerHTML = secs.map((s) => {
+    const ys = s.key === "attend" ? [] : yearsOf(s);
+    return `<div class="rv-tg open"><div class="rv-tgh"><a href="#" data-go="${s.key}|">${esc(VIEW_TITLE[s.key] || s.title)}</a></div>${ys.length ? `<div class="rv-tgs">${ys.map((g) => `<a href="#" class="sub" data-go="${s.key}|${g || "etc"}">${g ? g + "학년" : "기타"}</a>`).join("")}</div>` : ""}</div>`;
+  }).join("");
 }

@@ -534,10 +534,11 @@ async function runAi() {
   const one = async (batch) => {
     const students = batch.map((x) => { const st = S.students.find((s) => s.studentNo === x.no) || {}; return { no: x.no, rounds: x.rounds, track: st.track || "", special: st.special || "" }; });
     const r = await aiCall(S.ctx.user, "gjournal", { students }, 360000);
-    if (!r?.ok) { fail.push(...batch.map((x) => `${x.no}(${r?.error || "실패"})`)); return; }
+    const why = (e) => e === "no_credit" ? "AI 크레딧 부족" : e;   // (2026-11-20)
+    if (!r?.ok) { fail.push(...batch.map((x) => `${x.no}(${why(r?.error) || "실패"})`)); return; }
     for (const x of batch) {
       const got = r.results?.[x.no];
-      if (!got || got.error) { fail.push(`${x.no}(${got?.error || "없음"})`); continue; }
+      if (!got || got.error) { fail.push(`${x.no}(${why(got?.error) || "없음"})`); continue; }
       const merged = { ...(A.notes[x.no] || {}), ...Object.fromEntries(x.rounds.filter((rd) => got[rd]).map((rd) => [rd, got[rd]])) };
       try { await setDoc(doc(db, "guidanceNotes", x.no), { r: merged, atMs: Date.now() }); A.notes[x.no] = merged; }
       catch (e) { fail.push(`${x.no}(저장)`); }

@@ -213,7 +213,8 @@ service cloud.firestore {
     function canUploadRecord(no) { return isAdmin() || (hasAcct() && acct().role == 'teacher'
       && staffName() != '' && staffName() == recAssign(no).get('s1', '')); }
     match /records/{no} {
-      allow read: if canSeeRecord(no);
+      // (2026-11-20) 학생은 담임·관리자가 공개(studentOpen == true)한 자기 학생부 문서만 읽기. 쓰기 없음 · 하위(marks·pending·aiq·aimeta)는 그대로 못 읽음
+      allow read: if canSeeRecord(no) || (isStudent(no) && resource.data.get('studentOpen', false) == true);
       allow create, update: if canUploadRecord(no);
       allow delete: if isAdmin();
       // 하이라이트·질문 표시. 남의 것은 자리(sec·row·start·end)·연결(qid)만 고칠 수 있음 — 다시 넣기·질문 공개 때 (사용자 결정 2026-10-30)

@@ -845,7 +845,10 @@ export async function aiCall(user, action, data = {}, timeoutMs = 400000) {
     const idToken = await user.getIdToken();
     const res = await fetch(AI_ENDPOINT, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, signal: ctl.signal,
       body: JSON.stringify({ action, idToken, ...data }) });
-    return await res.json();
+    const j = await res.json();
+    // (2026-11-20) booth-ai 가 크레딧 부족 표시(creditOut: 시각 ms, 없으면 0)를 같이 보냄 → 교사 화면이 관리자 빨간 줄을 켜고 끔
+    if (j && typeof j === "object" && "creditOut" in j) window.dispatchEvent(new CustomEvent("ai-credit", { detail: { at: Number(j.creditOut) || 0 } }));
+    return j;
   } catch (e) { return { ok: false, error: e?.name === "AbortError" ? "timeout" : "network" }; }
   finally { clearTimeout(timer); }
 }

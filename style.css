@@ -2520,3 +2520,45 @@ body.nd .ra-prog i { display: block; height: 100%; background: #7d5bd6; transiti
 /* ② 칸은 좁아서 받은 질문 줄을 휴대폰처럼 (질문 글 넓게 · ↻·✕ 는 아래 줄) */
 body.nd .rv-fb .mt-q { grid-template-columns: 18px minmax(0, 1fr); }
 body.nd .rv-fb .mt-tools { grid-column: 2; flex-direction: row; justify-content: flex-end; }
+
+/* (2026-11-20) AI 크레딧 부족 — 관리자 화면 맨 위 빨간 줄 (teacher.html #aiCredit) */
+body.nd .ai-credit { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 14px; padding: 12px 14px;
+  background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger); border-radius: var(--radius-btn); }
+body.nd .ai-credit[hidden] { display: none; }
+body.nd .ai-credit .ac-tx { flex: 1 1 260px; min-width: 0; display: grid; gap: 2px; }
+body.nd .ai-credit .ac-tx span { color: var(--ink-2); font-size: 14px; }
+body.nd .ai-credit .btn-sm { flex: 0 0 auto; }
+
+/* (2026-11-20) 학생에게 학생부 공개 — 교사 머리 단추 · 학생 '내 학생부' (읽기 전용) */
+body.nd .rec-ov .rv-share { display: inline-flex; align-items: center; gap: 6px; }
+body.nd .rec-ov .rv-shp { font-size: .78rem; font-weight: 700; padding: 3px 10px; border-radius: 99px; background: rgba(255,255,255,.12); color: #d6dbe4; white-space: nowrap; }
+body.nd .rec-ov .rv-shp.on { background: #d9f2e6; color: var(--ok); }
+body.nd .rec-ov .rv-hd .btn-sm.rv-shoff { color: var(--danger); }
+body.nd .rec-share-pill { display: inline-flex; align-items: center; gap: 5px; font-size: .78rem; font-weight: 700; padding: 3px 10px; border-radius: 99px; background: var(--ok-bg); color: var(--ok); white-space: nowrap; }
+body.nd .rv-stu mark.stu { background: #fff1b8; border-bottom: 2px solid #e2c44a; color: inherit; border-radius: 3px; cursor: pointer; padding: 0 1px; }
+body.nd .rv-stu mark.stu.flash { background: #ffe27a; }
+body.nd .rv-stu .rv-lg mark.stu { cursor: default; }
+body.nd .rv-stu .stu-qh { display: grid; gap: 2px; padding: 14px 14px 6px; }
+body.nd .rv-stu .rv-sb { padding: 6px 12px 16px; overflow: auto; }
+body.nd .stu-q { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
+body.nd .stu-q.on { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+body.nd .stu-q .w { font-size: .76rem; color: var(--ink-3); font-weight: 700; }
+body.nd .stu-q .t { font-weight: 700; margin: 2px 0 0; overflow-wrap: anywhere; }
+body.nd .stu-q .btn-sm { margin-top: 8px; }
+body.nd .stu-fab { display: none; position: absolute; right: 16px; bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 3; background: var(--ink); color: #fff; border: 0; border-radius: 99px; padding: 11px 16px; font-weight: 800; box-shadow: 0 4px 14px rgba(0,0,0,.22); }
+body.nd .stu-fab b { color: #c9de62; }
+body.nd .stu-fab[hidden] { display: none !important; }
+body.nd .stu-sheet-bg { position: absolute; inset: 0; z-index: 5; background: rgba(20,22,28,.35); display: flex; align-items: flex-end; justify-content: center; }
+body.nd .stu-sheet-bg[hidden] { display: none; }
+body.nd .stu-sheet { background: #fff; width: 100%; max-width: 560px; max-height: 80%; overflow: auto; border-radius: 22px 22px 0 0; padding: 16px 16px calc(18px + env(safe-area-inset-bottom)); }
+body.nd .stu-from { font-size: .78rem; color: var(--ink-3); font-weight: 700; }
+body.nd .stu-qt { font-size: 1.05rem; font-weight: 800; margin: 6px 0 8px; line-height: 1.45; overflow-wrap: anywhere; }
+body.nd .stu-quote { background: #fff8d6; border-left: 3px solid #e2c44a; border-radius: 8px; padding: 8px 10px; font-size: .88rem; color: var(--ink-2); margin-top: 10px; overflow-wrap: anywhere; }
+body.nd .stu-list { margin-top: 6px; }
+@media (min-width: 721px) { body.nd .stu-sheet-bg { align-items: center; } body.nd .stu-sheet { border-radius: 22px; } }
+@media (max-width: 720px) {
+  body.nd .rv-stu .rv-side { display: none; }
+  body.nd .rv-stu .stu-fab { display: block; }
+  body.nd .rv-stu .stu-hint { display: none; }
+}
+

@@ -203,7 +203,7 @@
 
 <script type="app-module">
 import {
-  db, requireRole, mountAccountMenu, collection, doc, setDoc, getDocs, query, where, onSnapshot, esc, $, $$, toast, showError, loadInterviewsFor, cachedCollection,
+  db, requireRole, mountAccountMenu, collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, esc, $, $$, toast, showError, loadInterviewsFor, cachedCollection,
   CRITERIA, STAGES, TYPES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes, icon, isoDay, initials,
   railHead, railFoot, tabButton, wireRailMe, setHead, writeBatch, serverTimestamp, confirmBox, pqStats, isStudentPq, passageReady, updateDoc, announceFailed, deleteField, sameUniv
 } from "./common.js";
@@ -325,9 +325,35 @@ function applyAiUrl(v) {
   aiUrl = next;
   renderPracLinks();
 }
+// ---- 내 학생부 (2026-11-20): 담임 선생님이 공개했을 때만 줄이 생김 (못 읽으면 = 공개 전 → 숨김). 읽기만 · 학생부 글은 변수에만 (브라우저 저장소에 넣지 않음)
+let myRec = null, recMod = null;
+async function loadMyRec() {
+  try { const d = await getDoc(doc(db, "records", me.studentNo)); myRec = d.exists() && d.data().studentOpen === true ? d.data() : null; }
+  catch (_) { myRec = null; }   // 공개 전에는 규칙이 막음
+  if (myRec && !recMod) { try { recMod = await import("./t-record.js"); } catch (e) { console.warn("내 학생부", e); myRec = null; } }
+  renderPracLinks();
+}
+const recSeen = () => { try { return localStorage.getItem("recSeen:" + me.studentNo) === "1"; } catch (_) { return true; } };
+async function openMyRec() {
+  await loadMyRec();   // 담임이 공개를 껐으면 열지 않음
+  if (!myRec || !recMod) return toast("담임 선생님이 학생부 공개를 껐어요.", "error");
+  try { localStorage.setItem("recSeen:" + me.studentNo, "1"); } catch (_) {}
+  renderPracLinks();
+  recMod.openStudentRecord(myRec, teacherPq(), { onCard: (id) => { recMod.closeStudentRecord(); openCardAt(id); } });
+}
+async function openCardAt(id) {
+  $("#pracHome").hidden = true; $("#pracMine").hidden = true; $("#pracHist").hidden = true; $("#pracCards").hidden = false;
+  await openCards();
+  fcStart("all");
+  const i = fcList.findIndex((q) => q.id === id);
+  if (i >= 0) { fcI = i; fcDraw(); }
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
 function renderPracLinks() {
   const cs = cardList();
+  const recN = myRec && recMod ? recMod.studentRecQs(myRec, teacherPq()).length : 0;
   const rows = [
+    ...(myRec && recMod ? [{ sub: "rec", ic: "note", t: `내 학생부${recSeen() ? "" : '<span class="badge tag-new">new</span>'}`, d: `담임 선생님이 공개했어요${recN ? ` · 선생님 질문 ${recN}곳` : ""}` }] : []),
     { sub: "cards", ic: "cards", lime: true, t: `암기 카드${cardsSeen() ? "" : '<span class="badge tag-new">new</span>'}`, d: cs.length ? `${cs.length}장 · ${cardGroups(cs)}` : "선생님이 질문을 공개하면 카드가 생겨요" },
     { sub: "mine", ic: "list", t: "내 예상질문", d: personal.length ? `${personal.length}개 · 실전 연습 전엔 꼬리질문을 가려 둬요` : "아직 올라온 질문이 없어요" },
     { sub: "hist", ic: "history", t: "지난 연습 기록", d: sessions.length ? `${sessions.length}회${sessions[0]?.startedAt ? " · 마지막 " + fmtDay(sessions[0].startedAt) : ""}` : "아직 연습 기록이 없어요" }
@@ -342,7 +368,7 @@ function renderPracLinks() {
         <span class="muted">제용이가 만든 gpt 스킬 사용하기</span></span>
       <span class="r-end">${icon("external", 18)}</span></a>`);
   $("#pracLinks").innerHTML = rows.join("");
-  $$("#pracLinks [data-sub]").forEach((b) => b.onclick = () => showPracSub(b.dataset.sub));
+  $$("#pracLinks [data-sub]").forEach((b) => b.onclick = () => b.dataset.sub === "rec" ? openMyRec() : showPracSub(b.dataset.sub));
   renderPracRecent();
 }
 // 이번 주(월요일부터) 연습 횟수 — 이미 받아 둔 연습 기록으로 센다 (읽기 없음)
@@ -452,6 +478,7 @@ function fcDraw() {
 }
 $$("[data-back]").forEach((b) => { b.innerHTML = `${icon("back", 18)} 연습`; b.onclick = () => showPracSub(""); });
 renderPracLinks();
+loadMyRec();
 
 // ---- 모의면접 일정 (달력: 다른 학생 일정도 보여서 같은 선생님·같은 장소 겹침을 피할 수 있음)
 let bookings = [], blockLabelOf = () => "", homeReady = false;

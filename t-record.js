@@ -1173,7 +1173,8 @@ export async function openRecordViewer(no, { stage = 0, preset = null, mode = "i
     <div class="rv-body">
       <nav class="rv-toc" id="rvToc"><div id="rvTocL"></div>
         <div class="rv-lg"><b>하이라이트</b><br><i class="c1"></i>1차 담임<br><i class="c2"></i>2차 교과<br><i class="c3"></i>3차 위원
-          <label class="inline-check"><input type="checkbox" id="rvOther" checked> 다른 선생님 하이라이트</label><br><b>가림</b> <span class="rv-mask">○○</span> 이름·학교${hasAi ? '<br><span class="ai-lg"></span>AI 초안 근거' : ""}</div></nav>
+          <label class="inline-check"><input type="checkbox" id="rvOther" checked> 다른 선생님 하이라이트</label>
+          <label class="inline-check" title="끄면 이 기기에 기억해요"><input type="checkbox" id="rvCoverOn"${viewPref("rvCover", 1) === 0 ? "" : " checked"}> 다른 창으로 가면 가리기</label><br><b>가림</b> <span class="rv-mask">○○</span> 이름·학교${hasAi ? '<br><span class="ai-lg"></span>AI 초안 근거' : ""}</div></nav>
       <article class="rv-doc" id="rvDoc"><div class="rv-bar" id="rvBar">
           <button type="button" class="rv-tog" id="rvTocT" aria-controls="rvToc">◂ 목차 접기</button>
           <span class="rv-grp"><button type="button" data-fs="-1" aria-label="글자 작게">가−</button><button type="button" data-fs="0" id="rvFsN" title="16으로">${V.fs}</button><button type="button" data-fs="1" aria-label="글자 크게">가+</button></span>
@@ -1194,13 +1195,15 @@ export async function openRecordViewer(no, { stage = 0, preset = null, mode = "i
     <div class="rv-pop" id="rvPop" hidden><button type="button" id="rvHl">하이라이트</button><button type="button" id="rvQ">질문 만들기</button></div>
     <div class="rv-pop" id="rvMkPop" hidden><button type="button" id="rvMkQ">질문 보기</button><button type="button" id="rvMkDel">하이라이트 지우기</button></div>
     <div class="rv-undo" id="rvUndo" hidden><span>지웠어요</span><button type="button" id="rvUndoBtn">되돌리기</button></div>
-    <div class="rv-cover" id="rvCover" hidden><div><h3>화면을 가렸어요</h3><p>다른 창으로 가면 학생부를 가려요. 5분 동안 조작이 없으면 닫혀요.</p><button type="button" class="btn-primary" id="rvUnCover">다시 보기</button></div></div>`;
+    <div class="rv-cover" id="rvCover" hidden><div><h3>화면을 가렸어요</h3><p>다른 창으로 가면 학생부를 가려요. 5분 동안 조작이 없으면 닫혀요.</p><button type="button" class="btn-primary" id="rvUnCover">다시 보기</button>
+      <p class="rv-cover-off"><button type="button" class="btn-sm" id="rvCoverOff">이 기기에서 그만 가리기</button><br><span>목차 아래 '다른 창으로 가면 가리기'로 다시 켤 수 있어요</span></p></div></div>`;
   document.body.append(ov);
   document.body.classList.add("rv-open");
   // 보호: 복사·잘라내기·오른쪽 클릭·끌어 놓기 막기, 인쇄 때 숨김, 다른 창 가림, 5분 무조작 닫힘
   ["copy", "cut", "contextmenu", "dragstart"].forEach((t) => ov.addEventListener(t, (e) => { if (!e.target.closest("input, textarea")) e.preventDefault(); }));
   const on = (tgt, t, f, o) => { tgt.addEventListener(t, f, o); V.off.push(() => tgt.removeEventListener(t, f, o)); };
-  const cover = () => { if (V) $("#rvCover", ov).hidden = false; };
+  // (2026-11-21) 가리기는 선생님이 기기마다 끌 수 있음 (rvCover: 1 켬·기본, 0 끔). 5분 무조작 닫힘은 그대로
+  const cover = () => { if (V && viewPref("rvCover", 1) !== 0) $("#rvCover", ov).hidden = false; };
   on(document, "visibilitychange", () => { if (document.hidden) cover(); });
   on(window, "blur", cover);
   on(window, "beforeprint", () => ov.classList.add("rv-print"));
@@ -1211,6 +1214,8 @@ export async function openRecordViewer(no, { stage = 0, preset = null, mode = "i
   bump();
   V.off.push(() => document.body.classList.remove("rv-open"));
   $("#rvUnCover", ov).onclick = () => { $("#rvCover", ov).hidden = true; };
+  $("#rvCoverOff", ov).onclick = () => { savePref("rvCover", 0); $("#rvCoverOn", ov).checked = false; $("#rvCover", ov).hidden = true; toast("이 기기에서는 다른 창으로 가도 가리지 않아요."); };
+  $("#rvCoverOn", ov).onchange = (e) => savePref("rvCover", e.target.checked ? 1 : 0);
   $("#rvClose", ov).onclick = async () => {
     // 저장 안 한 ② 피드백이 있으면 한 번 묻기 (임시 저장돼 있다는 안내와 함께)
     if (!prep && V?.fb) {

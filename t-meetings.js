@@ -448,7 +448,9 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
     });
   };
   // 창 안(embed): ① 물어봄 줄이 기준 — 물어봄을 끄면 빠지고, 켜면 들어옴. ②에서 [+ 질문]으로 더한 줄(rk 없음)은 ②에만
-  const syncRec = () => {
+  // clean: 빈 줄 정리 — 정리한 뒤 곧바로 drawRows() 하는 곳에서만 (창 열 때·임시 저장 불러올 때·② 탭 열 때).
+  // 임시 저장(snapshot)에서 정리하면 막 [+ 질문]으로 더해 쓰고 있는 칸이 목록에서 빠져, 다음에 다시 그릴 때 사라진다 (2026-11-23 고침)
+  const syncRec = ({ clean = false } = {}) => {
     if (!E) return;
     const list = embed.sync.rows() || [];
     const keys = new Set(list.map((x) => x.rk));
@@ -459,9 +461,9 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
       Object.assign(hit, { rk: x.rk, q: x.q, memo: x.memo || "", again: !!x.again });
       ["pend", "pq", "from"].forEach((k) => { if (x[k]) hit[k] = x[k]; });
     });
-    if (rows.length > 1) rows = rows.filter((r) => r.q.trim() || r.memo.trim() || r.rk);
+    if (clean && rows.length > 1) rows = rows.filter((r) => r.q.trim() || r.memo.trim() || r.rk);
   };
-  if (E) { if (rows.length === 1 && !rows[0].q.trim() && !rows[0].memo.trim()) rows = []; syncRec(); } else mergeFromRecord();
+  if (E) { if (rows.length === 1 && !rows[0].q.trim() && !rows[0].memo.trim()) rows = []; syncRec({ clean: true }); } else mergeFromRecord();
   let notes = null;            // 이 학생의 meetingNotes (기록 ID → 문서). 못 읽으면 null
   let noteDoc = null;          // 지금 기록의 meetingNotes
   let notesOk = !m;            // 지금 기록의 메모를 읽었는가 (새 기록은 읽을 것이 없음)
@@ -543,7 +545,7 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
     if (m && !notesOk) {
       noteDoc = notes[m.id] || null;
       notesOk = true;
-      if (!draftApplied) { rows = rowsOf(m, noteDoc); if (E) syncRec(); else mergeFromRecord(); $("#mNote", body).value = noteDoc?.note || ""; }
+      if (!draftApplied) { rows = rowsOf(m, noteDoc); if (E) syncRec({ clean: true }); else mergeFromRecord(); $("#mNote", body).value = noteDoc?.note || ""; }
       base = snapshot();
       drawRows();
       if (draftBarEl()) draftBarEl().innerHTML = "";
@@ -573,7 +575,8 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
     const f = readForm(body);
     return { studentNo: noNow(), stage: selStage.value, date: dateInput.value, type: f.type,
       teachers: $$("#tList input:checked", body).map((c) => c.value),
-      rows: rows.map(({ id, q, memo, again, from, pend, pq, rk }) => ({ id, q, memo, again, ...(from ? { from } : {}), ...(pend ? { pend } : {}), ...(pq ? { pq } : {}), ...(rk ? { rk } : {}) })),
+      // 빈 칸은 임시 저장에서만 뺀다 (화면의 rows 는 그대로)
+      rows: rows.filter((r) => r.q.trim() || r.memo.trim() || r.rk).map(({ id, q, memo, again, from, pend, pq, rk }) => ({ id, q, memo, again, ...(from ? { from } : {}), ...(pend ? { pend } : {}), ...(pq ? { pq } : {}), ...(rk ? { rk } : {}) })),
       answerSummary: f.answerSummary || "", good: f.good || "", improve: f.improve || "", nextGoal: f.nextGoal || "",
       note: $("#mNote", body).value, shared: !!f.shared, toPq: $("#mToPq", body).checked, ...(E ? { rec: embed.extra.get() } : {}) };
   };
@@ -601,7 +604,7 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
     $$("#tList input", body).forEach((c) => c.checked = (d.teachers || []).includes(c.value));
     if (E && d.rec) embed.extra.set(d.rec);   // ① 물어봄·답 메모·↻ 도 돌려놓음
     rows = (d.rows || []).map((r) => ({ id: r.id || newQid(), q: r.q || "", memo: r.memo || "", again: !!r.again, ...(r.from ? { from: r.from } : {}), ...(r.pend ? { pend: r.pend } : {}), ...(r.pq ? { pq: r.pq } : {}), ...(r.rk ? { rk: r.rk } : {}) }));
-    syncRec();
+    syncRec({ clean: true });
     ["answerSummary", "good", "improve"].forEach((k) => { $(`textarea[name=${k}]`, body).value = d[k] || ""; });
     $("input[name=nextGoal]", body).value = d.nextGoal || "";
     $("#mNote", body).value = d.note || "";
@@ -787,7 +790,7 @@ export function openMeetingForm({ id = null, studentNo = "", preset = null, from
     } catch (err) { showError(err, "기록 삭제"); }
   });
   return {
-    show() { syncRec(); drawRows(); },                        // ② 탭을 열 때마다 ① 물어봄과 맞춤
+    show() { syncRec({ clean: true }); drawRows(); },                        // ② 탭을 열 때마다 ① 물어봄과 맞춤
     touch() { onEdit(); },                                    // ① 에서 물어봄·메모를 바꾸면 임시 저장
     flush() { if (draftTimer) { clearTimeout(draftTimer); saveDraftNow(); } },   // 창을 닫거나 차수를 바꾸기 전에 기다리던 임시 저장을 바로 (손대지 않았으면 그대로 — 남아 있는 임시 저장을 지우지 않게)
     dirty() { return !finished && !same(snapshot(), base); },

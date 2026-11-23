@@ -13,7 +13,7 @@ import { openStudent } from "./t-students.js";
 import { openMeetingForm, recordWrittenFor } from "./t-meetings.js";
 import { mountRecButtons } from "./t-record.js";
 import { openBookingRecord, gotoSchedule, quickBooking } from "./t-schedule.js";
-import { BOOK_STAGES, stageTeachers, ACTIVE, DONE } from "./schedule.js";
+import { BOOK_STAGES, stageTeachers, stageLeft, ACTIVE, DONE } from "./schedule.js";
 import { watchAnnounce, announceHero, bindAnnounce, refreshPopup } from "./t-announce.js";
 
 const WIDE = window.matchMedia("(min-width: 721px)");
@@ -71,7 +71,9 @@ function collect() {
     for (const sg of BOOK_STAGES) {
       const ts = stageTeachers(s, sg.key);
       if (!ts.length || (me && !ts.includes(me))) continue;
-      if (!(S.bookings || []).some((b) => b.studentNo === s.studentNo && b.stage === sg.key && ACTIVE(b.status))) missing.push({ s, sg });
+      // 3차는 선생님마다 따로 센다 (한 분하고만 한 면접은 그 선생님 몫)
+      const left = stageLeft(s, sg.key, (S.bookings || []).filter((b) => b.studentNo === s.studentNo && ACTIVE(b.status)));
+      if (me ? left.includes(me) : left.length) missing.push({ s, sg });
     }
   }
   // 오늘 면접 전체 (완료한 것도 '기록 완료'로 보여 준다)
@@ -187,9 +189,11 @@ function wideHtml({ me, now, mine, scope, todayAll, noRecord, pending, need, mis
   // 담당 학생 진행 (차수별 점)
   const tsOf = (s, k) => stageTeachers(s, k);
   const inStage = scope.filter((s) => { const t = tsOf(s, progStage); return t.length && (!me || t.includes(me)); });
+  // 3차는 두 선생님이 따로 할 수 있어서 내가 들어간 면접·기록만 본다
+  const mineRec = (r) => !(progStage === 3 && me) || !(r.teachers || []).length || r.teachers.includes(me);
   const stateOf = (s) => {
-    if (S.meetings.some((m) => m.studentNo === s.studentNo && Number(m.stage) === progStage && !m.planned)) return "f";
-    const bk = (S.bookings || []).filter((b) => b.studentNo === s.studentNo && b.stage === progStage && ACTIVE(b.status));
+    if (S.meetings.some((m) => m.studentNo === s.studentNo && Number(m.stage) === progStage && !m.planned && mineRec(m))) return "f";
+    const bk = (S.bookings || []).filter((b) => b.studentNo === s.studentNo && b.stage === progStage && ACTIVE(b.status) && mineRec(b));
     if (bk.some((b) => DONE(b))) return "f";
     return bk.length ? "t" : "";
   };
@@ -321,7 +325,8 @@ function renderRows(scope) {
   const noSched = (s) => BOOK_STAGES.some((sg) => {
     const ts = stageTeachers(s, sg.key);
     if (!ts.length || (me && !ts.includes(me))) return false;
-    return !(S.bookings || []).some((b) => b.studentNo === s.studentNo && b.stage === sg.key && ACTIVE(b.status));
+    const left = stageLeft(s, sg.key, (S.bookings || []).filter((b) => b.studentNo === s.studentNo && ACTIVE(b.status)));
+    return me ? left.includes(me) : left.length > 0;
   });
 
   let list = scope.filter((s) =>

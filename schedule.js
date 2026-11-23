@@ -93,6 +93,18 @@ export function stageTeachers(st, stage) {
   const a = st?.assign || {};
   return ({ 1: [a.s1], 2: [a.s2], 3: [a.s3a, a.s3b] }[stage] || []).filter(Boolean);
 }
+/** 이 차수에서 아직 일정(또는 기록)이 없는 선생님 이름들.
+ *  3차는 두 선생님이 따로 할 수 있어서 선생님마다 센다 — 한 분하고만 한 면접은 그 선생님 몫.
+ *  recs: 이 학생의 일정(진행 중인 것만)·기록 — stage·teachers 를 본다. 1·2차는 하나라도 있으면 끝 (예전과 같음) */
+export function stageLeft(st, stage, recs) {
+  const k = Number(stage), ts = stageTeachers(st, k);
+  const list = (recs || []).filter((r) => Number(r.stage) === k);
+  if (!list.length) return ts;
+  if (k !== 3 || ts.length < 2) return [];
+  // 배정이 바뀌어 지금 선생님이 아무도 없는 예전 일정·기록은 3차 전체를 한 것으로 본다
+  if (list.some((r) => !(r.teachers || []).some((t) => ts.includes(t)))) return [];
+  return ts.filter((t) => !list.some((r) => (r.teachers || []).includes(t)));
+}
 const who = (k) => k === "student" ? "학생" : k === "관리자" ? "관리자" : `${k} 선생님`;
 
 /** 교실이 그 날·그 칸에 쓸 수 없으면 안내 문구, 쓸 수 있으면 "" */
@@ -183,11 +195,27 @@ export function mountSchedule(root, opts) {
     week: mondayOf(new Date()), dayIdx: Math.min((new Date().getDay() + 6) % 7, 4),
     view: window.innerWidth < 720 ? "day" : "week", weekend: false,
     days: {}, avail: {}, bookings: [],
-    fTeacher: "", fRoom: "", fMine: false, shadeStage: 1
+    fTeacher: "", fRoom: "", fMine: false, shadeStage: 1, shadeWith: ""
   };
   const students = () => isStudent ? [opts.student] : (opts.getStudents?.() || []);
   const studentByNo = (no) => students().find((s) => s.studentNo === no);
   const staffNames = () => [...new Set((opts.getStaff?.() || []).map((t) => t.name).filter(Boolean))];
+  // 학생 빗금 기준: 차수별 + (3차 선생님이 두 분이면) 한 분씩
+  function shadeOptions() {
+    return BOOK_STAGES.map((sg) => {
+      const ts = isStudent ? stageTeachers(opts.student, sg.key) : [];
+      const on = st.shadeStage === sg.key;
+      return `<option value="${sg.key}" ${on && !st.shadeWith ? "selected" : ""}>${sg.short} 선생님 기준</option>` +
+        (sg.key === 3 && ts.length > 1 ? ts.map((t) => `<option value="3:${esc(t)}" ${on && st.shadeWith === t ? "selected" : ""}>3차 ${esc(t)} 선생님만</option>`).join("") : "");
+    }).join("");
+  }
+  function setShade(v) {
+    const [k, ...rest] = String(v).split(":");
+    st.shadeStage = Number(k) || 1;
+    const t = rest.join(":");
+    st.shadeWith = st.shadeStage === 3 && stageTeachers(opts.student, 3).includes(t) ? t : "";
+    const sel = $("#scShade", root); if (sel) sel.value = st.shadeWith ? `3:${st.shadeWith}` : String(st.shadeStage);
+  }
 
   root.innerHTML = `
     <div id="scMine"></div>
@@ -204,7 +232,7 @@ export function mountSchedule(root, opts) {
           <div class="seg-mini"><button data-view="week">주</button><button data-view="day">일</button></div>
         </div>
         <div class="row sc-filt">
-          ${isStudent ? `<select id="scShade" title="빗금 칸 = 이 차수 선생님이 안 되는 시간">${BOOK_STAGES.map((s) => `<option value="${s.key}">${s.short} 선생님 기준</option>`).join("")}</select>` : `
+          ${isStudent ? `<select id="scShade" title="빗금 칸 = 이 차수 선생님이 안 되는 시간">${shadeOptions()}</select>` : `
           <select id="scTeacher"><option value="">모든 선생님</option></select>
           <select id="scRoom"><option value="">모든 장소</option></select>
           <label class="inline-check"><input type="checkbox" id="scMineOnly"> <span class="lg-only">내 일정만</span><span class="sm-only">나의 일정</span></label>`}
@@ -225,7 +253,7 @@ export function mountSchedule(root, opts) {
   $("#scToday", root).onclick = () => { st.week = mondayOf(new Date()); st.dayIdx = Math.min((new Date().getDay() + 6) % 7, 6); refreshDays(); };
   $$("[data-view]", root).forEach((b) => b.onclick = () => { st.view = b.dataset.view; render(); });
   $("#scWeekend", root).onchange = (e) => { st.weekend = e.target.checked; refreshDays(); };
-  if (isStudent) $("#scShade", root).onchange = (e) => { st.shadeStage = Number(e.target.value); render(); };
+  if (isStudent) $("#scShade", root).onchange = (e) => { setShade(e.target.value); render(); };
   else {
     $("#scTeacher", root).onchange = (e) => { st.fTeacher = e.target.value; render(); };
     $("#scRoom", root).onchange = (e) => { st.fRoom = e.target.value; render(); };
@@ -341,9 +369,23 @@ export function mountSchedule(root, opts) {
         const ts = stageTeachers(me0, sg.key);
         const list = st.bookings.filter((b) => b.stage === sg.key && ACTIVE(b.status)).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
         const cur = list[0];
+        // 3차 선생님 두 분이 따로 하는 경우: 일정마다 한 줄 + 아직 일정이 없는 선생님 줄
+        const left = stageLeft(me0, sg.key, list);
+        const split = cur && sg.key === 3 && ts.length > 1 && (left.length || list.some((b) => (b.teachers || []).length < ts.length));
         let body, tone = "", tag = "";
         if (!ts.length) { body = `<div class="st-when muted">배정된 선생님이 없어요</div>`; tag = "배정 없음"; }
         else if (!cur) { body = `<div class="st-when muted">아직 신청하지 않았어요</div><div class="st-foot"><button class="btn-sm btn-primary" data-new="${sg.key}">달력에서 신청 ${icon("arrow", 14)}</button></div>`; tag = "신청 전"; }
+        else if (split) {
+          const allDone = !left.length && list.every(DONE);
+          tone = allDone ? "done" : "now";
+          tag = left.length ? "한 분 남음" : allDone ? "완료" : list.some((b) => b.status === "requested") ? "요청 중" : "확정";
+          body = list.map((b) => `<div class="st-part"><div class="st-pt"><div class="st-pw">${esc((b.teachers || []).join(" · "))} 선생님 · ${DONE(b) ? "완료" : b.status === "confirmed" ? "확정" : "요청 중"}</div>
+              <div class="st-when"><b>${timeText(b)}</b></div><div class="st-room">${esc(b.room || "장소 미정")}${b.status === "requested" ? ` · 대기: ${esc(waiting(b))}` : ""}</div>
+              ${needMine().some((x) => x.id === b.id) ? '<div><span class="badge badge-red">내 응답 필요</span></div>' : ""}</div>
+              <button class="btn-sm" data-bid="${b.id}">자세히</button></div>`).join("")
+            + left.map((t) => `<div class="st-part"><div class="st-pt"><div class="st-pw">${esc(t)} 선생님</div><div class="st-when">아직 신청하지 않았어요</div></div>
+              <button class="btn-sm btn-primary" data-new="3" data-with="${esc(t)}">신청 ${icon("arrow", 14)}</button></div>`).join("");
+        }
         else {
           tone = DONE(cur) ? "done" : "now";
           tag = DONE(cur) ? "완료" : cur.status === "confirmed" ? "확정" : "요청 중";
@@ -367,7 +409,10 @@ export function mountSchedule(root, opts) {
       for (const s of myStudents) for (const sg of BOOK_STAGES) {
         const ts = stageTeachers(s, sg.key);
         if (!ts.length || (!isAdmin && !ts.includes(me))) continue;
-        if (!st.bookings.some((b) => b.studentNo === s.studentNo && b.stage === sg.key && ACTIVE(b.status))) missing.push({ s, sg });
+        const left = stageLeft(s, sg.key, st.bookings.filter((b) => b.studentNo === s.studentNo && ACTIVE(b.status)));
+        // 3차는 선생님마다 따로 센다 (관리자는 남은 선생님 모두, 선생님은 자기 몫만)
+        const who = isAdmin ? left : left.filter((t) => t === me);
+        if (who.length) missing.push({ s, sg, who: sg.key === 3 && ts.length > 1 && left.length < ts.length ? who : null });
       }
       box.innerHTML = `<div class="grid grid-2" style="align-items:start;margin-bottom:14px">
         <div class="card sc-pend"><div class="row"><span class="h-ic">${icon("clock", 17)}</span><h3 style="margin:0">처리할 요청</h3>${pend.length ? `<span class="dot-new">${pend.length}</span>` : ""}</div>
@@ -378,8 +423,8 @@ export function mountSchedule(root, opts) {
             <div style="margin-top:6px">${mineDone.map((b) => bookingLine(b)).join("")}</div>
             <div class="muted" style="font-size:.82rem">되돌리려면 눌러서 '완료 취소'</div></details>` : ""}
           <details style="margin-top:10px"><summary class="muted">일정이 없는 ${isAdmin ? "" : "담당 "}학생·차수 ${missing.length}건</summary>
-            <div style="max-height:260px;overflow-y:auto;margin-top:6px">${missing.map(({ s, sg }) => `<div class="row sc-miss"><span class="sc-chip s${sg.key}">${sg.short}</span>${esc(s.name)} <span class="muted">${esc(s.studentNo)}</span><div class="spacer"></div>
-              <button class="btn-sm" data-newfor="${esc(s.studentNo)}" data-stage="${sg.key}">일정 잡기</button></div>`).join("") || '<div class="muted">모두 신청됨</div>'}</div>
+            <div style="max-height:260px;overflow-y:auto;margin-top:6px">${missing.map(({ s, sg, who }) => `<div class="row sc-miss"><span class="sc-chip s${sg.key}">${sg.short}</span>${esc(s.name)} <span class="muted">${esc(s.studentNo)}${who ? ` · ${esc(who.join("·"))} 선생님 남음` : ""}</span><div class="spacer"></div>
+              <button class="btn-sm" data-newfor="${esc(s.studentNo)}" data-stage="${sg.key}"${who && who.length === 1 ? ` data-with="${esc(who[0])}"` : ""}>일정 잡기</button></div>`).join("") || '<div class="muted">모두 신청됨</div>'}</div>
           </details></div></div>`;
     }
     $$("[data-bid]", box).forEach((el) => {
@@ -388,11 +433,11 @@ export function mountSchedule(root, opts) {
       if (el.tagName !== "BUTTON") el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetail(el.dataset.bid); } };
     });
     $$("[data-new]", box).forEach((el) => el.onclick = () => {
-      st.shadeStage = Number(el.dataset.new); if ($("#scShade", root)) $("#scShade", root).value = el.dataset.new;
+      setShade(el.dataset.with ? `3:${el.dataset.with}` : el.dataset.new);
       render(); $("#scGrid", root).scrollIntoView({ behavior: "smooth", block: "start" });
-      toast("달력에서 흰 칸을 눌러 신청하세요.");
+      toast(el.dataset.with ? `달력에서 흰 칸을 눌러 ${el.dataset.with} 선생님과 신청하세요.` : "달력에서 흰 칸을 눌러 신청하세요.");
     });
-    $$("[data-newfor]", box).forEach((el) => el.onclick = () => openForm({ studentNo: el.dataset.newfor, stage: Number(el.dataset.stage), date: isoDay(), block: "" }));
+    $$("[data-newfor]", box).forEach((el) => el.onclick = () => openForm({ studentNo: el.dataset.newfor, stage: Number(el.dataset.stage), date: isoDay(), block: "", withT: el.dataset.with || "" }));
   }
 
   function busyFor(names, date, blockKey) {
@@ -400,7 +445,7 @@ export function mountSchedule(root, opts) {
     return names.filter((t) => { const av = st.avail[t]; return av && ((av.weekly?.[dow] || []).includes(blockKey) || (av.dates?.[date] || []).includes(blockKey)); });
   }
   function shadeNames() {
-    if (isStudent) return stageTeachers(opts.student, st.shadeStage);
+    if (isStudent) return st.shadeStage === 3 && st.shadeWith ? [st.shadeWith] : stageTeachers(opts.student, st.shadeStage);
     if (st.fTeacher) return [st.fTeacher];
     return isAdmin && me === "관리자" ? [] : [me];
   }
@@ -434,14 +479,17 @@ export function mountSchedule(root, opts) {
     }).join("")}</tr></thead><tbody>${st.cfg.blocks.map((blk) => `<tr><th class="sc-blk">${esc(blk.label)}<small>${blk.start}–${blk.end}</small></th>${shown.map((d) => {
       const past = d < today;
       const busy = names.length ? busyFor(names, d, blk.key) : [];
+      // 3차처럼 선생님이 두 분이면 두 분 모두 안 될 때만 빗금 (한 분만 되면 그분과 신청할 수 있음)
+      const allBusy = busy.length && busy.length === names.length;
+      const tip = !busy.length ? "" : allBusy ? `${busy.join(", ")} 선생님 불가` : `${busy.join(", ")} 선생님 불가 · ${names.filter((t) => !busy.includes(t)).join(", ")} 선생님만 가능`;
       const items = cellItems(d, blk);
-      return `<td class="sc-cell ${past ? "past" : ""} ${busy.length ? "busy" : ""}" data-date="${d}" data-block="${blk.key}" ${busy.length ? `title="${esc(busy.join(", "))} 선생님 불가"` : ""}>
+      return `<td class="sc-cell ${past ? "past" : ""} ${allBusy ? "busy" : ""}" data-date="${d}" data-block="${blk.key}" ${tip ? `title="${esc(tip)}"` : ""}>
         ${items.map(([id, x]) => chipHtml(id, x)).join("")}${!past ? '<span class="sc-plus">+</span>' : ""}</td>`;
     }).join("")}</tr>`).join("")}</tbody></table>`;
     $$(".sc-cell", root).forEach((td) => td.onclick = (e) => {
       if (e.target.closest("[data-chip]")) return;
       if (td.classList.contains("past") && !isAdmin) return toast("지난 날짜에는 일정을 잡을 수 없어요.", "error");
-      openForm({ date: td.dataset.date, block: td.dataset.block, stage: isStudent ? st.shadeStage : undefined });
+      openForm({ date: td.dataset.date, block: td.dataset.block, stage: isStudent ? st.shadeStage : undefined, withT: isStudent && st.shadeStage === 3 ? st.shadeWith : "" });
     });
     $$("[data-chip]", root).forEach((el) => el.onclick = () => {
       const id = el.dataset.chip;
@@ -464,7 +512,7 @@ export function mountSchedule(root, opts) {
   const close = () => { $("#modal").hidden = true; };
 
   // 신청·제안 폼 (새 일정 또는 시간 변경)
-  function openForm({ booking = null, date, block, stage, studentNo }) {
+  function openForm({ booking = null, date, block, stage, studentNo, withT = "" }) {
     const b0 = booking;
     const canPickStudent = !isStudent && !b0;
     const stuList = isStudent ? [opts.student] : students().filter((s) => isAdmin || BOOK_STAGES.some((sg) => stageTeachers(s, sg.key).includes(me)));
@@ -479,6 +527,7 @@ export function mountSchedule(root, opts) {
         <div class="field"><label>날짜 *</label><input type="date" name="date" value="${esc(b0?.date || date || isoDay())}" required></div>
         <div class="field"><label>칸 (교시) *</label><select name="block">${st.cfg.blocks.map((x) => `<option value="${x.key}" ${x.key === (b0?.block || block) ? "selected" : ""}>${esc(x.label)} (${x.start}–${x.end})</option>`).join("")}</select></div>
       </div>
+      <div class="field" id="bkWithF" hidden><label>함께할 선생님</label><select name="with"></select><div id="bkWithHint" class="sc-stage-hint" hidden></div></div>
       <div class="field"><label>시간 *</label><div id="bkSlots" class="sc-slots"></div></div>
       <div class="field"><label>장소</label><select name="room"></select>
         <input name="roomOther" placeholder="장소 직접 입력 (예: 3-2 교실)" style="margin-top:6px" hidden>
@@ -501,7 +550,11 @@ export function mountSchedule(root, opts) {
       const sel = f("stage");
       const want = b0?.stage || stageWant;
       const d = f("date")?.value, bk = f("block")?.value;
-      const busyStage = (k) => isStudent && !b0 && s && d && bk ? busyFor(stageTeachers(s, k), d, bk).length > 0 : false;
+      const busyStage = (k) => {
+        if (!(isStudent && !b0 && s && d && bk)) return false;
+        const ts = stageTeachers(s, k);
+        return ts.length > 0 && busyFor(ts, d, bk).length === ts.length;
+      };
       sel.innerHTML = BOOK_STAGES.map((sg) => {
         const ts = s ? stageTeachers(s, sg.key) : [];
         const off = ts.length && busyStage(sg.key);
@@ -524,6 +577,45 @@ export function mountSchedule(root, opts) {
       }
     }
     const ts0 = (k) => { const s = curStudent(); return s ? stageTeachers(s, k).length : 0; };
+    // 3차 선생님이 두 분이면 '두 분 함께 / 한 분만' 고르기. 처음엔 아직 일정이 없는 선생님 쪽,
+    // 고른 시간에 한 분이 안 되면 되는 분만 자동으로 (직접 고른 뒤에는 그대로 둠)
+    let withPick = withT || "", withPicked = !!withT;
+    function fillWith() {
+      const box = $("#bkWithF", body), sel = f("with"), hint = $("#bkWithHint", body);
+      const s = curStudent(), stageN = Number(f("stage").value);
+      const ts = s ? stageTeachers(s, stageN) : [];
+      if (b0 || stageN !== 3 || ts.length < 2) { box.hidden = true; sel.innerHTML = ""; hint.hidden = true; return; }
+      box.hidden = false;
+      const d = f("date").value, bk = f("block").value;
+      const busy = d && bk ? busyFor(ts, d, bk) : [];
+      const left = stageLeft(s, 3, st.bookings.filter((b) => b.studentNo === s.studentNo && ACTIVE(b.status)));
+      const staffOnly = !isStudent && !isAdmin;   // 선생님은 자기가 들어가는 것만
+      const list = [{ v: "*", names: ts, t: `두 분 함께 (${ts.join(" · ")})` }, ...ts.map((t) => ({ v: t, names: [t], t: `${t} 선생님만` }))];
+      list.forEach((o) => {
+        o.busy = o.names.filter((t) => busy.includes(t));
+        o.ok = (!staffOnly || o.names.includes(me)) && !(isStudent && o.busy.length);
+        const done = o.v !== "*" && !left.includes(o.v) && left.length < ts.length;
+        o.label = o.t + (o.busy.length ? ` · ${o.v === "*" ? o.busy.join("·") + " 선생님 " : ""}이 시간 불가` : "") + (done ? " · 이미 일정 있음" : "");
+      });
+      let want = withPick || (left.length === 1 ? left[0] : "*");
+      let moved = "";
+      if (!withPicked && want === "*" && busy.length === 1) {
+        const other = ts.find((t) => !busy.includes(t));
+        if (list.find((o) => o.v === other)?.ok) { moved = other; want = other; }
+      }
+      if (!list.find((o) => o.v === want)?.ok) want = list.find((o) => o.ok)?.v || want;
+      sel.innerHTML = list.map((o) => `<option value="${esc(o.v)}" ${o.ok ? "" : "disabled"} ${o.v === want ? "selected" : ""}>${esc(o.label)}</option>`).join("");
+      sel.value = want;
+      hint.hidden = !moved;
+      hint.innerHTML = moved ? `${esc(busy[0])} 선생님이 이 시간에 안 돼서 <b>${esc(moved)} 선생님만</b> 골라 두었어요. 두 분이 따로 면접해도 돼요.` : "";
+    }
+    // 이 일정에 들어갈 선생님 (시간 변경 제안은 원래 일정 그대로)
+    function pickTeachers(s, stageN) {
+      if (b0) return [...(b0.teachers || [])];
+      const ts = s ? stageTeachers(s, stageN) : [];
+      const v = f("with")?.value;
+      return stageN === 3 && ts.length > 1 && v && v !== "*" && ts.includes(v) ? [v] : ts;
+    }
     function fillRooms() {
       const sel = f("room");
       const cur = b0?.room || "";
@@ -561,7 +653,7 @@ export function mountSchedule(root, opts) {
       const stageN = Number(f("stage").value);
       const blk = st.cfg.blocks.find((x) => x.key === f("block").value);
       const d = f("date").value;
-      const teachers = s ? stageTeachers(s, stageN) : [];
+      const teachers = pickTeachers(s, stageN);
       $("#bkTeachers", body).textContent = teachers.length ? `상대: ${teachers.join(", ")} 선생님${isStudent ? "" : " · " + (s?.name || "") + " 학생"}` : "";
       markRooms();
       if (!d || !blk) return;
@@ -587,10 +679,11 @@ export function mountSchedule(root, opts) {
       $("#bkSave", body).disabled = !teachers.length || !chosen || (cs.some((x) => x.hard) && !(isAdmin && f("force")?.checked));
     }
 
-    if (f("studentNo")) f("studentNo").onchange = () => { sNo = f("studentNo").value; fillStages(); check(); };
-    fillStages(); fillRooms();
-    f("stage").onchange = () => { stageWant = Number(f("stage").value) || stageWant; chosen = null; fillStages(); check(); };
-    ["date", "block"].forEach((n) => f(n).onchange = () => { chosen = null; fillStages(); check(); });
+    if (f("studentNo")) f("studentNo").onchange = () => { sNo = f("studentNo").value; withPick = ""; withPicked = false; fillStages(); fillWith(); check(); };
+    fillStages(); fillWith(); fillRooms();
+    f("stage").onchange = () => { stageWant = Number(f("stage").value) || stageWant; chosen = null; fillStages(); fillWith(); check(); };
+    ["date", "block"].forEach((n) => f(n).onchange = () => { chosen = null; fillStages(); fillWith(); check(); });
+    f("with").onchange = () => { withPick = f("with").value; withPicked = true; chosen = null; check(); };
     f("roomOther").oninput = () => check();
     if (f("force")) f("force").onchange = check;
     check();
@@ -601,7 +694,7 @@ export function mountSchedule(root, opts) {
       if (!s) return toast("학생을 선택하세요.", "error");
       if (f("room").value === "__other" && !f("roomOther").value.trim()) return toast("장소를 입력하세요.", "error");
       const stageN = Number(f("stage").value);
-      const teachers = stageTeachers(s, stageN);
+      const teachers = pickTeachers(s, stageN);
       const blk = st.cfg.blocks.find((x) => x.key === f("block").value);
       const force = isAdmin && f("force")?.checked;
       const need = [...teachers, "student"];
@@ -892,9 +985,8 @@ export function mountSchedule(root, opts) {
 
   refresh();
   // 학생 홈에서 '시간 신청하기'를 누르면 해당 차수 기준으로 달력을 맞춰 준다
-  function focusStage(key) {
-    st.shadeStage = Number(key) || 1;
-    const sel = $("#scShade", root); if (sel) sel.value = String(st.shadeStage);
+  function focusStage(key, withT = "") {
+    setShade(withT ? `3:${withT}` : String(Number(key) || 1));
     render();
     root.scrollIntoView({ behavior: "smooth", block: "start" });
     toast("달력에서 흰 칸의 ＋ 를 눌러 신청하세요.");

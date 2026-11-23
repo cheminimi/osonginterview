@@ -1006,6 +1006,14 @@ body.nd .sc-stage.now .st-num { background: #fff; color: var(--blue-deep); }
 body.nd .sc-stage.now .st-tag { background: var(--black); color: var(--lime); }
 body.nd .sc-stage.now .st-foot .btn-sm { background: #fff; border-color: #fff; color: var(--black); }
 body.nd .sc-stage .btn-primary { gap: 6px; }
+/* 3차 선생님 두 분이 따로 할 때: 선생님(일정)마다 한 줄 */
+body.nd .sc-stage .st-part { display: flex; align-items: center; gap: 10px; border-top: 1px dashed rgba(0,0,0,.14); padding-top: 8px; margin-top: 6px; grid-column: 1 / -1; }
+body.nd .sc-stage .st-part .st-pt { flex: 1; min-width: 0; }
+body.nd .sc-stage .st-part .st-when { margin-top: 2px; }
+body.nd .sc-stage .st-part > button { margin: 0; flex: none; }
+body.nd .sc-stage .st-pw { font-size: .8rem; font-weight: 600; }
+body.nd .sc-stage.now .st-part { border-top-color: rgba(255,255,255,.4); }
+body.nd .sc-stage.now .st-part > .btn-sm:not(.btn-primary) { background: #fff; border-color: #fff; color: var(--black); }
 
 /* 선생님: 처리할 요청 · 다가오는 확정 일정 */
 body.nd #scMine .card h3 { font-size: 1.05rem; }

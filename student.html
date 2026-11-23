@@ -207,7 +207,7 @@ import {
   CRITERIA, STAGES, TYPES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes, icon, isoDay, initials,
   railHead, railFoot, tabButton, wireRailMe, setHead, writeBatch, serverTimestamp, confirmBox, pqStats, isStudentPq, passageReady, updateDoc, announceFailed, deleteField, sameUniv
 } from "./common.js";
-import { mountSchedule, BOOK_STAGES, stageTeachers, ACTIVE, DONE, STATUS } from "./schedule.js";
+import { mountSchedule, BOOK_STAGES, stageTeachers, stageLeft, ACTIVE, DONE, STATUS } from "./schedule.js";
 import { isBoothSession, boothViewHtml, aiReportState, replaceAiReport } from "./booth-view.js";
 import { mathHtml } from "./math.js";
 import { mountBoothBooking, mountSchedSwitch } from "./booth-booking.js";
@@ -762,7 +762,7 @@ function renderHome() {
   // 두 화면 공통 연결
   $$("[data-go]", box).forEach((b) => b.onclick = () => switchTab(b.dataset.go));
   $$("[data-mode]", box).forEach((b) => b.onclick = () => location.href = `interview.html?mode=${b.dataset.mode}`);
-  $$("[data-stage]", box).forEach((b) => b.onclick = () => { toInterview(); switchTab("schedule"); sched.focusStage(Number(b.dataset.stage)); });
+  $$("[data-stage]", box).forEach((b) => b.onclick = () => { toInterview(); switchTab("schedule"); sched.focusStage(Number(b.dataset.stage), b.dataset.with || ""); });
   $$("[data-rv]", box).forEach((b) => b.onclick = () => openReview(b.dataset.rv));
   $$("[data-rvlater]", box).forEach((b) => b.onclick = () => { snooze(b.dataset.rvlater); renderHome(); });
   // '오늘' 카드 · 1차 발표일
@@ -921,6 +921,9 @@ function stageStates() {
     const bk = all.find((b) => !DONE(b));       // 아직 안 본 면접
     const bkDone = all.find((b) => DONE(b));    // 선생님이 완료 처리한 면접
     const teachers = stageTeachers(me, sg.key);
+    // 3차 선생님 두 분이 따로 하는데 한 분과는 아직 일정이 없으면 '남음'
+    const left = stageLeft(me, sg.key, [...all, ...meetings]);
+    if (left.length && left.length < teachers.length && !bk) return { sg, teachers, cls: "now", label: `${left.join("·")} 선생님 남음`, withT: left[0] };
     if (done) return { sg, teachers, cls: "done", label: `완료 · ${fmtDay(done.date).replace(/\(.\)$/, "")}` };
     if (bkDone && !bk) return { sg, teachers, cls: "done", label: `완료 · ${fmtDay(bkDone.date).replace(/\(.\)$/, "")}` };
     if (bk) {
@@ -1025,7 +1028,7 @@ function homeWide({ today, up }) {
         <div class="ch2"><span class="ic">${icon("trend", 19)}</span><h3>나의 모의면접 여정</h3></div>
         <div class="sub2"><span>1 · 2 · 3차 모의면접</span><span>${doneN} / ${st.length}</span></div>
         <ol class="vsteps">${st.map((x) => `<li class="${x.cls}"><span class="dot">${x.cls === "done" ? icon("check", 15) : ""}</span>
-          <div><button type="button" class="stp" data-stage="${x.sg.key}" title="${esc(x.sg.label)} 일정 보기"><b>${esc(x.sg.label)}</b><small>${esc(x.label)}</small></button>${x === firstOpen ? `<button type="button" class="ask" data-stage="${x.sg.key}">신청하기 →</button>` : ""}</div></li>`).join("")}</ol>
+          <div><button type="button" class="stp" data-stage="${x.sg.key}"${x.withT ? ` data-with="${esc(x.withT)}"` : ""} title="${esc(x.sg.label)} 일정 보기"><b>${esc(x.sg.label)}</b><small>${esc(x.label)}</small></button>${x === firstOpen ? `<button type="button" class="ask" data-stage="${x.sg.key}">신청하기 →</button>` : ""}</div></li>`).join("")}</ol>
       </section>
 
       <section class="h-card fb">${fbCardHtml()}</section>
@@ -1051,10 +1054,12 @@ function homeNarrow({ today, up }) {
   BOOK_STAGES.forEach((sg) => {
     const ts = stageTeachers(me, sg.key);
     if (!ts.length) return;
-    if (bookings.some((b) => b.stage === sg.key && ACTIVE(b.status))) return;
-    if (meetings.some((m) => Number(m.stage) === sg.key)) return;
-    todos.push({ ic: "calendar", t: `${sg.label}을 아직 신청하지 않았어요`, d: `${ts.join(" · ")} 선생님`,
-      cta: "신청", attr: `data-stage="${sg.key}"` });
+    // 3차는 선생님마다 따로 — 한 분과만 했으면 남은 분과 신청
+    const left = stageLeft(me, sg.key, [...bookings.filter((b) => ACTIVE(b.status)), ...meetings]);
+    if (!left.length) return;
+    const part = left.length < ts.length;
+    todos.push({ ic: "calendar", t: part ? `${sg.label} — ${left.join("·")} 선생님과 아직 신청하지 않았어요` : `${sg.label}을 아직 신청하지 않았어요`, d: `${left.join(" · ")} 선생님`,
+      cta: "신청", attr: `data-stage="${sg.key}"${part ? ` data-with="${esc(left[0])}"` : ""}` });
   });
   // 2) 새로 온 피드백
   const nf = unseenFb().length;

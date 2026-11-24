@@ -1512,6 +1512,11 @@ body.nd .pq-note { font-size: .78rem; color: var(--ink-3); text-align: right; ma
 .sc-seg[hidden] { display: none; }
 body.nd .apphead #scSub { flex: none; margin: 0; }
 .sc-top { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+/* (2026-11-24) 선생님 알약이 4칸이 되어 좁은 PC(확대 175% 등)에서 머리줄이 넘침 → 칸 폭·여백만 줄임 */
+@media (min-width: 721px) and (max-width: 900px) {
+  .sc-seg { min-width: calc(104px * var(--n, 2)); }
+  .sc-seg button { padding: 8px 10px; }
+}
 @media (max-width: 720px) {
   body.nd .apphead:has(#scSub:not([hidden])) { flex-wrap: wrap; }
   body.nd .apphead #scSub:not([hidden]) { order: 5; width: 100%; }
@@ -1592,6 +1597,35 @@ body.nd .apphead #scSub { flex: none; margin: 0; }
   .bb-who:has(.bb-use) { flex-wrap: wrap; border-radius: 14px; }
   .bb-who .bb-use { order: 5; }
   .bb-who:has(.bb-use) button { order: 6; }
+}
+/* 자습실 예약 (2026-11-24, study-booking.js) — 부스 예약 표(bb-*)를 그대로 쓰고 열은 하나, 줄은 교시마다 */
+.sr .bb-row { grid-template-columns: 128px minmax(0, 1fr); }
+.sr .bb-tm b { color: var(--ink); font-size: .82rem; }
+.sr .bb-s { gap: 4px; }
+.sr .bb-s .n { font-weight: 500; color: var(--ink-3); }
+.sr .bb-s.me .n { color: inherit; opacity: .7; }
+.sr .bb-s.me.start { border-bottom-left-radius: 3px; border-bottom-right-radius: 3px; }
+.sr .bb-s.me.mid { border-radius: 3px; }
+.sr .bb-s.me.end { border-top-left-radius: 3px; border-top-right-radius: 3px; }
+.sr .bb-s.me { cursor: pointer; }
+.sr .bb-who.cont { background: var(--lime-soft, var(--accent-faint)); }
+.sr .bb-who .bb-use { margin-right: 2px; }
+.sr-in { font-size: .76rem; font-weight: 700; white-space: nowrap; }
+.sr-in.go { background: var(--black, var(--ink)); border-color: var(--black, var(--ink)); color: #fff; }
+.sr-in.ok { color: var(--ok); background: var(--ok-bg); border-radius: 99px; padding: 4px 10px; }
+.sr-in.wait { color: var(--ink-3); font-weight: 500; }
+.sr-opts { display: grid; gap: 6px; }
+.sr-opt, .sr-whole { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 1px solid var(--line); background: #fff; border-radius: 12px; padding: 10px 12px; font: inherit; font-size: .88rem; cursor: pointer; }
+.sr-opt small, .sr-whole small { margin-left: auto; color: var(--ink-3); font-size: .76rem; }
+.sr-opt .rd { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #bbb; flex: none; }
+.sr-opt.on { border-color: var(--black, var(--ink)); box-shadow: 0 0 0 1px var(--black, var(--ink)); }
+.sr-opt.on .rd { border: 5px solid var(--black, var(--ink)); }
+.sr-whole { margin-top: 8px; border-style: dashed; border-color: var(--olive, #9db24a); background: var(--lime-soft, #f6f9e6); font-weight: 600; }
+.sr-whole.on { border-style: solid; box-shadow: 0 0 0 1px var(--olive, #9db24a); }
+.sr-warn { margin-top: 8px; background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 8px 10px; font-size: .8rem; }
+@media (max-width: 720px) {
+  .sr .bb-row { grid-template-columns: 96px minmax(0, 1fr); }
+  .bb-my .sr-in { font-size: .72rem; }
 }
 .bb-place { font-size: .8rem; color: var(--ink-3); margin: 0 0 6px 2px; } .bb-place b { color: var(--ink-2); }
 .bb-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: .74rem; color: var(--ink-3); }

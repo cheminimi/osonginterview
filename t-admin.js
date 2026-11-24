@@ -541,7 +541,8 @@ async function renderSched() {
 const BACKUP_COLS = ["students", "staff", "accounts", "logins", "interviews", "studentNotes", "questions",
   "sessions", "meetings", "bookings", "bookingLogs", "days", "availability", "meta",
   "reviews", "boothBookings", "boothSlots", "meetingNotes",
-  "guidanceUnavail", "guidanceSubmit", "guidanceNotes", "guidancePlan"];   // (2026-11-12) 지도 일지 (배정 실행 기록 guidanceRuns 는 크고 다시 만들 수 있어 뺌)   // (2026-10-30) 대학 면접 후기·부스 예약 — 나중에 생겨 빠져 있었음
+  "guidanceUnavail", "guidanceSubmit", "guidanceNotes", "guidancePlan",
+  "studyBookings", "studyClosed"];   // (2026-11-24) 자습실 예약   // (2026-11-12) 지도 일지 (배정 실행 기록 guidanceRuns 는 크고 다시 만들 수 있어 뺌)   // (2026-10-30) 대학 면접 후기·부스 예약 — 나중에 생겨 빠져 있었음
 // ================= ⑧ 면접 부스 PC (관리자만) =================
 // config/booth.devices[키의 SHA-256] = { name, res?, registeredAt, registeredBy } — 부스 화면(booth.html)이 등록할 때 씀.
 // 자리(res)를 정하면 부스가 그 자리 예약에 맞춰 학생에게 안내한다. 해제하면 그 PC 는 다음 로그인 때 잠금 화면.

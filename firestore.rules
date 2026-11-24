@@ -482,6 +482,35 @@ service cloud.firestore {
             ));
     }
 
+    // ===== 자습실(3층 공용학습실) 예약 (study-booking.js, 2026-11-24) =====
+    // 인원 제한 없음 · 바로 확정. 예약 문서에는 학번·이름이 없고 계정 uid 만 → 학생도 그날 예약을 읽어 교시별 인원수만 셈
+    // 학생: 내 예약 넣기·지우기 · 출석(checkinAt) 한 번 · 맨 앞/끝 교시 빼기(출석 전). 교시 값·시간 검사는 앱이 함
+    function srMine() { return isStudentAcct() && resource.data.uid == request.auth.uid; }
+    function srShapeOk(d) {
+      return d.keys().hasOnly(['uid', 'date', 'blocks', 'start', 'end', 'createdAt'])
+        && d.uid == request.auth.uid && d.date is string && d.date.size() == 10
+        && d.blocks is list && d.blocks.size() >= 1 && d.blocks.size() <= 16
+        && d.start is string && d.end is string && d.createdAt == request.time;
+    }
+    match /studyBookings/{id} {
+      allow read: if isStaff() || isStudentAcct();
+      allow create: if isStaff() || (isStudentAcct() && srShapeOk(request.resource.data));
+      allow update: if isStaff()
+        || (srMine() && !('checkinAt' in resource.data)
+            && ((request.resource.data.diff(resource.data).affectedKeys().hasOnly(['checkinAt'])
+                 && request.resource.data.checkinAt == request.time)
+              || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['blocks', 'start', 'end'])
+                 && request.resource.data.blocks is list && request.resource.data.blocks.size() >= 1
+                 && resource.data.blocks.hasAll(request.resource.data.blocks)
+                 && request.resource.data.start is string && request.resource.data.end is string)));
+      allow delete: if isStaff() || srMine();
+    }
+    // 선생님이 막은 교시 (날짜 하나에 문서 하나: blocks = 막은 교시 코드)
+    match /studyClosed/{date} {
+      allow read: if hasAcct() || isAdmin();
+      allow write: if isStaff();
+    }
+
     // 일정 변경 로그 (시트 '면접 기록' 탭으로 옮겨짐). 추가만 가능
     match /bookingLogs/{lid} {
       allow read: if isStaff();

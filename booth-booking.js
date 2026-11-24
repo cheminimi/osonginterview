@@ -1,4 +1,4 @@
-// 면접 부스·셀프 연습 예약 (일정 탭 '부스 예약') — 학생 화면과 교사 화면이 같이 쓴다.
+// 면접 부스 예약 (일정 탭 '부스 예약' — 셀프 연습 칸은 2026-11-24 화면에서 뺌) — 학생 화면과 교사 화면이 같이 쓴다.
 // 선착순 바로 확정(승인 없음). 칸은 일정 설정의 교시 칸을 30분씩 나눈 것이고, 바로 이어진 칸 2개(maxRun)까지 한 번에 잡는다.
 //
 // 저장 (firestore.rules '부스 예약' 참고)
@@ -30,6 +30,9 @@ export const DEFAULT_BOOTH = {
   maxRun: 2             // 한 학생이 바로 이어서 잡을 수 있는 칸 수 (예약을 따로 잡아 이어 붙여도 같음)
 };
 const RES_KEYS = DEFAULT_BOOTH.resources.map((r) => r.key);
+// (2026-11-24) '셀프 면접 연습'은 예약 화면·설정 창에서만 뺌 — 설정 목록·저장된 예약은 그대로 (부스 화면이 이름을 찾는 데 씀)
+const HIDDEN_RES = ["self"];
+const shownRes = (list) => list.filter((r) => !HIDDEN_RES.includes(r.key));
 const PC_RES = ["booth1", "booth2"];          // 부스 PC 가 있는 자리 ('셀프 면접 연습'은 PC 없음 → 사용함 표시 안 함)
 const NOSHOW_MIN = 10;                        // 예약 시작 이만큼 지나도 기록이 없으면 '아직 안 옴' (부스의 '빈 부스로 보기'와 같은 10분)
 const tsMs = (t) => (!t ? 0 : typeof t.toMillis === "function" ? t.toMillis() : t.seconds ? t.seconds * 1000 : Number(t) || 0);
@@ -152,7 +155,7 @@ export function mountBoothBooking(root, opts) {
   watchDate();
 
   // ---- 계산
-  const resources = () => st.bcfg.resources.filter((r) => r.on);
+  const resources = () => shownRes(st.bcfg.resources).filter((r) => r.on);
   const resOf = (key) => st.bcfg.resources.find((r) => r.key === key);
   const slotsOfDay = () => daySlots(st.cfg.blocks);
   const idsAt = (date, res, start) => st.slots[slotId(date, res, start)]?.ids || [];
@@ -190,7 +193,7 @@ export function mountBoothBooking(root, opts) {
     const box = $("#bbMine", root);
     if (!isStudent) { box.innerHTML = ""; return; }
     const now = nowMs();
-    const up = st.mine.filter((b) => atMs(b.date, b.end) > now).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
+    const up = st.mine.filter((b) => atMs(b.date, b.end) > now && !HIDDEN_RES.includes(b.res)).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
     box.innerHTML = up.map((b) => {
       const r = resOf(b.res) || { name: b.res, place: "" };
       const canCancel = atMs(b.date, b.start) - now >= st.bcfg.cancelMin * 60000;
@@ -481,12 +484,12 @@ export function mountBoothBooking(root, opts) {
     document.getElementById("bbSheet")?.remove();
     const offRow = (w = {}) => `<div class="bb-off"><select data-w="dow">${[1, 2, 3, 4, 5].map((k) => `<option value="${k}" ${Number(w.dow) === k ? "selected" : ""}>${WEEK[k]}요일</option>`).join("")}</select>
       <select data-w="block">${blocks.map((x) => `<option value="${esc(x.key)}" ${w.block === x.key ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select>
-      <select data-w="res"><option value="all">모든 자리</option>${b.resources.map((r) => `<option value="${r.key}" ${w.res === r.key ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select>
+      <select data-w="res"><option value="all">모든 자리</option>${shownRes(b.resources).map((r) => `<option value="${r.key}" ${w.res === r.key ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select>
       <button type="button" class="btn-sm" data-rm="1" aria-label="지우기">×</button></div>`;
     document.body.insertAdjacentHTML("beforeend", `<div class="bb-sheet-bg" id="bbSheet"><form class="bb-sheet wide" role="dialog" aria-modal="true" novalidate>
       <div class="bb-grip"></div><h3>부스 예약 설정</h3>
       <div class="bb-set"><span>이름</span><span>장소</span><span>정원</span><span>사용</span>
-        ${b.resources.map((r) => `<input data-r="${r.key}" data-f="name" value="${esc(r.name)}"><input data-r="${r.key}" data-f="place" value="${esc(r.place)}">
+        ${shownRes(b.resources).map((r) => `<input data-r="${r.key}" data-f="name" value="${esc(r.name)}"><input data-r="${r.key}" data-f="place" value="${esc(r.place)}">
           <input data-r="${r.key}" data-f="cap" type="number" min="1" max="10" value="${r.cap}"><label class="bb-on"><input data-r="${r.key}" data-f="on" type="checkbox" ${r.on ? "checked" : ""}> 켬</label>`).join("")}</div>
       <label class="bb-l">매주 반복해서 막을 시간</label><div id="bbOffs">${b.weeklyOff.map(offRow).join("")}</div>
       <button type="button" class="btn-sm" id="bbAddOff">+ 추가</button>
@@ -503,11 +506,11 @@ export function mountBoothBooking(root, opts) {
     $("form", bg).onsubmit = async (e) => {
       e.preventDefault();
       const val = (k, f) => $(`[data-r="${k}"][data-f="${f}"]`, bg);
-      const resources = b.resources.map((r) => ({ key: r.key, name: val(r.key, "name").value.trim() || r.name, place: val(r.key, "place").value.trim(),
+      const resources = b.resources.map((r) => HIDDEN_RES.includes(r.key) ? { ...r } : ({ key: r.key, name: val(r.key, "name").value.trim() || r.name, place: val(r.key, "place").value.trim(),
         cap: Math.max(1, Math.min(10, Math.round(Number(val(r.key, "cap").value) || r.cap))), on: val(r.key, "on").checked }));
       const weeklyOff = $$(".bb-off", bg).map((row) => ({ dow: Number($('[data-w="dow"]', row).value), block: $('[data-w="block"]', row).value, res: $('[data-w="res"]', row).value }));
       const booth = { resources, weeklyOff, aheadDays: Number($("#bbAhead", bg).value) || DEFAULT_BOOTH.aheadDays, cancelMin: Math.max(0, Number($("#bbCancel", bg).value) || 0) };
-      const boothCaps = Object.fromEntries(resources.filter((r) => r.on).map((r) => [r.key, r.cap]));
+      const boothCaps = Object.fromEntries(shownRes(resources).filter((r) => r.on).map((r) => [r.key, r.cap]));
       try { await setDoc(doc(db, "config", "schedule"), { booth, boothCaps }, { merge: true }); toast("부스 예약 설정을 저장했어요."); close(); }
       catch (err) { showError(err, "부스 예약 설정 저장"); }
     };

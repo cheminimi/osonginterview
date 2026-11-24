@@ -192,7 +192,7 @@
     </div>
   </section>
 
-  <section data-panel="schedule" hidden><div class="sc-top"><div id="scSwitch"></div></div><div id="schedule"></div><div id="boothBook" hidden></div></section>
+  <section data-panel="schedule" hidden><div class="sc-top"><div id="scSwitch"></div></div><div id="schedule"></div><div id="boothBook" hidden></div><div id="studyBook" hidden></div></section>
   <section data-panel="feedback" hidden><div id="feedback"></div></section>
 </main>
 
@@ -211,6 +211,7 @@ import { mountSchedule, BOOK_STAGES, stageTeachers, stageLeft, ACTIVE, DONE, STA
 import { isBoothSession, boothViewHtml, aiReportState, replaceAiReport } from "./booth-view.js";
 import { mathHtml } from "./math.js";
 import { mountBoothBooking, mountSchedSwitch } from "./booth-booking.js";
+import { mountStudyBooking } from "./study-booking.js";
 import { registerSW, mountInstallTip, showInstallTipAgain, isStandalone } from "./pwa.js";
 import { pushState, pushOn, enablePush, disablePush, refreshPush, wasAsked, markAsked, onPushOpen } from "./push.js";
 
@@ -489,22 +490,26 @@ const sched = mountSchedule($("#schedule"), {
   onBooked: () => askPushOnce()
 });
 
-// ---- 일정 탭 위 알약: 면접 일정 | 부스 예약 (부스 예약은 처음 열 때 만든다 — 읽기 절약)
+// ---- 일정 탭 위 알약: 모의 면접 | 부스 예약 | 자습실 예약 (부스·자습실 예약은 처음 열 때 만든다 — 읽기 절약)
 // 면접 일정으로 가는 버튼·알림은 부스 예약을 보고 있었어도 면접 일정 쪽을 보여 준다
 function toInterview() { document.querySelector('#scSwitch [data-v="interview"]')?.click(); }
-let boothBook = null;
+let boothBook = null, studyBook = null;
 {
   let v0 = "interview";
-  try { if (sessionStorage.getItem("scView") === "booth") v0 = "booth"; } catch (_) {}
+  try { const s = sessionStorage.getItem("scView"); if (s === "booth" || s === "study") v0 = s; } catch (_) {}
   const showView = (v) => {
     try { sessionStorage.setItem("scView", v); } catch (_) {}
     $("#schedule").hidden = v !== "interview";
     $("#boothBook").hidden = v !== "booth";
+    $("#studyBook").hidden = v !== "study";
     if (v === "booth" && !boothBook) boothBook = mountBoothBooking($("#boothBook"), {
       role: "student", student: me, getInterviewBookings: () => bookings
     });
+    if (v === "study" && !studyBook) studyBook = mountStudyBooking($("#studyBook"), {
+      role: "student", student: me, getInterviewBookings: () => bookings
+    });
   };
-  mountSchedSwitch($("#scSwitch"), { value: v0, onChange: showView });
+  mountSchedSwitch($("#scSwitch"), { value: v0, onChange: showView, items: [["interview", "모의 면접"], ["booth", "부스 예약"], ["study", "자습실 예약"]] });
   showView(v0);
 }
 

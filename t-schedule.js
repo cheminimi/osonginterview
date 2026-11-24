@@ -2,12 +2,13 @@
 import { S, register, rerender, myName, myRoles, setDot, switchTab, applyHead } from "./t-core.js";
 import { mountSchedule } from "./schedule.js";
 import { mountBoothBooking, mountSchedSwitch } from "./booth-booking.js";
+import { mountStudyBooking } from "./study-booking.js";
 import { openMeetingForm } from "./t-meetings.js";
 import { mountRecButtons } from "./t-record.js";
 import { mountInterviewCalendar } from "./t-ical.js";
 import { $ } from "./common.js";
 
-let sched, booth = null, view = null, ical = null;
+let sched, booth = null, study = null, view = null, ical = null;
 /** 일정에서 만들어진 '예정' 기록 열기 (오늘 화면에서도 씀) */
 export function openBookingRecord(b) {
   const id = "bk_" + b.id;
@@ -30,23 +31,28 @@ export function openBookingForm(opts) {
 }
 
 export function init(el) {
-  // 일정 탭 = 모의 면접 · 부스 예약 · 면접 일정(실제 대학 면접, 선생님만) 세 화면. 부스 예약·면접 일정은 처음 열 때 만든다
-  el.innerHTML = `<div id="scInterview"></div><div id="scBooth" hidden></div><div id="scCal" hidden></div>`;
+  // 일정 탭 = 모의 면접 · 부스 예약 · 자습실 예약 · 면접 일정(실제 대학 면접, 선생님만) 네 화면. 처음 열 때 만든다
+  el.innerHTML = `<div id="scInterview"></div><div id="scBooth" hidden></div><div id="scStudy" hidden></div><div id="scCal" hidden></div>`;
   const showView = (v) => {
     S.scView = v;
     try { sessionStorage.setItem("scView", v); } catch (_) {}
     $("#scInterview", el).hidden = v !== "interview";
     $("#scBooth", el).hidden = v !== "booth";
+    $("#scStudy", el).hidden = v !== "study";
     $("#scCal", el).hidden = v !== "ical";
     if (v === "ical") { if (!ical) ical = mountInterviewCalendar($("#scCal", el)); ical.render(); }
     if (v === "booth" && !booth) booth = mountBoothBooking($("#scBooth", el), {
       role: S.ctx.isAdmin ? "admin" : "teacher", myName: myName(),
       getStudents: () => S.students, isMine: (s) => myRoles(s).length > 0
     });
+    if (v === "study" && !study) study = mountStudyBooking($("#scStudy", el), {
+      role: S.ctx.isAdmin ? "admin" : "teacher", myName: myName(),
+      getStudents: () => S.students, isMine: (s) => myRoles(s).length > 0
+    });
     applyHead();
   };
   const sw = $("#scSub");
-  if (sw) view = mountSchedSwitch(sw, { value: S.scView, onChange: showView, items: [["interview", "모의 면접"], ["booth", "부스 예약"], ["ical", "면접 일정"]] });
+  if (sw) view = mountSchedSwitch(sw, { value: S.scView, onChange: showView, items: [["interview", "모의 면접"], ["booth", "부스 예약"], ["study", "자습실 예약"], ["ical", "면접 일정"]] });
   showView(S.scView);
   sched = mountSchedule($("#scInterview", el), {
     role: S.ctx.isAdmin ? "admin" : "teacher",
@@ -68,5 +74,5 @@ export function init(el) {
       if (st) mountRecButtons(el, st, { stage: b.stage, viewOnly: true, before: close, preset: { id: "bk_" + b.id, stage: b.stage, date: b.date, teachers: b.teachers, bookingId: b.id } });
     }
   });
-  register("schedule", () => { sched.render(); booth?.render(); if (S.scView === "ical") ical?.render(); });
+  register("schedule", () => { sched.render(); booth?.render(); study?.render(); if (S.scView === "ical") ical?.render(); });
 }

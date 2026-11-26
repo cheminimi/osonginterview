@@ -80,7 +80,7 @@ async function onStudent() {
 }
 
 // ===== [생기부에서] (2026-11-01): 학생부 화면을 '질문 준비'로 열어 드래그로 질문 뽑기 =====
-// 오른쪽 '공개 전 · 면접 뒤 공개' 묶음은 선생님만 (pending 을 읽을 수 있는 배정 선생님·관리자 — 못 읽으면 숨김)
+// 오른쪽 '공개 전 · 면접 뒤 공개' 묶음은 선생님만 (pending 을 읽을 수 있는 선생님·관리자 — 못 읽으면 숨김)
 let pend = [];
 async function renderRecPanel(no) {
   const st = studentByNo(no), box = $("#qRecBox", root);
@@ -115,7 +115,7 @@ async function renderRecPanel(no) {
           <label class="inline-check"><input type="checkbox" id="qCardOk"> <span>학생·보호자에게 <b>AI 사용 동의</b>를 받았어요 <span class="muted sm">(질문·꼬리질문·드래그한 글 한 칸·지원 학과 이름을 AI 로 보내요)</span></span></label>
           <div class="row"><button type="button" class="btn-primary btn-sm" id="qCardConsent" disabled>동의 받았어요 → AI 카드 만들기 (${cTodo.length}개)</button><span class="muted sm">약 ${(cTodo.length * CARD_WON).toLocaleString("ko-KR")}원</span></div>` : ""}
       <div id="qCardRun"></div></div>`;
-  box.innerHTML = !see ? `<div class="qrec"><div class="row"><b>학생부</b><span class="muted">배정 선생님만 볼 수 있어요</span></div>
+  box.innerHTML = !see ? `<div class="qrec"><div class="row"><b>학생부</b><span class="muted">선생님만 볼 수 있어요</span></div>
       <button type="button" class="btn-primary qrec-big" disabled>생기부 열고 질문 뽑기</button></div>`
     : !has ? `<div class="qrec"><div class="row"><b>학생부</b><span class="muted">아직 학생부가 없어요</span></div>
       ${canUploadRec(st) ? '<button type="button" class="btn-sm" id="qRecUp">학생부 넣기</button>' : '<div class="muted sm">1차 담임 선생님·관리자가 학생부를 넣으면 질문을 뽑을 수 있어요.</div>'}
@@ -171,7 +171,7 @@ async function renderAiPanel(no, { see, has }) {
   const st = studentByNo(no), box = $("#qAiBox", root);
   aiUnsub?.(); aiUnsub = null;
   if (!see || !has) {
-    box.innerHTML = `<div class="qai"><div class="qai-st"><b>${!see ? "배정 선생님만 볼 수 있어요" : "아직 학생부가 없어요"}</b><div class="muted sm">${!see ? "AI 맞춤 질문은 이 학생의 배정 선생님(1·2·3차)·관리자만 만들고 검토해요." : "학생부를 넣을 때 AI 동의를 켜면 자동으로 만들어요."}</div></div>
+    box.innerHTML = `<div class="qai"><div class="qai-st"><b>${!see ? "선생님만 볼 수 있어요" : "아직 학생부가 없어요"}</b><div class="muted sm">${!see ? "AI 맞춤 질문은 선생님·관리자만 만들고 검토해요." : "학생부를 넣을 때 AI 동의를 켜면 자동으로 만들어요."}</div></div>
       ${see && canUploadRec(st) ? '<button type="button" class="btn-sm" id="qaiUp">학생부 넣기</button>' : ""}<button type="button" class="btn-primary qrec-big" disabled>AI 맞춤 질문 만들기</button></div>`;
     $("#qaiUp", box)?.addEventListener("click", () => openRecordUpload(no));
     return;

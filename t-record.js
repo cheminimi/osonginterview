@@ -1,8 +1,8 @@
 // 학생부 열람 · PDF 넣기 · 드래그 질문 (2026-10-30 3단계, spec-stage3)
-// - records/{학번}: 가림본 학생부 (배정 선생님 1·2·3차 + 관리자만 읽기, 넣기는 1차 담임·관리자)
+// - records/{학번}: 가림본 학생부 (모든 선생님 + 관리자 읽기 — 2026-11-24, 넣기는 1차 담임·관리자)
 // - records/{학번}/marks: 하이라이트·질문 표시 · records/{학번}/pending: '면접 뒤 공개' 질문
 // - recordLogs: 열람·넣기·공개 기록 (관리자만 읽기)
-// - records/{학번}/aiq · aimeta: AI 맞춤 예상질문 초안·실행 상태 (2026-11-03, booth-ai Apps Script 가 만듦 — 배정 선생님·관리자만)
+// - records/{학번}/aiq · aimeta: AI 맞춤 예상질문 초안·실행 상태 (2026-11-03, booth-ai Apps Script 가 만듦 — 선생님·관리자만)
 // 학생부 글은 브라우저 저장소·캐시 목록·백업에 넣지 않는다. 화면을 닫으면 변수에서도 버린다.
 // PDF 는 이 브라우저 안에서만 읽고 어디에도 올리지 않는다 (저장되는 것은 가림본 글뿐).
 import {
@@ -24,7 +24,8 @@ const stageLabel = (k) => STAGES.find((s) => s.key === Number(k))?.label || `${k
 
 // ================= 누가 볼 수 있나 (화면용 — 규칙에서도 같은 기준으로 막음) =================
 const isTeacher = () => S.ctx?.account?.role === "teacher";
-export const canSeeRec = (st) => !!st && (!!S.ctx?.isAdmin || (isTeacher() && myRoles(st).length > 0));
+// (2026-11-24) 담당이 아니어도 모든 선생님이 학생부를 보고·질문을 만든다 (담당과 똑같이 — 사용자 결정). 넣기는 그대로 1차 담임·관리자
+export const canSeeRec = (st) => !!st && (!!S.ctx?.isAdmin || isTeacher());
 export const canUploadRec = (st) => !!st && (!!S.ctx?.isAdmin || (isTeacher() && !!myName() && (st.assign || {}).s1 === myName()));
 // 학생부가 있는지: 단추를 그릴 때 한 번만 읽는다 (실패·거부 = 없음). 글은 버리고 있음/없음만 기억
 const exists = new Map(), opened = new Map();   // opened: 학생에게 공개 중인지 (2026-11-20)
@@ -44,7 +45,7 @@ async function log(no, action) {
 // viewOnly: [학생부 보기]만 (오늘 칸·일정 상세) · compact: 이름을 '학생부'로 짧게 · before(): 열기 전에 할 일(창 닫기 등)
 export async function mountRecButtons(el, st, { stage = 0, preset = null, compact = false, viewOnly = compact, before = null } = {}) {
   if (!el || !st) return;
-  const see = canSeeRec(st) && (!stage || S.ctx.isAdmin || myRoles(st).includes(`${stage}차`));
+  const see = canSeeRec(st);
   const up = !viewOnly && canUploadRec(st);
   if (!see && !up) { el.innerHTML = ""; return; }
   const has = await recordExists(st.studentNo);
@@ -715,7 +716,7 @@ const body = () => document.getElementById("ruBody");
 function stepConsent() {
   steps(1);
   body().innerHTML = `<div class="ru-card"><h3>학생·보호자 동의</h3>
-    <p class="muted">학생부는 이 학생의 배정 선생님(1·2·3차)과 관리자만 볼 수 있어요. 학생 본인도 이 화면은 볼 수 없어요. 입시가 끝나면 한꺼번에 지워요.</p>
+    <p class="muted">학생부는 선생님과 관리자만 볼 수 있어요 (누가 열었는지는 기록에 남아요). 학생 본인도 이 화면은 볼 수 없어요. 입시가 끝나면 한꺼번에 지워요.</p>
     <label class="inline-check"><input type="checkbox" id="ruConsent"> 학생·보호자의 동의를 받았어요</label>
     <div class="ai-consent"><label class="inline-check"><input type="checkbox" id="ruAiOk" checked> <b>AI 맞춤 예상질문·암기 카드 만들기</b>에도 동의를 받았어요</label>
       <div class="muted sm">저장하면 가림 처리된 글(이름·학교 가림)과 지원 대학·전형·학과를 AI(Claude)로 보내, 충북교육청 면접후기 사례집의 기출을 참고해 질문 초안과 암기 카드를 만들어요. AI 회사는 이 글을 학습에 쓰지 않아요. 끄면 AI 없이 학생부만 저장해요.</div></div>
@@ -1127,7 +1128,7 @@ function guessStage(st, preset) {
 // mode: "interview"(모의면접, 지금 화면) | "prep"(질문 준비 — 질문 탭에서, 타이머·기록 쓰기 없음) · onClose: 닫힌 뒤 할 일
 export async function openRecordViewer(no, { stage = 0, preset = null, mode = "interview", onClose = null, tab = "" } = {}) {
   const st = studentByNo(no);
-  if (!canSeeRec(st)) return toast("이 학생의 학생부는 배정 선생님·관리자만 볼 수 있어요.", "error");
+  if (!canSeeRec(st)) return toast("학생부는 선생님·관리자만 볼 수 있어요.", "error");
   closeRecordViewer();
   closeModal();   // 창(학생 상세·일정 상세) 위가 아니라 화면 전체로 연다. [기록 쓰기 →] 의 기록 창은 이 화면 위에 뜸
   let rec;
@@ -1813,7 +1814,7 @@ export function cardState(q, marks = []) {
 export const cardTodo = (q, marks, consent) => { const s = cardState(q, marks); return s === "none" || s === "fail" || (!!consent && s === "basic"); };
 export const cardDept = (st) => [...new Set((st?.universities || []).filter((u) => !announceFailed(u)).map((u) => String(u.dept || "").trim()).filter(Boolean))].join(", ");
 export const CARD_ERR = {
-  no_consent: "AI 사용 동의가 없어요.", limited: "오늘 암기 카드 한도를 넘었어요. 내일 다시 해 주세요.", no_access: "이 학생 학생부를 볼 수 있는 선생님(배정 선생님·관리자)만 카드를 만들 수 있어요.",
+  no_consent: "AI 사용 동의가 없어요.", limited: "오늘 암기 카드 한도를 넘었어요. 내일 다시 해 주세요.", no_access: "학생부를 볼 수 있는 선생님·관리자만 카드를 만들 수 있어요.",
   no_record: "학생부가 없어요.", auth: "로그인을 다시 확인해 주세요.", no_key: "AI 키가 아직 설정되지 않았어요 (관리자).", bad_request: "보낼 질문이 없어요.",
   save: "카드 상태를 저장하지 못했어요.", no_credit: "AI 크레딧이 떨어져서 카드를 만들지 못했어요. 관리자에게 알려 주세요 (충전하면 [다시 만들기]로 만들 수 있어요)."
 };
@@ -2007,7 +2008,7 @@ function drawAi(sb) {
   }
   sb.innerHTML = `<div class="ai-ban"><b>AI 맞춤 초안 · ${esc(V.no)} ${esc(V.st.name)} <span class="muted sm" style="font-weight:500">선생님만 보임</span></b>
       ${ax.length ? `<details><summary style="cursor:pointer;font-weight:700;font-size:.8rem">면접 핵심 축 ${ax.length}</summary><ol>${ax.map((x) => `<li>${esc(x)}</li>`).join("")}</ol></details>` : ""}
-      <div class="muted sm">근거 문장이 학생부에 있는 것만 남겼어요. 채택하면 내 질문(${V.stage}차)이 돼요. 다른 배정 선생님도 같은 초안을 봐요 — 먼저 채택한 사람 것이 돼요.</div>
+      <div class="muted sm">근거 문장이 학생부에 있는 것만 남겼어요. 채택하면 내 질문(${V.stage}차)이 돼요. 다른 선생님도 같은 초안을 봐요 — 먼저 채택한 사람 것이 돼요.</div>
       <div class="rv-pubnote">[채택]하면 바로 학생에게 공개되고 암기 카드가 생겨요</div></div>
     <div class="gchips"><button type="button" data-gc="common" class="${g === "common" ? "on" : ""}">공통 <span>${n("common")}</span></button>${unis.map(chip).join("")}</div>
     <div data-g="${esc(g)}">${body}</div>`;
@@ -2110,7 +2111,7 @@ const AI_STEPS_BIG = (unis) => ["학생부 읽기 (가림본)", `지원 대학·
 const AI_STEPS_SM = ["저장된 학생부 읽기 (가림본)", "지원 대학·전형·학과 확인", "기출 찾기 (면접후기 사례집)", "공통·대학별 맞춤 질문 만들기", "근거 문장 확인", "암기 카드 만들기"];
 export const AI_ERR = {
   no_consent: "AI 사용 동의가 없어요. 동의를 받았다고 표시한 뒤 다시 눌러 주세요.", running: "이미 만드는 중이에요. 잠시 뒤 다시 확인해 주세요.",
-  limited: "오늘 AI 맞춤 질문 한도(학생 수)를 넘었어요. 내일 다시 해 주세요.", no_access: "이 학생 학생부를 볼 수 있는 선생님(배정 선생님·관리자)만 만들 수 있어요.",
+  limited: "오늘 AI 맞춤 질문 한도(학생 수)를 넘었어요. 내일 다시 해 주세요.", no_access: "학생부를 볼 수 있는 선생님·관리자만 만들 수 있어요.",
   no_record: "학생부가 없어요.", auth: "로그인을 다시 확인해 주세요.", timeout: "응답을 기다리다 끊겼어요. 서버에서는 계속 만들 수 있어요 — 잠시 뒤 질문 탭에서 확인해 주세요.",
   network: "연결이 끊겼어요. 서버에서는 계속 만들 수 있어요 — 잠시 뒤 질문 탭에서 확인해 주세요.",
   no_credit: "AI 크레딧이 떨어져서 만들지 못했어요. 관리자에게 알려 주세요 (충전하면 다시 만들 수 있어요)."
@@ -2141,7 +2142,7 @@ export async function runAiq(no, { scope = "all", only = null, consent = false, 
     if (!res?.ok) box.innerHTML = `<div class="notice">${esc(aiErrText(res))}</div>`;
     else {
       box.innerHTML = (big ? `<div class="row" style="gap:8px;align-items:center"><span class="ai-tag">AI</span><b>맞춤 예상질문·암기 카드를 만들었어요</b></div>` : "") + aiSummaryHtml(meta, st)
-        + `<div class="muted sm">배정 선생님(1·2·3차)이 학생부 '질문 준비' 화면의 <b>AI 초안</b>에서 채택해야 학생에게 보여요.</div>
+        + `<div class="muted sm">선생님이 학생부 '질문 준비' 화면의 <b>AI 초안</b>에서 채택해야 학생에게 보여요.</div>
         ${canSeeRec(st) ? '<div class="row" style="margin-top:6px"><button type="button" class="btn-sm btn-primary" data-aireview>AI 초안 검토하기 →</button></div>' : ""}`;
       $("[data-aireview]", box)?.addEventListener("click", () => { if (big) { closeUpload(); window.dispatchEvent(new CustomEvent("records-changed", { detail: { no } })); } openRecordViewer(no, { mode: "prep", tab: "ai", onClose: () => onDone?.(res, meta, true) }); });
     }
@@ -2167,8 +2168,8 @@ export async function renderRecordAdmin(p) {
       <div id="raPendBody" class="muted">세는 중…</div></div>
     <div class="card ra-card" id="raCard"><h3>🃏 카드 없는 선생님 질문 (전체)</h3><div id="raCardBody" class="muted">세는 중…</div></div>
     <div class="card"><h3>학생부</h3>
-    <p class="muted" style="margin-top:0">배정 선생님(1·2·3차)과 관리자만 보는 가림본 학생부예요. <b>학생부는 백업하지 않아요.</b> 입시가 끝나면 한꺼번에 지워 주세요.<br>
-    · 볼 수 있는지는 교사 계정 이름과 학생 배정 칸(1차 담임·2차 교과·3차 위원)의 이름이 같은지로 정해요. 선생님 이름을 바꾸면 배정 칸도 맞춰 주세요.<br>
+    <p class="muted" style="margin-top:0">선생님과 관리자만 보는 가림본 학생부예요 (2026-11-24부터 담당이 아니어도 볼 수 있음). <b>학생부는 백업하지 않아요.</b> 입시가 끝나면 한꺼번에 지워 주세요.<br>
+    · 학생부 넣기(PDF)는 교사 계정 이름과 학생의 1차 담임 칸 이름이 같은지로 정해요. 선생님 이름을 바꾸면 배정 칸도 맞춰 주세요.<br>
     · 열람 기록은 남아요 (학생부 내용은 없음).</p>
     <dl class="kv" id="raSum"><dt>넣은 학생</dt><dd class="muted">불러오는 중…</dd></dl>
     <div class="row" style="margin-top:10px"><button type="button" class="btn-sm" id="raLogs">열람 기록 보기</button><div class="spacer"></div><button type="button" class="btn-sm btn-danger" id="raDelAll">입시 후 일괄 삭제</button></div>

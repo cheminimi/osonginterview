@@ -199,17 +199,12 @@ service cloud.firestore {
     }
 
     // ================= 학생부 (2026-10-30 3단계) =================
-    // 가림본 학생부: 그 학생 배정 선생님(1차 s1 · 2차 s2 · 3차 s3a·s3b) + 관리자만. 넣기는 1차 담임·관리자.
+    // 가림본 학생부: 모든 선생님(교사 계정) + 관리자 (2026-11-24 사용자 결정 — 예전엔 그 학생 배정 선생님만). 넣기는 1차 담임·관리자.
     // 동기화 계정(sync)·학생·부스 계정은 못 읽음 → 백업(앱·드라이브)에도 들어가지 않음.
-    // 이름 비교는 앱의 myRoles 와 같은 기준(교사 계정 staff 이름 == 배정 칸). 이름이 비어 있으면 안 됨
+    // 넣기(canUploadRecord)의 이름 비교는 앱의 myRoles 와 같은 기준(교사 계정 staff 이름 == 1차 배정 칸). 이름이 비어 있으면 안 됨
     function staffName() { return get(/databases/$(database)/documents/staff/$(acct().key)).data.get('name', ''); }
     function recAssign(no) { return get(/databases/$(database)/documents/students/$(no)).data.get('assign', {}); }
-    function assignedTo(no) {
-      let a = recAssign(no);
-      let n = staffName();
-      return n != '' && n in [a.get('s1', ''), a.get('s2', ''), a.get('s3a', ''), a.get('s3b', '')];
-    }
-    function canSeeRecord(no) { return isAdmin() || (hasAcct() && acct().role == 'teacher' && assignedTo(no)); }
+    function canSeeRecord(no) { return isAdmin() || (hasAcct() && acct().role == 'teacher'); }
     function canUploadRecord(no) { return isAdmin() || (hasAcct() && acct().role == 'teacher'
       && staffName() != '' && staffName() == recAssign(no).get('s1', '')); }
     match /records/{no} {
@@ -231,7 +226,7 @@ service cloud.firestore {
         allow create: if canSeeRecord(no) && request.resource.data.byUid == request.auth.uid;
         allow update, delete: if canSeeRecord(no);
       }
-      // (2026-11-03) AI 맞춤 예상질문 초안·실행 상태 (booth-ai Apps Script 가 선생님 토큰으로 씀). 배정 선생님·관리자만
+      // (2026-11-03) AI 맞춤 예상질문 초안·실행 상태 (booth-ai Apps Script 가 선생님 토큰으로 씀). 선생님·관리자만
       match /aiq/{id} { allow read, write: if canSeeRecord(no); }
       match /aimeta/{id} { allow read, write: if canSeeRecord(no); }
     }

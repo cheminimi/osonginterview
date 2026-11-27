@@ -207,7 +207,7 @@ import {
   CRITERIA, STAGES, TYPES, fmtDate, fmtDay, typeBadge, dday, nextInterview, recommendedModes, icon, isoDay, initials,
   railHead, railFoot, tabButton, wireRailMe, setHead, writeBatch, serverTimestamp, confirmBox, pqStats, isStudentPq, passageReady, updateDoc, announceFailed, deleteField, sameUniv
 } from "./common.js";
-import { mountSchedule, BOOK_STAGES, stageTeachers, stageLeft, ACTIVE, DONE, STATUS } from "./schedule.js";
+import { mountSchedule, BOOK_STAGES, stageTeachers, stageLeft, stageShort, ACTIVE, DONE, STATUS } from "./schedule.js";
 import { isBoothSession, boothViewHtml, aiReportState, replaceAiReport } from "./booth-view.js";
 import { mathHtml } from "./math.js";
 import { mountBoothBooking, mountSchedSwitch } from "./booth-booking.js";
@@ -1022,7 +1022,7 @@ function homeWide({ today, up }) {
           <div class="date">${icon("calendar", 20)}<b>${mdw(nb.date)}</b><em>${rel}</em></div>
           <div class="meta2">
             <span>${icon("clock", 15)}${esc(blockLabelOf(nb.block) || "")} · ${esc(nb.start)} – ${esc(nb.end)}</span>
-            <span>${icon("user", 15)}${nb.stage}차 · ${esc((nb.teachers || []).join(", "))} 선생님</span>
+            <span>${icon("user", 15)}${stageShort(nb.stage)} · ${esc((nb.teachers || []).join(", "))} 선생님</span>
             <span>${icon("pin", 15)}${esc(nb.room || "장소 미정")}</span></div>
           <button type="button" class="link" data-go="schedule">전체 일정 →</button></div>`
         : `<p class="none">아직 잡힌 모의면접이 없어요.<br>달력에서 선생님과 시간을 정해 보세요.</p>
@@ -1092,7 +1092,7 @@ function homeNarrow({ today, up }) {
         ${nb ? `<div class="date">${icon("calendar", 18)}<b>${mdw(nb.date)}</b></div>
           <div class="meta2">
             <span>${icon("clock", 13)}${esc(blockLabelOf(nb.block) || "")} · ${esc(nb.start)}–${esc(nb.end)}</span>
-            <span>${icon("user", 13)}${nb.stage}차 · ${esc((nb.teachers || []).join(", "))}</span>
+            <span>${icon("user", 13)}${stageShort(nb.stage)} · ${esc((nb.teachers || []).join(", "))}</span>
             <span>${icon("pin", 13)}${esc(nb.room || "장소 미정")}</span></div>`
         : '<p class="l">아직 잡힌 모의면접이 없어요.</p>'}
         <button type="button" class="link" data-go="schedule">${nb ? "전체 일정 →" : "신청하기 →"}</button>

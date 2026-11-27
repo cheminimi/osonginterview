@@ -11,7 +11,7 @@ import {
   db, auth, collection, doc, getDoc, query, where, onSnapshot, serverTimestamp, setDoc, addDoc, updateDoc, deleteDoc,
   $, $$, esc, toast, showError, isoDay, toDate, confirmBox
 } from "./common.js";
-import { scheduleConfigOf, ACTIVE } from "./schedule.js";
+import { scheduleConfigOf, ACTIVE, stageShort } from "./schedule.js";
 import { boothConfigOf } from "./booth-booking.js";
 import { queueNotify } from "./notify.js";
 
@@ -278,7 +278,7 @@ export function mountStudyBooking(root, opts) {
     const inRange = (s, e) => keys.some((k) => { const b = blockOf(k); return b && toMin(s) < toMin(b.end) && toMin(b.start) < toMin(e); }) && toMin(s) < z && a < toMin(e);
     const out = [];
     (opts.getInterviewBookings?.() || []).filter((b) => b.date === d && ACTIVE(b.status) && inRange(b.start, b.end))
-      .forEach((b) => out.push(`${b.stage}차 모의면접 ${b.start}–${b.end}`));
+      .forEach((b) => out.push(`${stageShort(b.stage)} 모의면접 ${b.start}–${b.end}`));
     st.booth.filter((b) => b.date === d && b.res !== "self" && inRange(b.start, b.end))
       .forEach((b) => out.push(`부스 예약 ${b.start}–${b.end}`));
     return out;

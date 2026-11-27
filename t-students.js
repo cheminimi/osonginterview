@@ -8,6 +8,7 @@ import { openMeetingForm, meetingCardHtml, loadMeetingNotes, cachedMeetingNotes,
 import { selectStudentForQuestions } from "./t-questions.js";
 import { openReview } from "./t-review.js";
 import { mountRecButtons } from "./t-record.js";
+import { stageShort } from "./schedule.js";
 
 let root;
 export function init(el) {
@@ -243,7 +244,7 @@ export async function openStudent(no) {
     ${bk.length ? `<div class="section-title"><h3>잡힌 일정</h3><span class="muted">내가 들어가는 일정만</span></div>
     <div class="list-card" style="margin-bottom:14px">${bk.map((b) => `<div class="list-row" style="cursor:default">
       <span class="r-day"><b>${esc(fmtDay(b.date).replace(/\(.\)$/, ""))}</b><span>${esc(S.blockLabel(b.block) || "")}</span></span>
-      <span class="r-tx"><b>${b.stage}차</b> ${esc((b.teachers || []).join("·"))}
+      <span class="r-tx"><b>${stageShort(b.stage)}</b> ${esc((b.teachers || []).join("·"))}
         <span class="muted">${esc(b.room || "장소 미정")} · ${esc(b.start)}–${esc(b.end)}</span></span>
       <span class="badge badge-${b.status === "confirmed" ? "green" : "orange"}" style="flex:none">${b.status === "confirmed" ? "확정" : "요청 중"}</span>
     </div>`).join("")}</div>` : ""}

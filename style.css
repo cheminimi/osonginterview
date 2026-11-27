@@ -187,6 +187,7 @@ table.sc-grid .sc-blk small { display: block; color: var(--ink-3); font-weight: 
 .sc-chip.s1 { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-line); }
 .sc-chip.s2 { background: var(--ok-bg); color: var(--ok); border-color: #c3e2d2; }
 .sc-chip.s3 { background: #efe9f4; color: #6a4e86; border-color: #ddd2e6; }
+.sc-chip.s4 { background: #fbf0dc; color: #8a5a12; border-color: #ecd9b4; }   /* 추가 지도 (2026-11-27) */
 .sc-chip.req { border-style: dashed; background: #fff; }
 .sc-chip.own { box-shadow: inset 3px 0 0 currentColor; font-weight: 600; }
 span.sc-chip { display: inline-block; margin: 0; }
@@ -980,6 +981,7 @@ body.nd .sc-chip { border-radius: 9px; padding: 4px 7px; margin-bottom: 4px; bor
 body.nd .sc-chip.s1 { background: var(--blue-soft); color: var(--blue-deep); }
 body.nd .sc-chip.s2 { background: #dcefe4; color: #1e6d4f; }
 body.nd .sc-chip.s3 { background: #ebe4f3; color: #5e4580; }
+body.nd .sc-chip.s4 { background: #f8ecd6; color: #84551a; }
 body.nd .sc-chip.req { background: #fff; border: 1px dashed currentColor; }
 body.nd .sc-legend .sc-chip { padding: 2px 9px; }
 body.nd table.sc-grid.day .sc-cell { min-height: 46px; }

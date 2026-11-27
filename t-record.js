@@ -1120,7 +1120,7 @@ export function closeRecordViewer() {
   try { done?.(); } catch (e) { console.warn(e); }
 }
 function guessStage(st, preset) {
-  if (preset?.stage) return Number(preset.stage);
+  if (preset?.stage && Number(preset.stage) <= 3) return Number(preset.stage);   // 추가 지도(4)는 아래처럼 1~3차 중에서 (2026-11-27)
   const mine = myRoles(st).map((r) => Number(r[0]));
   const done = new Set((S.meetings || []).filter((m) => m.studentNo === st.studentNo && !m.planned).map((m) => Number(m.stage)));
   return mine.find((k) => !done.has(k)) || mine[0] || [1, 2, 3].find((k) => !done.has(k)) || 1;

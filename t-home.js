@@ -13,7 +13,7 @@ import { openStudent } from "./t-students.js";
 import { openMeetingForm, recordWrittenFor } from "./t-meetings.js";
 import { mountRecButtons } from "./t-record.js";
 import { openBookingRecord, gotoSchedule, quickBooking } from "./t-schedule.js";
-import { BOOK_STAGES, stageTeachers, stageLeft, ACTIVE, DONE } from "./schedule.js";
+import { BOOK_STAGES, stageTeachers, stageLeft, stageShort, ACTIVE, DONE } from "./schedule.js";
 import { watchAnnounce, announceHero, bindAnnounce, refreshPopup } from "./t-announce.js";
 
 const WIDE = window.matchMedia("(min-width: 721px)");
@@ -162,9 +162,9 @@ function askHtml(need, phone) {
     <button type="button" class="n" data-qa="reject" data-id="${esc(b.id)}">거절</button>
     <button type="button" class="c" data-qa="change" data-id="${esc(b.id)}">시간 변경</button></div>`;
   const box = phone
-    ? `<div class="fbbox"><div class="who2">${esc(nm)}<small>${esc(b.studentNo)} · ${b.stage}차 면접</small></div>
+    ? `<div class="fbbox"><div class="who2">${esc(nm)}<small>${esc(b.studentNo)} · ${stageShort(b.stage)} 면접</small></div>
         <div class="when">${when} · ${esc(b.room || "장소 미정")} · ${by}</div>${b.memo ? `<div class="when">“${esc(b.memo)}”</div>` : ""}${btns}</div>`
-    : `<div class="fbbox"><span class="tag">${icon("clock", 13)}${esc(nm)} ${esc(b.studentNo)} · ${b.stage}차</span>
+    : `<div class="fbbox"><span class="tag">${icon("clock", 13)}${esc(nm)} ${esc(b.studentNo)} · ${stageShort(b.stage)}</span>
         <p>${when}<br>${esc(b.room || "장소 미정")} · ${by}${b.memo ? `<br>“${esc(b.memo)}”` : ""}</p>${btns}</div>`;
   return `${box}<div class="pager"><b>${askIdx + 1}<small>/${need.length}</small></b><div class="sp"></div>
     <button type="button" data-ask="-1" aria-label="이전 요청" ${askIdx ? "" : "disabled"}>${icon("back", 15)}</button>
@@ -237,7 +237,7 @@ function wideHtml({ me, now, mine, scope, todayAll, noRecord, pending, need, mis
             : `<span class="wait">예정</span>`;
           return `<div class="slot ${done ? "past" : ""} ${isNext ? "next" : ""}">
             <div class="st">${isNext ? "<em>다음 면접</em>" : ""}<b>${esc(S.blockLabel(b.block) || b.start)}</b>${esc(b.start)}</div>
-            <button type="button" class="sb" data-no="${esc(b.studentNo)}"><b>${esc(s?.name || b.studentName || "")}</b> ${esc(b.studentNo)} · ${b.stage}차 <span>${meta}</span></button>
+            <button type="button" class="sb" data-no="${esc(b.studentNo)}"><b>${esc(s?.name || b.studentName || "")}</b> ${esc(b.studentNo)} · ${stageShort(b.stage)} <span>${meta}</span></button>
             ${end}</div>`;
         }).join("") : an.has ? "" : '<div class="slot-none">오늘은 쉬어 가는 날이에요. 이번 주 일정은 아래에서 볼 수 있어요.</div>'}</div>
         ${an.html}
@@ -268,7 +268,7 @@ function wideHtml({ me, now, mine, scope, todayAll, noRecord, pending, need, mis
         <div class="sub2"><span>최근 2주 면접 ${recent.length}건</span><span>기록한 비율</span></div>
         <div class="big">${noRecord.length}<small>건 남음</small></div>
         ${noRecord.length ? `<div class="nrows">${noRecord.slice(0, 3).map((m) => `<button type="button" class="nrow" data-meet="${esc(m.id)}">
-            <b>${esc(nameOf(m.studentNo) || m.name || "")}</b><small>${dayOnly(m.date)} · ${m.stage}차</small><span>기록 쓰기 →</span></button>`).join("")}
+            <b>${esc(nameOf(m.studentNo) || m.name || "")}</b><small>${dayOnly(m.date)} · ${stageShort(m.stage)}</small><span>기록 쓰기 →</span></button>`).join("")}
             ${noRecord.length > 3 ? `<button type="button" class="nrow more" data-go="meetings">외 ${noRecord.length - 3}건 →</button>` : ""}</div>`
         : ticks.length ? `<div class="scale"><span>0</span><span>${ticks.length}건</span></div>
           <div class="ticks" aria-hidden="true">${ticks.slice(0, 30).map((x) => `<i class="${x ? "" : "o"}"></i>`).join("")}</div>` : '<div class="ticks empty" aria-hidden="true"></div>'}
@@ -361,7 +361,7 @@ function renderRows(scope) {
     const mTime = lastMeet ? (toDate(lastMeet.date)?.getTime() || 0) : 0;
     const act = !sTime && !mTime ? '<span class="muted">아직 없음</span>'
       : sTime >= mTime ? `${fmtDate(lastSess.submittedAt)} 연습 제출`
-      : `${dayOnly(lastMeet.date)} ${lastMeet.stage}차 기록`;
+      : `${dayOnly(lastMeet.date)} ${stageShort(lastMeet.stage)} 기록`;
     const [go, label] = waitingFb(s) ? ["fb", "피드백 쓰기 →"]
       : noSched(s) ? ["sched", "일정 잡기 →"]
       : ["open", "학생 보기 →"];
@@ -401,7 +401,7 @@ function narrowHtml({ me, now, todayAll, noRecord, pending, need, missing, pqWai
         const others = (b.teachers || []).filter((t) => t !== me);
         return `<div class="trow2">
           <div class="dd"><b>${esc(S.blockLabel(b.block) || "")}</b><span>${esc(b.start)}</span></div>
-          <button type="button" class="tx" data-no="${esc(b.studentNo)}"><b>${esc(s?.name || b.studentName || "")}</b><span class="no">${esc(b.studentNo)} · ${b.stage}차</span>
+          <button type="button" class="tx" data-no="${esc(b.studentNo)}"><b>${esc(s?.name || b.studentName || "")}</b><span class="no">${esc(b.studentNo)} · ${stageShort(b.stage)}</span>
             <small>${esc(b.room || "장소 미정")} · ${esc(b.start)}–${esc(b.end)}${others.length ? " · " + esc(others.join("·")) + " 선생님과" : ""}</small></button>
           ${b.status !== "confirmed" ? '<span class="rec view">요청 중</span>' : `<button type="button" class="rec ${done ? "view" : "go"}" data-rec="${esc(b.id)}">${done ? "기록 보기" : "기록"}</button>`}</div>`;
       }).join("") : `<div class="trow2 none">${an.has ? "오늘 잡힌 모의면접이 없어요." : "오늘 잡힌 면접이 없어요."}</div>`}</div>
